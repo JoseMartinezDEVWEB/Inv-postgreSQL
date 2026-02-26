@@ -1,0 +1,34 @@
+# Configuración para Netlify
+# Este archivo permite que la aplicación funcione correctamente en Netlify
+
+[build]
+  # Comando de construcción
+  command = "npm run build"
+  # Directorio de salida
+  publish = "dist"
+
+# Redirecciones para SPA (Single Page Application)
+# Todas las rutas deben servir index.html para que React Router funcione
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Variables de entorno para producción en Netlify
+# NOTA: También debes configurar estas variables en el dashboard de Netlify:
+# Settings > Build & deploy > Environment > Environment variables
+[build.environment]
+  VITE_API_URL = "https://appj4-hlqj.onrender.com/api"
+  VITE_WS_URL = "https://appj4-hlqj.onrender.com"
+  VITE_APP_NAME = "Gestor de Inventario J4 Pro"
+  VITE_APP_VERSION = "2.0.0"
+  VITE_DEBUG = "false"
+
+# Headers personalizados para seguridad y CORS
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"

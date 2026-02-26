@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 
+    Configuración de seguridad de red para permitir conexiones HTTP (cleartext)
+    Esto es necesario para conectarse a servidores en la red local (LAN)
+    que usan HTTP en lugar de HTTPS.
+    -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -1,0 +1,21 @@
+# Archivos ignorados por EAS Build para reducir tamaño
+node_modules/
+.expo/
+dist/
+web-build/
+android/
+ios/
+.git/
+*.apk
+*.aab
+*.ipa
+npm-debug.log
+yarn-error.log
+android_backup/
+dist-installer/
+tmp/
+temp/
+# Ignorar instaladores de escritorio si estuvieran aquí
+*.exe
+*.dmg
+*.AppImage

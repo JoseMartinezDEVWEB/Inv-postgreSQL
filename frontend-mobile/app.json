@@ -1,0 +1,86 @@
+{
+  "expo": {
+    "name": "Gestor de Inventario J4 Pro",
+    "slug": "gestor-inventario-j4-pro",
+    "version": "2.0.2",
+    "icon": "./assets/icon.png",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.j4pro.gestor-inventario",
+      "icon": "./assets/ios/AppIcon.appiconset/icon_1024x1024@1x.png",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "Esta app usa Bluetooth para sincronizar productos con otros dispositivos sin internet.",
+        "NSBluetoothPeripheralUsageDescription": "Esta app usa Bluetooth para sincronizar productos con otros dispositivos sin internet.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.j4pro.gestorinventario",
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_ADVERTISE",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#FFFFFF"
+      }
+    },
+    "web": {},
+    "extra": {
+      "EXPO_PUBLIC_API_URL": "https://appj4-hlqj.onrender.com/api",
+      "DEFAULT_REMOTE_API_URL": "https://appj4-hlqj.onrender.com/api",
+      "API_ENDPOINTS": {
+        "local": "http://localhost:4000/api",
+        "emulator": "http://10.0.2.2:4000/api",
+        "lan": "http://192.168.1.100:4000/api",
+        "cloud": "https://appj4-hlqj.onrender.com/api"
+      },
+      "eas": {
+        "projectId": "2e3a6253-0653-4971-9d83-ed55345beb57"
+      }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permitir acceso a la cámara para escanear códigos QR"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "./plugins/withNetworkSecurityConfig.js",
+      "./plugins/withAndroidCleartextTraffic.js"
+    ],
+    "owner": "jose_alberto19"
+  }
+}

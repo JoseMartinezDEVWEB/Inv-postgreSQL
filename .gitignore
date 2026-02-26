@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-installer/
+build/
+.env
+.env.local
+temp_context.txt

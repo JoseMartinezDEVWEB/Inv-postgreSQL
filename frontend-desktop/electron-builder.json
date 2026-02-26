@@ -1,0 +1,67 @@
+{
+  "appId": "com.j4pro.tech-stock",
+  "productName": "TECH STOCK J4-PRO",
+  "copyright": "Copyright © 2026 J4 Pro",
+  "directories": {
+    "output": "C:/Users/ASUS/Desktop/instalador-inv",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "resources/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "resources/backend",
+      "to": "backend",
+      "filter": [
+        "**/*"
+      ]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "icon": "build/icon.ico",
+    "artifactName": "${productName}-Setup-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "TECH STOCK J4-PRO",
+    "installerIcon": "build/icon.ico",
+    "uninstallerIcon": "build/icon.ico",
+    "language": "1034",
+    "warningsAsErrors": false
+  },
+  "mac": {
+    "target": [
+      "dmg",
+      "zip"
+    ],
+    "category": "public.app-category.business",
+    "icon": "build/icon.png",
+    "artifactName": "${productName}-${version}.${ext}"
+  },
+  "linux": {
+    "target": [
+      "AppImage",
+      "deb"
+    ],
+    "category": "Office",
+    "icon": "build/icon.png",
+    "artifactName": "${productName}-${version}.${ext}"
+  }
+}

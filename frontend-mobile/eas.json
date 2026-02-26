@@ -1,0 +1,40 @@
+{
+  "cli": {
+    "version": ">= 7.6.0",
+    "appVersionSource": "remote",
+    "requireCommit": false
+  },
+  "build": {
+    "production": {
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://appj4-hlqj.onrender.com/api",
+        "EAS_BUILD_GRADLE_UNIVERSAL_APK": "true"
+      }
+    },
+    "production-local": {
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://appj4-hlqj.onrender.com/api",
+        "EAS_BUILD_GRADLE_UNIVERSAL_APK": "true"
+      }
+    },
+    "preview": {
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EAS_BUILD_GRADLE_UNIVERSAL_APK": "true"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
