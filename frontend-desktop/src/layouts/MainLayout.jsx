@@ -23,7 +23,7 @@ import ButtonComponent from '../components/ui/Button'
 import logoApp from '../img/logo_transparent.png'
 
 const MainLayout = ({ children }) => {
-    const { user, logout } = useAuth()
+    const { user, logout, hasRole } = useAuth()
     const { unreadCount } = useNotification()
     const location = useLocation()
     const navigate = useNavigate()
@@ -39,10 +39,10 @@ const MainLayout = ({ children }) => {
     ]
 
     // Agregar opciones de colaboración para contables, administradores y contadores
-    const navigation = user?.rol === 'contable' || user?.rol === 'administrador' || user?.rol === 'contador'
+    const navigation = hasRole('contable') || hasRole('administrador') || hasRole('contador')
         ? [
             ...navigationBase,
-            ...(user?.rol === 'contable' || user?.rol === 'administrador'
+            ...(hasRole('contable') || hasRole('administrador')
                 ? [{ name: 'Usuarios', href: '/usuarios', icon: UserPlus }]
                 : []),
             { name: 'Invitaciones', href: '/invitaciones', icon: QrCode },

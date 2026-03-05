@@ -22,7 +22,7 @@ const Inventarios = () => {
     clienteNegocio: '',
     notas: '',
   })
-  
+
   // Estados para el modal de inventarios por cliente
   const [showClientInventoriesModal, setShowClientInventoriesModal] = useState(false)
   const [selectedClientForInventories, setSelectedClientForInventories] = useState(null)
@@ -31,11 +31,11 @@ const Inventarios = () => {
     hasta: '',
     estado: 'todos'
   })
-  
+
   // Estado para modal de confirmación de eliminación
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [sesionToDelete, setSesionToDelete] = useState(null)
-  
+
   const queryClient = useQueryClient()
   const { user, isAuthenticated, token } = useAuth()
 
@@ -55,30 +55,30 @@ const Inventarios = () => {
   )
 
   // Obtener clientes usando el hook personalizado
-  const { 
-    clientes: clientesData, 
-    clientesOptions, 
-    isLoading: clientesLoading, 
+  const {
+    clientes: clientesData,
+    clientesOptions,
+    isLoading: clientesLoading,
     error: clientesError,
     refetch: refetchClientes
   } = useClientes({
     enabled: isAuthenticated,
     refetchOnWindowFocus: false
   })
-  
+
   // Obtener inventarios por cliente
   const { data: clientInventoriesData, isLoading: clientInventoriesLoading, refetch: refetchClientInventories } = useQuery(
-    ['clientInventories', selectedClientForInventories?._id, dateFilter],
+    ['clientInventories', selectedClientForInventories?.id, dateFilter],
     () => {
-      if (!selectedClientForInventories?._id) return null
+      if (!selectedClientForInventories?.id) return null
       const params = {}
       if (dateFilter.desde) params.fechaDesde = dateFilter.desde
       if (dateFilter.hasta) params.fechaHasta = dateFilter.hasta
       if (dateFilter.estado !== 'todos') params.estado = dateFilter.estado
-      return sesionesApi.getByClient(selectedClientForInventories._id, params)
+      return sesionesApi.getByClient(selectedClientForInventories.id, params)
     },
     {
-      enabled: !!selectedClientForInventories?._id,
+      enabled: !!selectedClientForInventories?.id,
       select: (response) => {
         // La estructura es: { data: { exito: true, datos: { sesiones } } }
         return response?.data?.datos
@@ -94,18 +94,18 @@ const Inventarios = () => {
       setIsModalOpen(false)
       resetForm()
       // Redirigir a la sesión creada
-      const sesionId = response.data.datos?.sesion?._id || response.data.sesion?._id
+      const sesionId = response.data.datos?.sesion?.id || response.data.sesion?.id
       if (sesionId) {
         window.location.href = `/inventarios/${sesionId}`
       }
     },
     onError: (error) => {
       console.error('❌ Error al crear sesión:', error)
-      
+
       // Verificar si el error es por sesión activa existente
       if (error.response?.status === 400 && error.response?.data?.datos?.sesionActiva) {
         const sesionActivaId = error.response.data.datos.sesionActiva
-        
+
         // Mostrar mensaje personalizado con opción de ir a la sesión activa
         toast.error(
           (t) => (
@@ -132,10 +132,10 @@ const Inventarios = () => {
           ),
           { duration: 8000 }
         )
-        
+
         // Cerrar el modal
         setIsModalOpen(false)
-        
+
         // Opcional: Redirigir automáticamente después de 3 segundos
         setTimeout(() => {
           window.location.href = `/inventarios/${sesionActivaId}`
@@ -180,7 +180,7 @@ const Inventarios = () => {
     if (sesion) {
       setSelectedSesion(sesion)
       setFormData({
-        clienteNegocio: sesion.clienteNegocio?._id || '',
+        clienteNegocio: sesion.clienteNegocio?.id || '',
         notas: sesion.notas || '',
       })
     } else {
@@ -192,34 +192,33 @@ const Inventarios = () => {
   // Manejar envío del formulario
   const handleSubmit = (e) => {
     e.preventDefault()
-    
+
     // Validar que se haya seleccionado un cliente
     if (!formData.clienteNegocio) {
       toast.error('Por favor selecciona un cliente')
       return
     }
-    
-    // Validar que el ID tenga 24 caracteres
-    const clienteId = String(formData.clienteNegocio).trim()
-    if (clienteId.length !== 24) {
-      toast.error(`ID de cliente inválido (${clienteId.length} caracteres, se requieren 24)`)
-      console.error('❌ ID inválido:', clienteId, 'Longitud:', clienteId.length)
+
+    // Validar que el ID sea válido (número para PostgreSQL o string para UUID)
+    const clienteIdValue = formData.clienteNegocio
+    if (!clienteIdValue) {
+      toast.error('ID de cliente inválido')
       return
     }
-    
-    // Preparar datos para enviar
+
+    // Preparar datos para enviar - el backend espera clienteNegocioId
     const datosEnviar = {
-      clienteNegocio: clienteId,
+      clienteNegocioId: clienteIdValue,
       notas: formData.notas || ''
     }
-    
+
     createMutation.mutate(datosEnviar)
   }
 
   // Manejar completar sesión
   const handleComplete = (sesion) => {
     if (window.confirm(`¿Estás seguro de completar la sesión ${sesion.numeroSesion}?`)) {
-      completeMutation.mutate(sesion._id)
+      completeMutation.mutate(sesion.id)
     }
   }
 
@@ -271,7 +270,7 @@ const Inventarios = () => {
         return <Clock className="w-4 h-4" />
     }
   }
-  
+
   // Abrir modal de inventarios por cliente
   const openClientInventoriesModal = (cliente) => {
     setSelectedClientForInventories(cliente)
@@ -282,20 +281,20 @@ const Inventarios = () => {
     })
     setShowClientInventoriesModal(true)
   }
-  
+
   // Calcular estadísticas de inventarios del cliente
   const getClientInventoriesStats = () => {
     if (!clientInventoriesData?.sesiones) return null
-    
+
     const sesiones = clientInventoriesData.sesiones
     const totalSesiones = sesiones.length
     const sesionesCompletadas = sesiones.filter(s => s.estado === 'completada').length
     const sesionesEnProgreso = sesiones.filter(s => s.estado === 'en_progreso' || s.estado === 'iniciada').length
     const sesionesCanceladas = sesiones.filter(s => s.estado === 'cancelada').length
-    
+
     const valorTotal = sesiones.reduce((sum, s) => sum + (s.totales?.valorTotalInventario || 0), 0)
     const totalProductos = sesiones.reduce((sum, s) => sum + (s.totales?.totalProductosContados || 0), 0)
-    
+
     return {
       totalSesiones,
       sesionesCompletadas,
@@ -332,7 +331,7 @@ const Inventarios = () => {
       key: 'clienteNegocio',
       title: 'Cliente',
       render: (_, row) => (
-        <div 
+        <div
           className="cursor-pointer hover:bg-blue-50 p-2 rounded transition-colors"
           onClick={() => openClientInventoriesModal(row.clienteNegocio)}
           title="Click para ver todos los inventarios de este cliente"
@@ -346,9 +345,9 @@ const Inventarios = () => {
       key: 'estado',
       title: 'Estado',
       render: (value) => (
-        <StatusBadge 
-          status={value.replace('_', ' ').toUpperCase()} 
-          variant={getEstadoColor(value)} 
+        <StatusBadge
+          status={value.replace('_', ' ').toUpperCase()}
+          variant={getEstadoColor(value)}
         />
       ),
     },
@@ -372,7 +371,7 @@ const Inventarios = () => {
       render: (_, row) => (
         <TableActions>
           {row.estado === 'iniciada' || row.estado === 'en_progreso' ? (
-            <Link to={`/inventarios/${row._id}`}>
+            <Link to={`/inventarios/${row.id}`}>
               <Button
                 variant="primary"
                 size="sm"
@@ -383,7 +382,7 @@ const Inventarios = () => {
               </Button>
             </Link>
           ) : (
-            <Link to={`/inventarios/${row._id}`}>
+            <Link to={`/inventarios/${row.id}`}>
               <Button
                 variant="ghost"
                 size="sm"
@@ -393,7 +392,7 @@ const Inventarios = () => {
               </Button>
             </Link>
           )}
-          
+
           {row.estado === 'iniciada' || row.estado === 'en_progreso' ? (
             <>
               <Button
@@ -427,7 +426,7 @@ const Inventarios = () => {
           <h1 className="heading-responsive text-gray-900">Inventarios</h1>
           <p className="text-responsive text-gray-600 mt-1">Gestiona las sesiones de inventario</p>
         </div>
-        
+
         <Button
           variant="primary"
           icon={<Plus className="w-4 h-4" />}
@@ -519,7 +518,7 @@ const Inventarios = () => {
               </div>
             )}
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Notas</label>
             <textarea
@@ -704,7 +703,7 @@ const Inventarios = () => {
                 <div className="space-y-4">
                   {clientInventoriesData.sesiones.map((sesion) => (
                     <div
-                      key={sesion._id}
+                      key={sesion.id}
                       className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
                     >
                       <div className="flex items-start justify-between">
@@ -713,9 +712,9 @@ const Inventarios = () => {
                             <h3 className="text-lg font-semibold text-gray-900">
                               Sesión #{sesion.numeroSesion}
                             </h3>
-                            <StatusBadge 
-                              status={sesion.estado.replace('_', ' ').toUpperCase()} 
-                              variant={getEstadoColor(sesion.estado)} 
+                            <StatusBadge
+                              status={sesion.estado.replace('_', ' ').toUpperCase()}
+                              variant={getEstadoColor(sesion.estado)}
                             />
                             {(sesion.estado === 'iniciada' || sesion.estado === 'en_progreso') && (
                               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
@@ -723,7 +722,7 @@ const Inventarios = () => {
                               </span>
                             )}
                           </div>
-                          
+
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                             <div>
                               <p className="text-gray-500">Fecha</p>
@@ -754,7 +753,7 @@ const Inventarios = () => {
                               </p>
                             </div>
                           </div>
-                          
+
                           {sesion.notas && (
                             <div className="mt-3 p-3 bg-gray-50 rounded">
                               <p className="text-sm text-gray-600">
@@ -763,10 +762,10 @@ const Inventarios = () => {
                             </div>
                           )}
                         </div>
-                        
+
                         <div className="ml-4 flex flex-col space-y-2">
                           {sesion.estado === 'iniciada' || sesion.estado === 'en_progreso' ? (
-                            <Link to={`/inventarios/${sesion._id}`}>
+                            <Link to={`/inventarios/${sesion.id}`}>
                               <Button
                                 variant="primary"
                                 size="sm"
@@ -777,7 +776,7 @@ const Inventarios = () => {
                               </Button>
                             </Link>
                           ) : (
-                            <Link to={`/inventarios/${sesion._id}`}>
+                            <Link to={`/inventarios/${sesion.id}`}>
                               <Button
                                 variant="outline"
                                 size="sm"

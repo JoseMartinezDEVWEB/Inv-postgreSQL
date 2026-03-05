@@ -54,7 +54,7 @@ const Usuarios = () => {
 
   const handleCrearUsuario = async (e) => {
     e.preventDefault();
-    
+
     if (!formData.nombre || !formData.email || !formData.password) {
       toast.error('Por favor completa todos los campos requeridos');
       return;
@@ -81,7 +81,7 @@ const Usuarios = () => {
 
   const handleEditarUsuario = async (e) => {
     e.preventDefault();
-    
+
     try {
       const payload = {
         nombre: formData.nombre,
@@ -108,7 +108,7 @@ const Usuarios = () => {
 
   const handleCambiarPassword = async (e) => {
     e.preventDefault();
-    
+
     if (!formData.password || formData.password.length < 6) {
       toast.error('La contraseña debe tener al menos 6 caracteres');
       return;
@@ -262,26 +262,24 @@ const Usuarios = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        usuario.rol === 'contador' 
-                          ? 'bg-blue-100 text-blue-800' 
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${usuario.rol?.toLowerCase() === 'contador'
+                          ? 'bg-blue-100 text-blue-800'
                           : 'bg-green-100 text-green-800'
-                      }`}>
-                        {usuario.rol === 'contador' ? 'Contador' : 'Colaborador'}
+                        }`}>
+                        {usuario.rol?.toLowerCase() === 'contador' ? 'Contador' : 'Colaborador'}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        usuario.activo 
-                          ? 'bg-green-100 text-green-800' 
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${usuario.activo
+                          ? 'bg-green-100 text-green-800'
                           : 'bg-red-100 text-red-800'
-                      }`}>
+                        }`}>
                         {usuario.activo ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
                     {hasRole('administrador') && (
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {usuario.rol === 'contador' ? (usuario.limiteColaboradores ?? '—') : '—'}
+                        {usuario.rol?.toLowerCase() === 'contador' ? (usuario.limiteColaboradores ?? '—') : '—'}
                       </td>
                     )}
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">

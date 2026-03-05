@@ -15,7 +15,7 @@ const Login = () => {
   const navigate = useNavigate()
   
   const [formData, setFormData] = useState({
-    email: '', // Puede ser email o nombre de usuario
+    credencial: '',
     password: '',
   })
   
@@ -48,8 +48,8 @@ const Login = () => {
   const validateForm = () => {
     const newErrors = {}
     
-    if (!formData.email || formData.email.trim() === '') {
-      newErrors.email = 'El correo electrónico o usuario es requerido'
+    if (!formData.credencial || formData.credencial.trim() === '') {
+      newErrors.credencial = 'El correo electrónico o usuario es requerido'
     }
     
     if (!formData.password) {
@@ -194,11 +194,11 @@ const Login = () => {
             {/* Email o Usuario */}
             <Input
               label="Correo electrónico o Usuario"
-              name="email"
+              name="credencial"
               type="text"
-              value={formData.email}
+              value={formData.credencial}
               onChange={handleChange}
-              error={errors.email}
+              error={errors.credencial}
               leftIcon={<Mail className="w-5 h-5" />}
               placeholder="tu@email.com o nombre de usuario"
               required

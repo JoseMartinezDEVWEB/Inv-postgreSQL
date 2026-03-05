@@ -54,9 +54,10 @@ const Invitaciones = () => {
     try {
       setLoading(true);
       const response = await api.get('/invitaciones/mis-invitaciones');
-      setInvitaciones(response.data.datos);
+      setInvitaciones(response.data.datos || []);
     } catch (err) {
       console.error('Error al cargar invitaciones:', err);
+      setInvitaciones([]);
       toast.error('Error al cargar las invitaciones');
     } finally {
       setLoading(false);
@@ -67,9 +68,10 @@ const Invitaciones = () => {
     try {
       setLoadingColaboradores(true);
       const response = await api.get('/invitaciones/colaboradores');
-      setColaboradores(response.data.datos);
+      setColaboradores(response.data.datos || []);
     } catch (err) {
       console.error('Error al cargar colaboradores:', err);
+      setColaboradores([]);
       toast.error('Error al cargar colaboradores');
     } finally {
       setLoadingColaboradores(false);
@@ -102,9 +104,10 @@ const Invitaciones = () => {
     try {
       setLoadingSolicitudes(true);
       const response = await solicitudesConexionApi.listarPendientes();
-      setSolicitudesPendientes(response.data.datos);
+      setSolicitudesPendientes(response.data.datos || []);
     } catch (err) {
       console.error('Error al cargar solicitudes:', err);
+      setSolicitudesPendientes([]);
     } finally {
       setLoadingSolicitudes(false);
     }
@@ -113,9 +116,10 @@ const Invitaciones = () => {
   const cargarColaboradoresConectados = async () => {
     try {
       const response = await solicitudesConexionApi.listarConectados();
-      setColaboradoresConectados(response.data.datos);
+      setColaboradoresConectados(response.data.datos || []);
     } catch (err) {
       console.error('Error al cargar conectados:', err);
+      setColaboradoresConectados([]);
     }
   };
 

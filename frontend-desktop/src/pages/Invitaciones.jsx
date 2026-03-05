@@ -43,13 +43,13 @@ const Invitaciones = () => {
     cargarColaboradores();
     cargarSolicitudesPendientes();
     cargarColaboradoresConectados();
-    
+
     // Polling cada 30 segundos para actualizar solicitudes y conectados
     const interval = setInterval(() => {
       cargarSolicitudesPendientes();
       cargarColaboradoresConectados();
     }, 30000); // Aumentado de 10s a 30s para reducir solicitudes
-    
+
     return () => clearInterval(interval);
   }, []);
 
@@ -136,7 +136,7 @@ const Invitaciones = () => {
 
   const handleRechazarSolicitud = async (solicitudId) => {
     if (!confirm('¿Estás seguro de rechazar esta solicitud?')) return;
-    
+
     try {
       await solicitudesConexionApi.rechazar(solicitudId);
       toast.success('Solicitud rechazada');
@@ -170,7 +170,7 @@ const Invitaciones = () => {
           mapeoIds[p.id] = p.id;
         }
       });
-      
+
       await solicitudesConexionApi.sincronizar(solicitudSeleccionada, Object.keys(mapeoIds));
       toast.success(`${Object.keys(mapeoIds).length} productos sincronizados exitosamente`);
       setModalProductosOffline(false);
@@ -227,7 +227,8 @@ const Invitaciones = () => {
   const handleGenerarQRConexion = async () => {
     try {
       setLoadingQRConexion(true);
-      const response = await api.get('/red/info');
+      // Agregar cache-buster para asegurar datos frescos
+      const response = await api.get(`/red/info?t=${Date.now()}`);
       const data = response?.data;
 
       if (!data?.ok || !data?.qrDataUrl || !data?.qrPayload) {
@@ -273,10 +274,10 @@ const Invitaciones = () => {
       expirada: { color: 'bg-red-100 text-red-800', icon: XCircle, texto: 'Expirada' },
       cancelada: { color: 'bg-gray-100 text-gray-800', icon: Ban, texto: 'Cancelada' }
     };
-    
+
     const badge = badges[estado] || badges.pendiente;
     const Icon = badge.icon;
-    
+
     return (
       <span className={`px-2 py-1 inline-flex items-center gap-1 text-xs leading-5 font-semibold rounded-full ${badge.color}`}>
         <Icon className="w-3 h-3" />
@@ -293,9 +294,9 @@ const Invitaciones = () => {
     );
   }
 
-  const countColaboradores = (colaboradores || []).filter(c => c.rol === 'colaborador').length
+  const countColaboradores = (colaboradores || []).filter(c => c.rol?.toLowerCase() === 'colaborador').length
   const limiteColab = user?.limiteColaboradores
-  const showLimite = hasRole('contador') && limiteColab != null
+  const showLimite = (hasRole('contador') || hasRole('contable')) && limiteColab != null
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -372,12 +373,11 @@ const Invitaciones = () => {
                 invitaciones.map((invitacion) => (
                   <tr key={invitacion._id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        invitacion.rol === 'contador' 
-                          ? 'bg-blue-100 text-blue-800' 
-                          : 'bg-green-100 text-green-800'
-                      }`}>
-                        {invitacion.rol === 'contador' ? 'Contador' : 'Colaborador'}
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${invitacion.rol === 'contador'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-green-100 text-green-800'
+                        }`}>
+                        {invitacion.rol?.toLowerCase() === 'contador' ? 'Contador' : 'Colaborador'}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -484,7 +484,7 @@ const Invitaciones = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className="text-sm font-mono font-bold text-violet-600">
-                           {solicitud.metadata?.invitacionId ? 'Vía QR' : 'Manual'}
+                          {solicitud.metadata?.invitacionId ? 'Vía QR' : 'Manual'}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -579,11 +579,10 @@ const Invitaciones = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          colab.estadoConexion === 'conectado'
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}>
+                        <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${colab.estadoConexion === 'conectado'
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-gray-100 text-gray-800'
+                          }`}>
                           {colab.estadoConexion === 'conectado' ? (
                             <><Wifi className="w-3 h-3 mr-1" /> Conectado</>
                           ) : (
@@ -594,9 +593,9 @@ const Invitaciones = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {colab.ultimoPing || colab.ultimaConexion
                           ? new Date(colab.ultimoPing || colab.ultimaConexion).toLocaleString('es-MX', {
-                              dateStyle: 'short',
-                              timeStyle: 'short'
-                            })
+                            dateStyle: 'short',
+                            timeStyle: 'short'
+                          })
                           : 'Nunca'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -731,13 +730,13 @@ const Invitaciones = () => {
           {qrData && (
             <>
               <div className="bg-white p-4 rounded-lg inline-block">
-                <img 
-                  src={qrData.qrDataUrl} 
-                  alt="Código QR" 
+                <img
+                  src={qrData.qrDataUrl}
+                  alt="Código QR"
                   className="w-64 h-64 mx-auto"
                 />
               </div>
-              
+
               <div className="bg-gradient-to-r from-violet-50 to-purple-50 p-6 rounded-lg border-2 border-violet-200">
                 <h3 className="font-bold text-violet-900 mb-3 text-lg text-center">
                   Código de Acceso
@@ -758,7 +757,7 @@ const Invitaciones = () => {
                 </h3>
                 <ul className="space-y-1 text-sm text-blue-800">
                   <li><strong>Nombre:</strong> {qrData.nombre || 'Sin especificar'}</li>
-                  <li><strong>Rol:</strong> {qrData.rol === 'contador' ? 'Contador' : 'Colaborador'}</li>
+                  <li><strong>Rol:</strong> {qrData.rol?.toLowerCase() === 'contador' ? 'Contador' : 'Colaborador'}</li>
                   <li><strong>Expira:</strong> {new Date(qrData.expiraEn).toLocaleString('es-MX')}</li>
                   {qrData.duracionTexto && <li><strong>Duración:</strong> {qrData.duracionTexto}</li>}
                 </ul>
@@ -767,7 +766,7 @@ const Invitaciones = () => {
               <div className="text-sm text-gray-600">
                 <p>
                   El usuario debe escanear este código QR con la aplicación móvil
-                  para vincularse como {qrData.rol === 'contador' ? 'contador' : 'colaborador'}.
+                  para vincularse como {qrData.rol?.toLowerCase() === 'contador' ? 'contador' : 'colaborador'}.
                 </p>
               </div>
 
@@ -829,7 +828,7 @@ const Invitaciones = () => {
               <div className="bg-white p-4 rounded-lg text-left border border-slate-200">
                 <h3 className="font-semibold text-slate-900 mb-2">Payload del QR</h3>
                 <pre className="text-xs bg-slate-900 text-slate-100 p-3 rounded overflow-auto">
-{qrConexionData.qrPayload}
+                  {qrConexionData.qrPayload}
                 </pre>
               </div>
 
@@ -877,7 +876,7 @@ const Invitaciones = () => {
                   Revisa y sincroniza para agregarlos a la sesión de inventario.
                 </p>
               </div>
-              
+
               <div className="max-h-96 overflow-y-auto">
                 <div className="space-y-2">
                   {productosOffline.map((item, index) => (

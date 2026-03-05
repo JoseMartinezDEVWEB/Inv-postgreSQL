@@ -165,7 +165,7 @@ const InventarioDetalle = () => {
 
       setIsSearching(true)
       try {
-        const response = await productosApi.getByCliente(sesion?.clienteNegocio?._id, {
+        const response = await productosApi.getByCliente(sesion?.clienteNegocio?.id, {
           buscar: searchTerm,
           limite: 10,
           pagina: 1
@@ -209,7 +209,7 @@ const InventarioDetalle = () => {
     }
 
     addProductMutation.mutate({
-      producto: selectedProducto._id,
+      producto: selectedProducto.id,
       cantidadContada: parseFloat(cantidad)
     })
   }
@@ -645,7 +645,7 @@ const InventarioDetalle = () => {
                   <div className="absolute z-10 w-full mt-2 bg-white border-2 border-gray-200 rounded-lg shadow-xl max-h-64 overflow-y-auto">
                     {searchResults.map((producto) => (
                       <button
-                        key={producto._id}
+                        key={producto.id}
                         type="button"
                         onClick={() => handleSelectProduct(producto)}
                         className="w-full px-4 py-3 text-left hover:bg-blue-50 border-b border-gray-100 last:border-b-0 transition-colors"

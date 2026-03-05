@@ -9,7 +9,7 @@ import toast from 'react-hot-toast'
  */
 export const useClientes = (options = {}) => {
   const { isAuthenticated, user } = useAuth()
-  
+
   const {
     enabled = true,
     refetchOnWindowFocus = false,
@@ -31,11 +31,11 @@ export const useClientes = (options = {}) => {
       })
 
       console.log('📦 Respuesta completa:', response)
-      
+
       // El backend devuelve: { exito: true, datos: { datos: [...], paginacion: {...} } }
       // handleApiResponse devuelve: { datos: [...], paginacion: {...} }
       const data = handleApiResponse(response)
-      
+
       // Extraer el array de clientes
       const clientes = data?.datos || []
 
@@ -76,10 +76,10 @@ export const useClientes = (options = {}) => {
 
   // Transformar datos para el SelectSearch
   const clientesOptions = query.data?.map(cliente => {
-    // Asegurar que el ID sea string y tenga 24 caracteres
-    const clienteId = String(cliente._id).trim()
+    // El backend PostgreSQL devuelve 'id', MongoDB usaba '_id'
+    const clienteId = String(cliente.id || cliente._id).trim()
     console.log('🔍 Cliente:', cliente.nombre, '| ID:', clienteId, '| Longitud:', clienteId.length)
-    
+
     return {
       value: clienteId,
       label: `${cliente.nombre} - ${cliente.telefono || 'Sin teléfono'}`,
@@ -104,7 +104,7 @@ export const useClientes = (options = {}) => {
  */
 export const useBuscarClientes = (terminoBusqueda = '') => {
   const { isAuthenticated } = useAuth()
-  
+
   return useQuery(
     ['clientes', 'buscar', terminoBusqueda],
     async () => {
@@ -116,7 +116,7 @@ export const useBuscarClientes = (terminoBusqueda = '') => {
 
       // Manejar diferentes estructuras de respuesta
       let clientes = []
-      
+
       if (response?.data?.exito) {
         clientes = response.data.datos?.clientes || []
       } else if (response?.data?.clientes) {

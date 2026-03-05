@@ -78,14 +78,15 @@ api.interceptors.response.use(
       }
     }
 
-    // Manejar otros errores (solo si no es 400 - Bad Request que se maneja en handleApiError)
-    if (error.response?.status >= 500) {
+    // Manejar otros errores
+    if (error.response?.status === 403) {
+      toast.error('No tienes permisos suficientes para realizar esta acción.')
+      // No eliminamos tokens ni redirigimos, ya que puede ser solo un permiso denegado
+    } else if (error.response?.status >= 500) {
       toast.error('Error del servidor. Por favor, intente más tarde.')
     } else if (error.response?.status === 404) {
       // No mostrar toast para 404, se maneja en cada llamada específica
       console.log('Recurso no encontrado:', error.config?.url)
-    } else if (error.response?.status === 403) {
-      toast.error('No tiene permisos para realizar esta acción.')
     } else if (error.code === 'ECONNABORTED') {
       toast.error('Tiempo de espera agotado. Verifique su conexión.')
     } else if (!error.response) {

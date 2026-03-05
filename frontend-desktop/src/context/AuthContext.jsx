@@ -253,20 +253,20 @@ export const AuthProvider = ({ children }) => {
 
   // Función para verificar si el usuario tiene un rol específico
   const hasRole = (role) => {
-    return state.user?.rol === role
+    return state.user?.rol?.toLowerCase() === role?.toLowerCase()
   }
 
   // Función para verificar si el usuario tiene permisos
   const hasPermission = (permission) => {
     if (!state.user) return false
 
-    const role = state.user.rol
+    const role = (state.user.rol || '').toLowerCase()
 
     // Definir permisos por rol
     const permissions = {
       administrador: ['all'],
       contable: ['inventarios', 'reportes', 'clientes'],
-      contador: ['inventarios', 'clientes'],
+      contador: ['inventarios', 'clientes', 'invitaciones'], // Añadido invitaciones explícitamente
     }
 
     const userPermissions = permissions[role] || []

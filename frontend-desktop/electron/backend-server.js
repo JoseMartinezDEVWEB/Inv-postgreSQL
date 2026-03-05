@@ -52,8 +52,8 @@ class BackendServer {
   }
 
   getBackendPath() {
-    // En desarrollo: usar el backend-sqlite del proyecto
-    const devPath = path.join(__dirname, '../../backend-sqlite')
+    // En desarrollo: usar el backend del proyecto
+    const devPath = path.join(__dirname, '../../backend')
     if (fs.existsSync(devPath)) {
       return devPath
     }
@@ -133,12 +133,11 @@ class BackendServer {
       logToFile(`Backend path: ${backendPath}`)
 
       let command = 'node'
-      let args = ['src/server.js']
+      let args = ['server.js']
       let spawnEnv = {
         ...process.env,
         PORT: String(this.port),
-        NODE_ENV: isProduction ? 'production' : 'development',
-        DB_PATH: path.join(backendPath, 'database', 'inventario.db')
+        NODE_ENV: isProduction ? 'production' : 'development'
       }
 
       if (isProduction) {

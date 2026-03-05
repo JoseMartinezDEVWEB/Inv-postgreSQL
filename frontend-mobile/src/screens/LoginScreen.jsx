@@ -24,7 +24,7 @@ const LoginScreen = ({ navigation }) => {
   const { login, isLoading, loginAsCollaborator } = useAuth()
   const { showAnimation } = useLoader()
   const [formData, setFormData] = useState({
-    email: '',
+    credencial: '',
     password: '',
   })
   const [showPassword, setShowPassword] = useState(false)
@@ -55,8 +55,8 @@ const LoginScreen = ({ navigation }) => {
   const validateForm = () => {
     const newErrors = {}
 
-    if (!formData.email) {
-      newErrors.email = 'El email o usuario es requerido'
+    if (!formData.credencial) {
+      newErrors.credencial = 'El email o usuario es requerido'
     }
     // NO validar formato de email, puede ser nombre de usuario
 
@@ -232,13 +232,13 @@ const LoginScreen = ({ navigation }) => {
                   style={styles.input}
                   placeholder="Email o Usuario"
                   placeholderTextColor="#94a3b8"
-                  value={formData.email}
-                  onChangeText={(value) => handleChange('email', value)}
+                  value={formData.credencial}
+                  onChangeText={(value) => handleChange('credencial', value)}
                   autoCapitalize="none"
                   autoCorrect={false}
                 />
               </View>
-              {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
+              {errors.credencial && <Text style={styles.errorText}>{errors.credencial}</Text>}
             </View>
 
             {/* Contraseña */}

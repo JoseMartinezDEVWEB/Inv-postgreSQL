@@ -97,7 +97,7 @@ export const resolveApiBaseUrl = async () => {
     candidates = [
       env.VITE_API_URL,           // Variable principal
       env.VITE_API_URL_LAN,       // URL LAN (desarrollo local en red)
-      'http://localhost:4000/api', // Desarrollo local (puerto PostgreSQL backend)
+      'http://localhost:4500/api', // Desarrollo local (puerto PostgreSQL backend)
       env.VITE_API_URL_REMOTE,    // Remoto como fallback
       fallbackCloudUrl,           // Último recurso
     ];
@@ -156,7 +156,7 @@ export const resolveWebSocketUrl = async () => {
     candidates = [
       env.VITE_WS_URL,
       env.VITE_WS_URL_LAN,
-      'http://localhost:4000',
+      'http://localhost:4500',
       env.VITE_WS_URL_REMOTE,
       fallbackCloudUrl,
     ];
@@ -233,8 +233,8 @@ export const getConfig = () => {
     // No mostrar warning en consola para evitar confusión - solo retornar valores por defecto
     // Retornar configuración por defecto silenciosamente
     return {
-      apiUrl: 'http://localhost:4000/api',
-      wsUrl: 'http://localhost:4000',
+      apiUrl: 'http://localhost:4500/api',
+      wsUrl: 'http://localhost:4500',
       environment: 'development',
       appName: 'Gestor de Inventario J4 Pro',
       appVersion: '2.0.0',

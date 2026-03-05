@@ -28,9 +28,9 @@ const Usuarios = () => {
     limiteColaboradores: ''
   });
 
-  // Verificar que el usuario sea contable
+  // Verificar que el usuario sea contador o administrador
   useEffect(() => {
-    if (!hasRole('contable') && !hasRole('administrador')) {
+    if (!hasRole('contador') && !hasRole('administrador')) {
       toast.error('No tienes permisos para acceder a esta página');
       return;
     }

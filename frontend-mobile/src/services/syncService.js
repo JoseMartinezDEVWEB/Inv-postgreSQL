@@ -143,26 +143,19 @@ class SyncService {
       }
 
       // 3. Preparar el payload para el nuevo endpoint /api/sincronizar
-      // Convertimos el formato de SQLite al formato que espera Sequelize
-      const registrosParaEnviar = []
-
-      for (const tabla of tablas) {
-        cambios[tabla].forEach(reg => {
-          registrosParaEnviar.push({
-            cantidad: reg.cantidad,
-            tipoMovimiento: reg.tipoMovimiento || 'conteo',
-            productoId: reg.productoId,
-            fecha: reg.timestamp || reg.fecha,
-            notas: reg.notas || `Sincronizado desde dispositivo ${this.deviceId}`,
-            dispositivoId: this.deviceId
-          })
-        })
+      // Clasificamos por tabla en lugar de empaquetar todo ciegamente como Inventario
+      const payloadSync = {
+        clientes: cambios.clientes || [],
+        productos: cambios.productos || [],
+        sesiones: cambios.sesiones || [],
+        productos_contados: cambios.productos_contados || [],
+        dispositivoId: this.deviceId
       }
 
       let response
       try {
         // Enviar al nuevo endpoint de la API central
-        response = await api.post('/sincronizar', { registros: registrosParaEnviar })
+        response = await api.post('/sincronizar', payloadSync)
         this.last401Timestamp = 0
       } catch (error) {
         if (error.response?.status === 401) {
