@@ -35,7 +35,7 @@ const Invitaciones = () => {
   });
 
   useEffect(() => {
-    if (!hasRole('contable') && !hasRole('administrador') && !hasRole('contador')) {
+    if (!hasRole('contable') && !hasRole('administrador') && !hasRole('contable')) {
       toast.error('No tienes permisos para acceder a esta página');
       return;
     }
@@ -296,7 +296,7 @@ const Invitaciones = () => {
 
   const countColaboradores = (colaboradores || []).filter(c => c.rol?.toLowerCase() === 'colaborador').length
   const limiteColab = user?.limiteColaboradores
-  const showLimite = (hasRole('contador') || hasRole('contable')) && limiteColab != null
+  const showLimite = (hasRole('contable') || hasRole('contable')) && limiteColab != null
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -325,7 +325,7 @@ const Invitaciones = () => {
             <Wifi className="w-5 h-5" />
             {loadingQRConexion ? 'Generando...' : 'QR Conexión Móvil'}
           </Button>
-          {(hasRole('contable') || hasRole('administrador') || hasRole('contador')) && (
+          {(hasRole('contable') || hasRole('administrador') || hasRole('contable')) && (
             <Button
               onClick={() => setModalGenerar(true)}
               className="flex items-center gap-2"
@@ -371,13 +371,13 @@ const Invitaciones = () => {
                 </tr>
               ) : (
                 invitaciones.map((invitacion) => (
-                  <tr key={invitacion._id} className="hover:bg-gray-50">
+                  <tr key={invitacion.id || invitacion._id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${invitacion.rol === 'contador'
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${invitacion.rol === 'contable'
                         ? 'bg-blue-100 text-blue-800'
                         : 'bg-green-100 text-green-800'
                         }`}>
-                        {invitacion.rol?.toLowerCase() === 'contador' ? 'Contador' : 'Colaborador'}
+                        {invitacion.rol?.toLowerCase() === 'contable' ? 'contable' : 'Colaborador'}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -410,7 +410,7 @@ const Invitaciones = () => {
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       {invitacion.estado === 'pendiente' && (hasRole('contable') || hasRole('administrador')) && (
                         <button
-                          onClick={() => handleCancelarInvitacion(invitacion._id)}
+                          onClick={() => handleCancelarInvitacion(invitacion.id || invitacion._id)}
                           className="text-red-600 hover:text-red-900"
                           title="Cancelar invitación"
                         >
@@ -476,7 +476,7 @@ const Invitaciones = () => {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {solicitudesPendientes.map((solicitud) => (
-                    <tr key={solicitud._id} className="hover:bg-gray-50">
+                    <tr key={solicitud.id || solicitud._id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">
                           {solicitud.nombreColaborador || solicitud.colaborador?.nombre || 'Desconocido'}
@@ -504,14 +504,14 @@ const Invitaciones = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div className="flex justify-end gap-2">
                           <button
-                            onClick={() => handleAceptarSolicitud(solicitud._id)}
+                            onClick={() => handleAceptarSolicitud(solicitud.id || solicitud._id)}
                             className="text-green-600 hover:text-green-900 flex items-center gap-1"
                             title="Autorizar"
                           >
                             <UserCheck className="w-5 h-5" />
                           </button>
                           <button
-                            onClick={() => handleRechazarSolicitud(solicitud._id)}
+                            onClick={() => handleRechazarSolicitud(solicitud.id || solicitud._id)}
                             className="text-red-600 hover:text-red-900 flex items-center gap-1"
                             title="Rechazar"
                           >
@@ -569,7 +569,7 @@ const Invitaciones = () => {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {colaboradoresConectados.map((colab) => (
-                    <tr key={colab._id} className="hover:bg-gray-50">
+                    <tr key={colab.id || colab._id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">
                           {colab.nombreColaborador || colab.colaborador?.nombre || 'Desconocido'}
@@ -610,7 +610,7 @@ const Invitaciones = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         {colab.productosOffline?.filter(p => !p.sincronizado).length > 0 && (
                           <button
-                            onClick={() => handleVerProductosOffline(colab._id)}
+                            onClick={() => handleVerProductosOffline(colab.id || colab._id)}
                             className="text-blue-600 hover:text-blue-900 flex items-center gap-1 ml-auto"
                             title="Sincronizar productos"
                           >
@@ -650,7 +650,7 @@ const Invitaciones = () => {
               required
             >
               <option value="colaborador">Colaborador</option>
-              <option value="contador">Contador</option>
+              <option value="contable">Contable</option>
             </select>
             <p className="mt-1 text-xs text-gray-500">
               Define el rol que tendrá el usuario que escanee este QR
@@ -757,7 +757,7 @@ const Invitaciones = () => {
                 </h3>
                 <ul className="space-y-1 text-sm text-blue-800">
                   <li><strong>Nombre:</strong> {qrData.nombre || 'Sin especificar'}</li>
-                  <li><strong>Rol:</strong> {qrData.rol?.toLowerCase() === 'contador' ? 'Contador' : 'Colaborador'}</li>
+                  <li><strong>Rol:</strong> {qrData.rol?.toLowerCase() === 'contable' ? 'contable' : 'Colaborador'}</li>
                   <li><strong>Expira:</strong> {new Date(qrData.expiraEn).toLocaleString('es-MX')}</li>
                   {qrData.duracionTexto && <li><strong>Duración:</strong> {qrData.duracionTexto}</li>}
                 </ul>
@@ -766,7 +766,7 @@ const Invitaciones = () => {
               <div className="text-sm text-gray-600">
                 <p>
                   El usuario debe escanear este código QR con la aplicación móvil
-                  para vincularse como {qrData.rol?.toLowerCase() === 'contador' ? 'contador' : 'colaborador'}.
+                  para vincularse como {qrData.rol?.toLowerCase() === 'contable' ? 'contable' : 'colaborador'}.
                 </p>
               </div>
 

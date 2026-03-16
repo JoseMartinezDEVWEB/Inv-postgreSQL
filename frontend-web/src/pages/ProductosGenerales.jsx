@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from 'react-query'
 import { productosApi, handleApiError, handleApiResponse } from '../services/api'
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  Edit, 
-  Trash2, 
+import {
+  Plus,
+  Search,
+  Filter,
+  Edit,
+  Trash2,
   Package,
   DollarSign,
   Tag,
@@ -173,11 +173,11 @@ const ProductosGenerales = () => {
     // Los productos ya vienen procesados del backend, solo necesitamos mostrarlos
     // El backend ya los ha creado/actualizado en la base de datos
     const toastId = toast.loading(`Procesando ${products.length} productos...`);
-    
+
     try {
       // Los productos ya están en la base de datos, solo invalidar la query
       queryClient.invalidateQueries('productos-generales');
-      
+
       toast.dismiss(toastId);
       toast.success(`Se importaron ${products.length} productos correctamente`);
     } catch (error) {
@@ -219,7 +219,7 @@ const ProductosGenerales = () => {
         buscar: '',
         categoria: ''
       })
-      
+
       const data = handleApiResponse(response)
       const todosLosProductos = data.productos || data.datos || []
 
@@ -398,7 +398,7 @@ const ProductosGenerales = () => {
         <div className="flex gap-2 items-center">
           {/* Colaboradores en línea (solo para admins) */}
           {user?.rol === 'administrador' && (
-            <div 
+            <div
               className="flex items-center space-x-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors"
               onClick={() => {
                 if (isConnected) {
@@ -471,11 +471,10 @@ const ProductosGenerales = () => {
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => handleCategoryFilter('')}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                selectedCategory === ''
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedCategory === ''
                   ? 'bg-primary-100 text-primary-700'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
+                }`}
             >
               Todas
             </button>
@@ -483,11 +482,10 @@ const ProductosGenerales = () => {
               <button
                 key={categoria}
                 onClick={() => handleCategoryFilter(categoria)}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  selectedCategory === categoria
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedCategory === categoria
                     ? 'bg-primary-100 text-primary-700'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
+                  }`}
               >
                 {categoria}
               </button>
@@ -530,7 +528,7 @@ const ProductosGenerales = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Productos Activos</p>
               <p className="text-2xl font-bold text-gray-900">
-                {productos.filter(p => p.activo !== false).length}
+                {paginacion.totalRegistros || 0}
               </p>
             </div>
           </div>

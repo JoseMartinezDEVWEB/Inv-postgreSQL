@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig(({ mode }) => {
   // Cargar variables de entorno
   const env = loadEnv(mode, process.cwd(), '')
-  
+
   return {
     plugins: [react()],
     server: {
@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
       host: true,
       proxy: {
         '/api': {
-          target: process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:3001',
+          target: env.VITE_API_URL || 'http://127.0.0.1:4500',
           changeOrigin: true,
           secure: false,
         },
@@ -28,8 +28,8 @@ export default defineConfig(({ mode }) => {
     // Variables de entorno por defecto
     define: {
       global: 'globalThis',
-      'import.meta.env.VITE_API_URL': JSON.stringify(env.VITE_API_URL || 'http://localhost:3001/api'),
-      'import.meta.env.VITE_WS_URL': JSON.stringify(env.VITE_WS_URL || 'http://localhost:3001'),
+      'import.meta.env.VITE_API_URL': JSON.stringify(env.VITE_API_URL || 'http://localhost:4500/api'),
+      'import.meta.env.VITE_WS_URL': JSON.stringify(env.VITE_WS_URL || 'http://localhost:4500'),
       'import.meta.env.VITE_APP_NAME': JSON.stringify(env.VITE_APP_NAME || 'Gestor de Inventario J4 Pro'),
       'import.meta.env.VITE_APP_VERSION': JSON.stringify(env.VITE_APP_VERSION || '1.0.0'),
       'import.meta.env.VITE_DEBUG': JSON.stringify(env.VITE_DEBUG || 'true'),

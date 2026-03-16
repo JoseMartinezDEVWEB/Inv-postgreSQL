@@ -6,7 +6,7 @@ const router = express.Router()
 
 // Todas las rutas de reportes requieren autenticación
 router.use(validarJWT)
-router.use(validarRol('contable', 'contador', 'administrador'))
+router.use(validarRol('contable', 'contable', 'administrador'))
 
 router.get('/estadisticas', reportesController.obtenerEstadisticas)
 router.get('/balance/:sesionId', reportesController.obtenerBalance)

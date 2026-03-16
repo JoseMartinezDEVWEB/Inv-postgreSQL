@@ -45,7 +45,7 @@ const upload = multer({
 
 // Todas las rutas requieren autenticación y rol de contable/contador/administrador
 router.use(validarJWT)
-router.use(validarRol('contable', 'contador', 'administrador'))
+router.use(validarRol('contable', 'contable', 'administrador'))
 
 // Ruta para verificar estado del procesador de PDF (debe ir antes de las rutas con :id)
 router.get('/importar-pdf/estado', (req, res, next) => {

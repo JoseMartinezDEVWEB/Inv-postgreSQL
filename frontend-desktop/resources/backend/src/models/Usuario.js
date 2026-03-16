@@ -41,7 +41,7 @@ class Usuario {
     // Hash del password
     const passwordHash = bcrypt.hashSync(password, 10)
 
-    const limite = (rol === 'contador' && limiteColaboradores != null) ? Number(limiteColaboradores) : null
+    const limite = (rol === 'contable' && limiteColaboradores != null) ? Number(limiteColaboradores) : null
 
     const stmt = db.prepare(`
       INSERT INTO usuarios (
@@ -354,7 +354,7 @@ class Usuario {
         COUNT(*) as total,
         SUM(CASE WHEN activo = 1 THEN 1 ELSE 0 END) as activos,
         SUM(CASE WHEN rol = 'administrador' THEN 1 ELSE 0 END) as administradores,
-        SUM(CASE WHEN rol = 'contable' OR rol = 'contador' THEN 1 ELSE 0 END) as contables,
+        SUM(CASE WHEN rol = 'contable' OR rol = 'contable' THEN 1 ELSE 0 END) as contables,
         SUM(CASE WHEN rol = 'colaborador' THEN 1 ELSE 0 END) as colaboradores
       FROM usuarios
     `)

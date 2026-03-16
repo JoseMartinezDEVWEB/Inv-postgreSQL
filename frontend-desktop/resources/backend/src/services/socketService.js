@@ -237,7 +237,7 @@ export const initializeSocket = (server) => {
     // Si es admin o contable, unirse a la sala de admin para recibir notificaciones
     const esAdminRelacionado = socket.usuario.rol === 'administrador' ||
       socket.usuario.rol === 'contable' ||
-      socket.usuario.rol === 'contador'
+      socket.usuario.rol === 'contable'
 
     if (esAdminRelacionado) {
       socket.join('sala_admins')

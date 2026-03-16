@@ -18,7 +18,7 @@ router.post('/:solicitudId/enviar-productos', solicitudesController.enviarProduc
 
 // Rutas protegidas (admin/contable)
 router.use(validarJWT)
-router.use(validarRol('contable', 'contador', 'administrador'))
+router.use(validarRol('contable', 'contable', 'administrador'))
 
 router.get('/pendientes', solicitudesController.listarPendientes)
 router.get('/conectados', solicitudesController.listarConectados)

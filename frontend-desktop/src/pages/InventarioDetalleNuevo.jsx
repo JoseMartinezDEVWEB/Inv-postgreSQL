@@ -50,7 +50,7 @@ const InventarioDetalleNuevo = () => {
   const { id } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { user } = useAuth()
+  const { user, hasRole } = useAuth()
   // Referencias para inputs de búsqueda y formularios
   const searchInputRef = useRef(null)
   const cantidadInputRef = useRef(null)
@@ -343,35 +343,39 @@ const InventarioDetalleNuevo = () => {
 
       for (const colab of colaboradores) {
         try {
-          const prodResponse = await solicitudesConexionApi.obtenerProductosOffline(colab._id)
+          // Asegurar extracción correcta del ID del colaborador (inconsistencia SQLite vs backend)
+          const colabId = colab.id || colab._id || (colab.colaborador && (colab.colaborador.id || colab.colaborador._id))
+
+          if (!colabId) {
+            console.error('⚠️ [SYNC] No se pudo obtener el ID del colaborador:', colab)
+            continue
+          }
+
+          const prodResponse = await solicitudesConexionApi.obtenerProductosOffline(colabId)
           const productosOffline = prodResponse.data?.datos || []
           if (productosOffline.length > 0) {
-            // Transformar productos del backend a estructura esperada por el frontend
-            // El backend devuelve: { id, nombre, costo, unidad, categoria, sincronizado, ... }
-            // El frontend espera: { temporalId, productoData: { nombre, cantidad, costo, ... } }
             const productosTransformados = productosOffline
-              .filter(p => !p.sincronizado) // Solo productos no sincronizados
+              .filter(p => !p.sincronizado)
               .map(p => ({
-                temporalId: p.id, // Usar el ID del backend como temporalId
+                temporalId: p.id || p._id,
                 productoData: {
                   nombre: p.nombre || 'Sin nombre',
-                  cantidad: p.cantidad || 1, // Default a 1 si no hay cantidad
+                  cantidad: p.cantidad || 1,
                   costo: Number(p.costo || 0),
                   unidad: p.unidad || 'unidad',
                   categoria: p.categoria || 'General',
                   sku: p.sku || '',
-                  codigoBarras: p.codigoBarras || ''
+                  codigoBarras: p.sku || p.codigoBarras || ''
                 }
               }))
             if (productosTransformados.length > 0) {
-              productosPorColaborador[colab._id] = productosTransformados
+              productosPorColaborador[colabId] = productosTransformados
               totalPendientes += productosTransformados.length
             }
           }
         } catch (error) {
-          // Solo mostrar error si no es 401 (no autenticado)
           if (error.response?.status !== 401) {
-            console.error(`Error al cargar productos del colaborador ${colab._id}:`, error)
+            console.error(`Error al cargar productos del colaborador:`, error)
           }
         }
       }
@@ -1312,12 +1316,18 @@ const InventarioDetalleNuevo = () => {
         const productosUnicos = todosProductos.filter((producto, index, self) =>
           index === self.findIndex((p) =>
             (p.nombre === producto.nombre) ||
-            (p._id === producto._id) ||
-            (p.id === producto.id)
+            (p.id !== undefined && p.id === producto.id) ||
+            (p._id !== undefined && p._id === producto._id)
           )
         )
 
-        setSearchResults(productosUnicos.slice(0, 20))
+        // Asegurar que todos tengan un ID consistente para el frontend
+        const productosProcesados = productosUnicos.map(p => ({
+          ...p,
+          _id: p.id || p._id || p.productoId // Asegurar un ID para la key de React
+        }))
+
+        setSearchResults(productosProcesados.slice(0, 20))
       } catch (error) {
         console.error('Error buscando productos:', error)
         setSearchResults([])
@@ -1331,7 +1341,19 @@ const InventarioDetalleNuevo = () => {
   }, [nombreBusqueda, showSearchModal, sesion?.clienteNegocio?.id, sesion?.clienteNegocio?._id, sesion?.clienteNegocioId])
 
   const handleSelectProduct = (producto) => {
-    setSelectedProducto(producto)
+    // Asegurar que tenemos un ID (SQLite id vs MongoDB _id)
+    const prodId = producto.id || producto._id || producto.productoId
+    if (!prodId) {
+      console.error('❌ Error: El producto seleccionado no tiene ID', producto)
+      toast.error('Error al seleccionar producto: ID faltante')
+      return
+    }
+
+    setSelectedProducto({
+      ...producto,
+      _id: prodId // Usar _id internamente para compatibilidad con el resto de la lógica
+    })
+
     // Usar costoBase para productos generales o costo para productos de cliente
     const costoProducto = producto.costoBase !== undefined ? producto.costoBase : producto.costo
     setCosto(costoProducto?.toString() || '')
@@ -3218,11 +3240,11 @@ const InventarioDetalleNuevo = () => {
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
                         {colaboradoresConectados.map((colab) => {
-                          const productosPendientes = productosColaboradorPendientes[colab._id] || []
+                          const productosPendientes = productosColaboradorPendientes[colab.id || colab._id] || []
                           const cantidadPendientes = productosPendientes.length
 
                           return (
-                            <tr key={colab._id} className="hover:bg-gray-50">
+                            <tr key={colab.id || colab._id} className="hover:bg-gray-50">
                               <td className="px-4 py-4 whitespace-nowrap">
                                 <div className="text-sm font-medium text-gray-900">
                                   {colab.nombreColaborador || colab.colaborador?.nombre || 'Desconocido'}
@@ -3593,77 +3615,82 @@ const InventarioDetalleNuevo = () => {
 
       {/* Main Content */}
       <div className="flex h-[calc(100vh-140px)]">
-        {/* Left Sidebar - Financial Buttons */}
+        {/* Left Sidebar */}
         <div className="w-80 bg-slate-800 border-r border-slate-600 p-4 space-y-4 overflow-y-auto">
-          <h3 className="text-white font-semibold text-sm mb-4 text-center border-b border-slate-600 pb-2">
-            Gestión Financiera
-          </h3>
-          <button
-            onClick={() => openFinancialModal('ventas')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <ShoppingCart className="w-6 h-6" />
-            <span>Ventas</span>
-          </button>
+          {/* Financial Buttons (Hidden for Colaboradores) */}
+          {!hasRole('colaborador') && (
+            <>
+              <h3 className="text-white font-semibold text-sm mb-4 text-center border-b border-slate-600 pb-2">
+                Gestión Financiera
+              </h3>
+              <button
+                onClick={() => openFinancialModal('ventas')}
+                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              >
+                <ShoppingCart className="w-6 h-6" />
+                <span>Ventas</span>
+              </button>
 
-          <button
-            onClick={() => openFinancialModal('gastos')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <TrendingDown className="w-6 h-6" />
-            <span>Gastos</span>
-          </button>
+              <button
+                onClick={() => openFinancialModal('gastos')}
+                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              >
+                <TrendingDown className="w-6 h-6" />
+                <span>Gastos</span>
+              </button>
 
-          <button
-            onClick={() => openFinancialModal('cuentasPorCobrar')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <Users className="w-6 h-6" />
-            <span>Cuentas por Cobrar</span>
-          </button>
+              <button
+                onClick={() => openFinancialModal('cuentasPorCobrar')}
+                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              >
+                <Users className="w-6 h-6" />
+                <span>Cuentas por Cobrar</span>
+              </button>
 
-          <button
-            onClick={() => openFinancialModal('cuentasPorPagar')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <CreditCard className="w-6 h-6" />
-            <span>Cuentas por Pagar</span>
-          </button>
+              <button
+                onClick={() => openFinancialModal('cuentasPorPagar')}
+                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              >
+                <CreditCard className="w-6 h-6" />
+                <span>Cuentas por Pagar</span>
+              </button>
 
-          <button
-            onClick={() => openFinancialModal('efectivo')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <Wallet className="w-6 h-6" />
-            <span>Efectivo en Caja o Banco</span>
-          </button>
+              <button
+                onClick={() => openFinancialModal('efectivo')}
+                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              >
+                <Wallet className="w-6 h-6" />
+                <span>Efectivo en Caja o Banco</span>
+              </button>
 
-          <button
-            onClick={() => openFinancialModal('deudaANegocio')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <UserMinus className="w-6 h-6" />
-            <span>Deuda a Negocio</span>
-          </button>
+              <button
+                onClick={() => openFinancialModal('deudaANegocio')}
+                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              >
+                <UserMinus className="w-6 h-6" />
+                <span>Deuda a Negocio</span>
+              </button>
 
-          <button
-            onClick={() => openFinancialModal('activosFijos')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <Briefcase className="w-6 h-6" />
-            <span>Activos Fijos</span>
-          </button>
+              <button
+                onClick={() => openFinancialModal('activosFijos')}
+                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              >
+                <Briefcase className="w-6 h-6" />
+                <span>Activos Fijos</span>
+              </button>
 
-          <button
-            onClick={() => openFinancialModal('capital')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-700 hover:to-yellow-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <PiggyBank className="w-6 h-6" />
-            <span>Capital Anterior</span>
-          </button>
+              <button
+                onClick={() => openFinancialModal('capital')}
+                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-700 hover:to-yellow-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              >
+                <PiggyBank className="w-6 h-6" />
+                <span>Capital Anterior</span>
+              </button>
 
-          {/* Separador */}
-          <div className="border-t border-slate-600 my-4"></div>
+              {/* Separador */}
+              <div className="border-t border-slate-600 my-4"></div>
+            </>
+          )}
 
           <h3
             className={`text-white font-semibold text-sm mb-4 text-center border-b border-slate-600 pb-2 cursor-pointer transition-all ${activeSection === 'inventario' ? 'bg-blue-600 rounded px-2 py-1' : 'hover:bg-slate-700 rounded px-2 py-1'
@@ -3678,8 +3705,6 @@ const InventarioDetalleNuevo = () => {
           </h3>
 
           {/* Nuevos botones de gestión */}
-
-
           <button
             onClick={() => setShowReportModal(true)}
             className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
@@ -3832,23 +3857,27 @@ const InventarioDetalleNuevo = () => {
                     Cantidad
                   </th>
 
-                  {/* Columna Costo */}
-                  <th
-                    colSpan={3}
-                    className="px-3 py-2 text-center bg-blue-100 text-gray-800 font-semibold text-sm"
-                    style={{ borderBottom: '1px solid #9ca3af' }}
-                  >
-                    Costo
-                  </th>
+                  {/* Columna Costo (Hidden for Colaboradores) */}
+                  {!hasRole('colaborador') && (
+                    <th
+                      colSpan={3}
+                      className="px-3 py-2 text-center bg-blue-100 text-gray-800 font-semibold text-sm"
+                      style={{ borderBottom: '1px solid #9ca3af' }}
+                    >
+                      Costo
+                    </th>
+                  )}
 
-                  {/* Columna Total */}
-                  <th
-                    rowSpan={2}
-                    className="px-3 py-2 text-center bg-yellow-100 text-gray-800 font-semibold text-sm"
-                    style={{ minWidth: '120px', borderBottom: '2px solid #9ca3af' }}
-                  >
-                    Total
-                  </th>
+                  {/* Columna Total (Hidden for Colaboradores) */}
+                  {!hasRole('colaborador') && (
+                    <th
+                      rowSpan={2}
+                      className="px-3 py-2 text-center bg-yellow-100 text-gray-800 font-semibold text-sm"
+                      style={{ minWidth: '120px', borderBottom: '2px solid #9ca3af' }}
+                    >
+                      Total
+                    </th>
+                  )}
 
                   {/* Columna Acciones */}
                   <th
@@ -3870,16 +3899,20 @@ const InventarioDetalleNuevo = () => {
                     Diferencia
                   </th>
 
-                  {/* Sub-columnas Costo */}
-                  <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
-                    Anterior
-                  </th>
-                  <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
-                    Actual
-                  </th>
-                  <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
-                    Diferencia
-                  </th>
+                  {/* Sub-columnas Costo (Hidden for Colaboradores) */}
+                  {!hasRole('colaborador') && (
+                    <>
+                      <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
+                        Anterior
+                      </th>
+                      <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
+                        Actual
+                      </th>
+                      <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
+                        Diferencia
+                      </th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -3947,44 +3980,51 @@ const InventarioDetalleNuevo = () => {
                         />
                       </td>
 
-                      {/* Costo - Anterior */}
-                      <td className="px-2 py-2 text-center bg-blue-50 text-gray-600 text-sm">
-                        <input
-                          type="number"
-                          value={safeToFixed(producto.costoAnterior || 0, 2)}
-                          readOnly
-                          className="w-full text-center bg-transparent border-none cursor-default"
-                          step="0.01"
-                        />
-                      </td>
+                      {/* Costo (Hidden for Colaboradores) */}
+                      {!hasRole('colaborador') && (
+                        <>
+                          {/* Costo - Anterior */}
+                          <td className="px-2 py-2 text-center bg-blue-50 text-gray-600 text-sm">
+                            <input
+                              type="number"
+                              value={safeToFixed(producto.costoAnterior || 0, 2)}
+                              readOnly
+                              className="w-full text-center bg-transparent border-none cursor-default"
+                              step="0.01"
+                            />
+                          </td>
 
-                      {/* Costo - Actual */}
-                      <td className="px-2 py-2 text-center bg-white text-gray-900 font-semibold text-sm">
-                        <input
-                          type="number"
-                          defaultValue={producto.costoProducto}
-                          onKeyDown={(e) => { if (e.key === 'Enter') { handleUpdateProductField(producto.productoId, 'costoProducto', e.target.value); e.currentTarget.blur() } }}
-                          onBlur={(e) => handleUpdateProductField(producto.productoId, 'costoProducto', e.target.value)}
-                          className="w-full text-center bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1 font-semibold"
-                          step="0.01"
-                        />
-                      </td>
+                          {/* Costo - Actual */}
+                          <td className="px-2 py-2 text-center bg-white text-gray-900 font-semibold text-sm">
+                            <input
+                              type="number"
+                              defaultValue={producto.costoProducto}
+                              onKeyDown={(e) => { if (e.key === 'Enter') { handleUpdateProductField(producto.productoId, 'costoProducto', e.target.value); e.currentTarget.blur() } }}
+                              onBlur={(e) => handleUpdateProductField(producto.productoId, 'costoProducto', e.target.value)}
+                              className="w-full text-center bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1 font-semibold"
+                              step="0.01"
+                            />
+                          </td>
 
-                      {/* Costo - Diferencia */}
-                      <td className="px-2 py-2 text-center bg-yellow-200 text-yellow-800 font-semibold text-sm">
-                        <input
-                          type="number"
-                          value={safeToFixed(producto.costoDiferencia || (producto.costoProducto - (producto.costoAnterior || 0)) || 0, 2)}
-                          readOnly
-                          className="w-full text-center bg-transparent border-none cursor-default font-semibold"
-                          step="0.01"
-                        />
-                      </td>
+                          {/* Costo - Diferencia */}
+                          <td className="px-2 py-2 text-center bg-yellow-200 text-yellow-800 font-semibold text-sm">
+                            <input
+                              type="number"
+                              value={safeToFixed(producto.costoDiferencia || (producto.costoProducto - (producto.costoAnterior || 0)) || 0, 2)}
+                              readOnly
+                              className="w-full text-center bg-transparent border-none cursor-default font-semibold"
+                              step="0.01"
+                            />
+                          </td>
+                        </>
+                      )}
 
-                      {/* Total */}
-                      <td className="px-3 py-2 text-right bg-yellow-50 text-gray-900 font-bold text-sm">
-                        {safeNumber(producto.valorTotal, 2).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                      </td>
+                      {/* Total (Hidden for Colaboradores) */}
+                      {!hasRole('colaborador') && (
+                        <td className="px-3 py-2 text-right bg-yellow-50 text-gray-900 font-bold text-sm">
+                          {safeNumber(producto.valorTotal, 2).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                        </td>
+                      )}
 
                       {/* Acciones */}
                       <td className="px-2 py-2 text-center">
@@ -4050,10 +4090,12 @@ const InventarioDetalleNuevo = () => {
               )}
             </div>
 
-            <div className="text-right">
-              <div className="text-slate-400 text-sm">Total</div>
-              <div className="text-3xl font-bold">{valorTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</div>
-            </div>
+            {!hasRole('colaborador') && (
+              <div className="text-right">
+                <div className="text-slate-400 text-sm">Total</div>
+                <div className="text-3xl font-bold">{valorTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -4558,7 +4600,7 @@ const InventarioDetalleNuevo = () => {
                   disabled={isUpdatingZeroCosts}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isUpdatingZeroCosts ? 'Actualizando...' : 'Actualizar Costos'}
+                  {isUpdatingZeroCosts ? 'Enviando...' : 'Crear'}
                 </button>
               </div>
             </div>

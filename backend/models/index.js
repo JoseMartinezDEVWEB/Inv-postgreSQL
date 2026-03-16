@@ -64,8 +64,8 @@ db.Usuario.hasOne(db.Invitacion, { foreignKey: 'consumidaPorId', as: 'invitacion
 db.Invitacion.belongsTo(db.Usuario, { foreignKey: 'consumidaPorId', as: 'consumidor' });
 
 // Solicitudes de Conexión
-db.Usuario.hasMany(db.SolicitudConexion, { foreignKey: 'colaboradorId', as: 'solicitudesEnviadas' });
-db.SolicitudConexion.belongsTo(db.Usuario, { foreignKey: 'colaboradorId', as: 'colaborador' });
+db.Usuario.hasMany(db.SolicitudConexion, { foreignKey: { name: 'colaboradorId', allowNull: true }, as: 'solicitudesEnviadas' });
+db.SolicitudConexion.belongsTo(db.Usuario, { foreignKey: { name: 'colaboradorId', allowNull: true }, as: 'colaborador' });
 db.Usuario.hasMany(db.SolicitudConexion, { foreignKey: 'adminId', as: 'solicitudesRecibidas' });
 db.SolicitudConexion.belongsTo(db.Usuario, { foreignKey: 'adminId', as: 'admin' });
 db.SesionInventario.hasMany(db.SolicitudConexion, { foreignKey: 'sesionInventarioId' });

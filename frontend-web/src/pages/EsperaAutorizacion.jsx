@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { solicitudesConexionApi } from '../services/api'
 import { motion } from 'framer-motion'
 import { Clock, CheckCircle2, XCircle, AlertTriangle, ArrowLeft } from 'lucide-react'
+import { useSocket } from '../hooks/useSocket'
 
 const POLL_INTERVAL = 5000
 
@@ -13,6 +14,8 @@ const EsperaAutorizacion = () => {
   const [mensaje, setMensaje] = useState('Esperando autorización del usuario principal...')
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
+
+  const { on, off } = useSocket();
 
   useEffect(() => {
     let intervalId
@@ -28,13 +31,10 @@ const EsperaAutorizacion = () => {
 
         if (datos.estado === 'aceptada') {
           setMensaje('Tu solicitud ha sido aceptada. Ahora puedes trabajar como colaborador.')
-          if (intervalId) clearInterval(intervalId)
         } else if (datos.estado === 'rechazada') {
           setMensaje('Tu solicitud fue rechazada. Contacta al usuario principal si crees que es un error.')
-          if (intervalId) clearInterval(intervalId)
         } else if (datos.estado === 'expirada') {
           setMensaje('Tu solicitud ha expirado. Solicita un nuevo código al usuario principal.')
-          if (intervalId) clearInterval(intervalId)
         } else {
           setMensaje('Esperando autorización del usuario principal...')
         }
@@ -48,13 +48,27 @@ const EsperaAutorizacion = () => {
 
     if (solicitudId) {
       fetchEstado()
-      intervalId = setInterval(fetchEstado, POLL_INTERVAL)
-    }
 
-    return () => {
-      if (intervalId) clearInterval(intervalId)
+      // Escuchar eventos WebSocket en lugar de polling
+      const handleEstadoActualizado = (datos) => {
+        setEstado(datos.estado);
+        setError(null);
+        if (datos.estado === 'aceptada') {
+          setMensaje('Tu solicitud ha sido aceptada. Ahora puedes trabajar como colaborador.');
+        } else if (datos.estado === 'rechazada') {
+          setMensaje('Tu solicitud fue rechazada. Contacta al usuario principal si crees que es un error.');
+        } else if (datos.estado === 'expirada') {
+          setMensaje('Tu solicitud ha expirado. Solicita un nuevo código al usuario principal.');
+        }
+      };
+
+      on(`estado-solicitud-actualizado-${solicitudId}`, handleEstadoActualizado);
+
+      return () => {
+        off(`estado-solicitud-actualizado-${solicitudId}`, handleEstadoActualizado);
+      };
     }
-  }, [solicitudId])
+  }, [solicitudId, on, off])
 
   const renderIcon = () => {
     if (estado === 'aceptada') {
@@ -109,13 +123,12 @@ const EsperaAutorizacion = () => {
           <div className="mt-2 flex items-center justify-between">
             <span className="text-sm font-medium text-gray-500">Estado</span>
             <span
-              className={`text-sm font-semibold px-3 py-1 rounded-full ${
-                estado === 'aceptada'
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : estado === 'rechazada' || estado === 'expirada'
+              className={`text-sm font-semibold px-3 py-1 rounded-full ${estado === 'aceptada'
+                ? 'bg-emerald-50 text-emerald-700'
+                : estado === 'rechazada' || estado === 'expirada'
                   ? 'bg-red-50 text-red-700'
                   : 'bg-amber-50 text-amber-700'
-              }`}
+                }`}
             >
               {renderEstadoLabel()}
             </span>

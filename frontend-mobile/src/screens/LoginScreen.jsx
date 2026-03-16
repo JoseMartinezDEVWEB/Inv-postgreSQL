@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons'
 import { useAuth } from '../context/AuthContext'
 import { useLoader } from '../context/LoaderContext'
 import QRScannerModal from '../components/QRScannerModal'
-import { solicitudesConexionApi, setRuntimeApiBaseUrl } from '../services/api'
+import api, { solicitudesConexionApi, setRuntimeApiBaseUrl } from '../services/api'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as Device from 'expo-device'
 
@@ -165,7 +165,7 @@ const LoginScreen = ({ navigation }) => {
     } catch (error) {
       console.error('Error al crear solicitud de conexión:', error)
       const mensajeError = error.response?.data?.mensaje || error.message || 'Error de conexión'
-      const currentApi = axios.defaults.baseURL || 'Cargando...'
+      const currentApi = api.defaults.baseURL || 'Cargando...'
       Alert.alert(
         'Error al Conectar',
         mensajeError + `\n\nURL actual: ${currentApi}\n\nSugerencias:\n` +

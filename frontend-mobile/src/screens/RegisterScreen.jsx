@@ -22,7 +22,7 @@ const RegisterScreen = ({ navigation }) => {
     password: '',
     confirmPassword: '',
     telefono: '',
-    rol: 'contador',
+    rol: 'contable',
   })
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
@@ -171,7 +171,7 @@ const RegisterScreen = ({ navigation }) => {
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Rol</Text>
               <View style={styles.roleContainer}>
-                {['contador', 'contable', 'administrador'].map((role) => (
+                {['contable', 'contable', 'administrador'].map((role) => (
                   <TouchableOpacity
                     key={role}
                     style={[

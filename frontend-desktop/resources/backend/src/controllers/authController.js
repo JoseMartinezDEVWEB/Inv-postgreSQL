@@ -79,7 +79,7 @@ export const registro = async (req, res) => {
     const Invitacion = (await import('../models/Invitacion.js')).default
     const owner = Usuario.buscarPorId(datosUsuario.contablePrincipalId)
     const limite = owner?.limiteColaboradores
-    if (owner?.rol === 'contador' && limite != null) {
+    if (owner?.rol === 'contable' && limite != null) {
       const actual = Usuario.contarColaboradores(datosUsuario.contablePrincipalId)
       const pendientes = Invitacion.contarActivasColaborador(datosUsuario.contablePrincipalId)
       if (actual + pendientes >= limite) {

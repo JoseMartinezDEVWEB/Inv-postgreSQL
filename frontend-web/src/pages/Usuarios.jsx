@@ -30,7 +30,7 @@ const Usuarios = () => {
 
   // Verificar que el usuario sea contador o administrador
   useEffect(() => {
-    if (!hasRole('contador') && !hasRole('administrador')) {
+    if (!hasRole('contable') && !hasRole('administrador')) {
       toast.error('No tienes permisos para acceder a esta página');
       return;
     }
@@ -62,7 +62,7 @@ const Usuarios = () => {
 
     try {
       const payload = { ...formData };
-      if (hasRole('administrador') && formData.rol === 'contador' && formData.limiteColaboradores !== '' && formData.limiteColaboradores != null) {
+      if (hasRole('administrador') && formData.rol === 'contable' && formData.limiteColaboradores !== '' && formData.limiteColaboradores != null) {
         payload.limiteColaboradores = Number(formData.limiteColaboradores);
       } else {
         delete payload.limiteColaboradores;
@@ -89,7 +89,7 @@ const Usuarios = () => {
         telefono: formData.telefono,
         rol: formData.rol
       };
-      if (hasRole('administrador') && usuarioSeleccionado?.rol === 'contador') {
+      if (hasRole('administrador') && usuarioSeleccionado?.rol === 'contable') {
         payload.limiteColaboradores = formData.limiteColaboradores === '' || formData.limiteColaboradores == null
           ? null
           : Number(formData.limiteColaboradores);
@@ -263,11 +263,11 @@ const Usuarios = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        usuario.rol === 'contador' 
+                        usuario.rol === 'contable' 
                           ? 'bg-blue-100 text-blue-800' 
                           : 'bg-green-100 text-green-800'
                       }`}>
-                        {usuario.rol === 'contador' ? 'Contador' : 'Colaborador'}
+                        {usuario.rol === 'contable' ? 'contable' : 'Colaborador'}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -281,7 +281,7 @@ const Usuarios = () => {
                     </td>
                     {hasRole('administrador') && (
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {usuario.rol === 'contador' ? (usuario.limiteColaboradores ?? '—') : '—'}
+                        {usuario.rol === 'contable' ? (usuario.limiteColaboradores ?? '—') : '—'}
                       </td>
                     )}
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -369,10 +369,10 @@ const Usuarios = () => {
               required
             >
               <option value="colaborador">Colaborador</option>
-              <option value="contador">Contador</option>
+              <option value="contable">Contable</option>
             </select>
           </div>
-          {hasRole('administrador') && formData.rol === 'contador' && (
+          {hasRole('administrador') && formData.rol === 'contable' && (
             <Input
               label="Límite de colaboradores"
               name="limiteColaboradores"
@@ -444,10 +444,10 @@ const Usuarios = () => {
               required
             >
               <option value="colaborador">Colaborador</option>
-              <option value="contador">Contador</option>
+              <option value="contable">Contable</option>
             </select>
           </div>
-          {hasRole('administrador') && formData.rol === 'contador' && (
+          {hasRole('administrador') && formData.rol === 'contable' && (
             <Input
               label="Límite de colaboradores"
               name="limiteColaboradores"

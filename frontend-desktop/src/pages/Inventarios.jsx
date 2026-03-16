@@ -229,16 +229,16 @@ const Inventarios = () => {
     setShowDeleteModal(true)
   }
 
-  // Confirmar eliminación
+  // Confirmar cancelación de sesión
   const confirmDelete = () => {
     if (sesionToDelete) {
-      handleCancel(sesionToDelete)
+      cancelMutation.mutate(sesionToDelete.id)
       setShowDeleteModal(false)
       setSesionToDelete(null)
     }
   }
 
-  // Cancelar eliminación
+  // Cerrar modal sin cancelar
   const cancelDelete = () => {
     setShowDeleteModal(false)
     setSesionToDelete(null)

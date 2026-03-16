@@ -9,7 +9,7 @@ import { useNavigation } from '@react-navigation/native'
 const EsperaAutorizacionScreen = ({ route }) => {
   const navigation = useNavigation()
   const { solicitudId: propSolicitudId } = route.params || {}
-  
+
   const [solicitudId, setSolicitudId] = useState(propSolicitudId ? String(propSolicitudId) : null)
   const [estado, setEstado] = useState('pendiente')
   const [estadoConexion, setEstadoConexion] = useState('desconectado')
@@ -59,7 +59,7 @@ const EsperaAutorizacionScreen = ({ route }) => {
     try {
       setLoading(true)
       const response = await solicitudesConexionApi.verificarEstado(solicitudId)
-      const datos = response.data.datos
+      const datos = response.data.datos || response.data
 
       setEstado(datos.estado)
       setEstadoConexion(datos.estadoConexion)
@@ -150,14 +150,14 @@ const EsperaAutorizacionScreen = ({ route }) => {
               <Ionicons name="close-circle" size={64} color="#ef4444" />
             )}
           </View>
-          
+
           <Text style={styles.title}>
-            {estado === 'pendiente' ? 'Esperando Autorización...' : 
-             estado === 'aceptada' ? '¡Autorizado!' :
-             estado === 'rechazada' ? 'Solicitud Rechazada' :
-             'Solicitud Expirada'}
+            {estado === 'pendiente' ? 'Esperando Autorización...' :
+              estado === 'aceptada' ? '¡Autorizado!' :
+                estado === 'rechazada' ? 'Solicitud Rechazada' :
+                  'Solicitud Expirada'}
           </Text>
-          
+
           {estado === 'pendiente' && (
             <Text style={styles.subtitle}>
               Tu solicitud está siendo revisada por el usuario principal
@@ -174,14 +174,14 @@ const EsperaAutorizacionScreen = ({ route }) => {
                 El usuario principal recibirá una notificación de tu solicitud
               </Text>
             </View>
-            
+
             <View style={styles.infoRow}>
               <Ionicons name="time" size={20} color="#3b82f6" />
               <Text style={styles.infoText}>
                 Esto puede tomar unos momentos
               </Text>
             </View>
-            
+
             <View style={styles.infoRow}>
               <Ionicons name="sync" size={20} color="#3b82f6" />
               <Text style={styles.infoText}>

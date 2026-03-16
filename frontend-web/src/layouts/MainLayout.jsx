@@ -39,7 +39,7 @@ const MainLayout = ({ children }) => {
   ]
 
   // Agregar opciones de colaboración para contables, administradores y contadores
-  const navigation = user?.rol === 'contable' || user?.rol === 'administrador' || user?.rol === 'contador'
+  const navigation = user?.rol === 'contable' || user?.rol === 'administrador' || user?.rol === 'contable'
     ? [
         ...navigationBase,
         ...(user?.rol === 'contable' || user?.rol === 'administrador' 

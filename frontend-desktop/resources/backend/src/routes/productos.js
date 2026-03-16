@@ -56,18 +56,18 @@ router.get('/generales/buscar/codigo-barras/:codigo', productosController.buscar
 router.get('/generales/:id', productosController.obtenerProductoGeneral)
 router.post(
   '/generales',
-  validarRol('contable', 'contador', 'administrador'),
+  validarRol('contable', 'contable', 'administrador'),
   validar(schemaCrearProductoGeneral),
   productosController.crearProductoGeneral
 )
 router.put(
   '/generales/:id',
-  validarRol('contable', 'contador', 'administrador'),
+  validarRol('contable', 'contable', 'administrador'),
   productosController.actualizarProductoGeneral
 )
 router.delete(
   '/generales/:id',
-  validarRol('contable', 'contador', 'administrador'),
+  validarRol('contable', 'contable', 'administrador'),
   productosController.desactivarProductoGeneral
 )
 
@@ -112,7 +112,7 @@ const handleFileUpload = (req, res, next) => {
 
 router.post(
   '/generales/importar',
-  validarRol('contable', 'contador', 'administrador'),
+  validarRol('contable', 'contable', 'administrador'),
   handleFileUpload,
   importController.importarProductosDesdeArchivo
 )

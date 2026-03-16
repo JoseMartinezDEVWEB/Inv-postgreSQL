@@ -8,7 +8,7 @@ const router = express.Router()
 router.post(
   '/integrar',
   validarJWT,
-  validarRol('contable', 'contador', 'administrador'),
+  validarRol('contable', 'contable', 'administrador'),
   integracionController.integrarProductosColaborador
 )
 

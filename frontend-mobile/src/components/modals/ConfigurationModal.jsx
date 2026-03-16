@@ -62,7 +62,7 @@ const ConfigurationModal = ({ visible, onClose }) => {
   const tabs = [
     { id: 'general', title: 'General', icon: 'settings-outline', color: '#64748b' },
     { id: 'distribucion', title: 'Distribución', icon: 'calculator-outline', color: '#10b981' },
-    { id: 'contador', title: 'Contador', icon: 'calendar-outline', color: '#f59e0b' },
+    { id: 'contable', title: 'contable', icon: 'calendar-outline', color: '#f59e0b' },
     { id: 'empleados', title: 'Empleados', icon: 'people-outline', color: '#3b82f6' },
     { id: 'descargar', title: 'Descargar', icon: 'download-outline', color: '#06b6d4' },
     { id: 'respaldar', title: 'Respaldar', icon: 'cloud-upload-outline', color: '#8b5cf6' }
@@ -325,7 +325,7 @@ const ConfigurationModal = ({ visible, onClose }) => {
           </ScrollView>
         )
 
-      case 'contador':
+      case 'contable':
         return (
           <ScrollView style={styles.tabContent}>
             <View style={styles.sectionHeader}>

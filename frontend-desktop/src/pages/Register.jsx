@@ -17,7 +17,7 @@ const Register = () => {
     password: '',
     confirmPassword: '',
     telefono: '',
-    rol: 'contador',
+    rol: 'contable',
   })
   
   const [errors, setErrors] = useState({})
@@ -99,7 +99,7 @@ const Register = () => {
         case 'contable':
           navigate('/contable/dashboard')
           break
-        case 'contador':
+        case 'contable':
         default:
           navigate('/dashboard')
           break
@@ -194,7 +194,7 @@ const Register = () => {
                 onChange={handleChange}
                 className="block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
               >
-                <option value="contador">Contador</option>
+                <option value="contable">Contable</option>
                 <option value="contable">Contable</option>
                 <option value="administrador">Administrador</option>
               </select>

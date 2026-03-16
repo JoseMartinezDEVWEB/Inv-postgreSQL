@@ -18,7 +18,7 @@ router.get('/agenda/dia', sesionesController.obtenerAgendaDia)
 
 // CRUD de sesiones
 router.get('/', sesionesController.listarSesiones)
-router.post('/', validarRol('contable', 'contador', 'administrador'), validar(schemaCrearSesion), sesionesController.crearSesion)
+router.post('/', validarRol('contable', 'contable', 'administrador'), validar(schemaCrearSesion), sesionesController.crearSesion)
 router.get('/cliente/:clienteId', sesionesController.obtenerSesionesPorCliente)
 router.get('/:id', sesionesController.obtenerSesion)
 

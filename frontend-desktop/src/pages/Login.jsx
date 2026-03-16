@@ -80,7 +80,7 @@ const Login = () => {
         case 'contable':
           navigate('/contable/dashboard')
           break
-        case 'contador':
+        case 'contable':
         default:
           navigate('/dashboard')
           break

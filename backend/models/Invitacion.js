@@ -11,7 +11,7 @@ module.exports = (sequelize, DataTypes) => {
             unique: true
         },
         rol: {
-            type: DataTypes.ENUM('contador', 'colaborador'),
+            type: DataTypes.ENUM('contable', 'colaborador'),
             allowNull: false
         },
         codigo: {

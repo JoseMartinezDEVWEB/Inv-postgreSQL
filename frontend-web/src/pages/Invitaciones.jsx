@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useSocket } from '../hooks/useSocket';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -31,8 +32,10 @@ const Invitaciones = () => {
     expiraEnMinutos: 1440 // 24 horas
   });
 
+  const { on, off } = useSocket();
+
   useEffect(() => {
-    if (!hasRole('contable') && !hasRole('administrador') && !hasRole('contador')) {
+    if (!hasRole('contable') && !hasRole('administrador') && !hasRole('contable')) {
       toast.error('No tienes permisos para acceder a esta página');
       return;
     }
@@ -40,14 +43,18 @@ const Invitaciones = () => {
     cargarColaboradores();
     cargarSolicitudesPendientes();
     cargarColaboradoresConectados();
-    
-    // Polling cada 30 segundos para actualizar solicitudes y conectados
-    const interval = setInterval(() => {
+
+    // Escuchar eventos en tiempo real en lugar de polling
+    const handleActualizacion = () => {
       cargarSolicitudesPendientes();
       cargarColaboradoresConectados();
-    }, 30000); // Aumentado de 10s a 30s para reducir solicitudes
-    
-    return () => clearInterval(interval);
+    };
+
+    on('solicitudes-pendientes-actualizadas', handleActualizacion);
+
+    return () => {
+      off('solicitudes-pendientes-actualizadas', handleActualizacion);
+    };
   }, []);
 
   const cargarInvitaciones = async () => {
@@ -137,7 +144,7 @@ const Invitaciones = () => {
 
   const handleRechazarSolicitud = async (solicitudId) => {
     if (!confirm('¿Estás seguro de rechazar esta solicitud?')) return;
-    
+
     try {
       await solicitudesConexionApi.rechazar(solicitudId);
       toast.success('Solicitud rechazada');
@@ -231,10 +238,10 @@ const Invitaciones = () => {
       expirada: { color: 'bg-red-100 text-red-800', icon: XCircle, texto: 'Expirada' },
       cancelada: { color: 'bg-gray-100 text-gray-800', icon: Ban, texto: 'Cancelada' }
     };
-    
+
     const badge = badges[estado] || badges.pendiente;
     const Icon = badge.icon;
-    
+
     return (
       <span className={`px-2 py-1 inline-flex items-center gap-1 text-xs leading-5 font-semibold rounded-full ${badge.color}`}>
         <Icon className="w-3 h-3" />
@@ -253,7 +260,7 @@ const Invitaciones = () => {
 
   const countColaboradores = (colaboradores || []).filter(c => c.rol === 'colaborador').length
   const limiteColab = user?.limiteColaboradores
-  const showLimite = hasRole('contador') && limiteColab != null
+  const showLimite = hasRole('contable') && limiteColab != null
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -317,12 +324,11 @@ const Invitaciones = () => {
                 invitaciones.map((invitacion) => (
                   <tr key={invitacion._id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        invitacion.rol === 'contador' 
-                          ? 'bg-blue-100 text-blue-800' 
-                          : 'bg-green-100 text-green-800'
-                      }`}>
-                        {invitacion.rol === 'contador' ? 'Contador' : 'Colaborador'}
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${invitacion.rol === 'contable'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-green-100 text-green-800'
+                        }`}>
+                        {invitacion.rol === 'contable' ? 'contable' : 'Colaborador'}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -523,11 +529,10 @@ const Invitaciones = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          colab.estadoConexion === 'conectado'
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}>
+                        <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${colab.estadoConexion === 'conectado'
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-gray-100 text-gray-800'
+                          }`}>
                           {colab.estadoConexion === 'conectado' ? (
                             <><Wifi className="w-3 h-3 mr-1" /> Conectado</>
                           ) : (
@@ -538,9 +543,9 @@ const Invitaciones = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {colab.ultimaConexion
                           ? new Date(colab.ultimaConexion).toLocaleString('es-MX', {
-                              dateStyle: 'short',
-                              timeStyle: 'short'
-                            })
+                            dateStyle: 'short',
+                            timeStyle: 'short'
+                          })
                           : 'Nunca'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -595,7 +600,7 @@ const Invitaciones = () => {
               required
             >
               <option value="colaborador">Colaborador</option>
-              <option value="contador">Contador</option>
+              <option value="contable">Contable</option>
             </select>
             <p className="mt-1 text-xs text-gray-500">
               Define el rol que tendrá el usuario que escanee este QR
@@ -672,13 +677,13 @@ const Invitaciones = () => {
           {qrData && (
             <>
               <div className="bg-white p-4 rounded-lg inline-block">
-                <img 
-                  src={qrData.qrDataUrl} 
-                  alt="Código QR" 
+                <img
+                  src={qrData.qrDataUrl}
+                  alt="Código QR"
                   className="w-64 h-64 mx-auto"
                 />
               </div>
-              
+
               <div className="bg-gradient-to-r from-violet-50 to-purple-50 p-6 rounded-lg border-2 border-violet-200">
                 <h3 className="font-bold text-violet-900 mb-3 text-lg text-center">
                   Código de Acceso
@@ -699,7 +704,7 @@ const Invitaciones = () => {
                 </h3>
                 <ul className="space-y-1 text-sm text-blue-800">
                   <li><strong>Nombre:</strong> {qrData.nombre || 'Sin especificar'}</li>
-                  <li><strong>Rol:</strong> {qrData.rol === 'contador' ? 'Contador' : 'Colaborador'}</li>
+                  <li><strong>Rol:</strong> {qrData.rol === 'contable' ? 'contable' : 'Colaborador'}</li>
                   <li><strong>Expira:</strong> {new Date(qrData.expiraEn).toLocaleString('es-MX')}</li>
                   {qrData.duracionMinutos && <li><strong>Duración:</strong> {qrData.duracionMinutos} minutos</li>}
                 </ul>
@@ -708,7 +713,7 @@ const Invitaciones = () => {
               <div className="text-sm text-gray-600">
                 <p>
                   El usuario debe escanear este código QR con la aplicación móvil
-                  para vincularse como {qrData.rol === 'contador' ? 'contador' : 'colaborador'}.
+                  para vincularse como {qrData.rol === 'contable' ? 'contable' : 'colaborador'}.
                 </p>
               </div>
 
@@ -756,7 +761,7 @@ const Invitaciones = () => {
                   Revisa y sincroniza para agregarlos a la sesión de inventario.
                 </p>
               </div>
-              
+
               <div className="max-h-96 overflow-y-auto">
                 <div className="space-y-2">
                   {productosOffline.map((item, index) => (

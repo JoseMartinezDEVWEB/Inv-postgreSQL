@@ -40,7 +40,7 @@ export const seedInitialData = () => {
       email: 'contador@j4pro.com',
       password: '123456',
       telefono: '0987654321',
-      rol: 'contador',
+      rol: 'contable',
       configuracion: {
         inventarioBuscar: true,
         inventarioAuto: false,

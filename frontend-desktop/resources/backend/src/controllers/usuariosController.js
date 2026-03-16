@@ -23,7 +23,7 @@ export const crearUsuario = async (req, res) => {
   }
 
   // Solo el admin puede asignar limiteColaboradores al crear un contador
-  if (req.usuario.rol !== 'administrador' || req.body.rol !== 'contador') {
+  if (req.usuario.rol !== 'administrador' || req.body.rol !== 'contable') {
     delete datosUsuario.limiteColaboradores
   } else if (req.body.limiteColaboradores != null && req.body.limiteColaboradores !== '') {
     datosUsuario.limiteColaboradores = Number(req.body.limiteColaboradores)
@@ -70,7 +70,7 @@ export const actualizarUsuario = async (req, res) => {
 
   // Solo el admin puede modificar limiteColaboradores de un contador
   const target = Usuario.buscarPorId(id)
-  if (!target || target.rol !== 'contador' || req.usuario.rol !== 'administrador') {
+  if (!target || target.rol !== 'contable' || req.usuario.rol !== 'administrador') {
     delete body.limiteColaboradores
   }
 

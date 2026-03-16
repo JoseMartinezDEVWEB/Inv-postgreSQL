@@ -11,7 +11,7 @@ router.post('/usar', invitacionesController.usarInvitacion)
 
 // Rutas protegidas
 router.use(validarJWT)
-router.use(validarRol('contable', 'contador', 'administrador'))
+router.use(validarRol('contable', 'contable', 'administrador'))
 
 // Compatibilidad con frontend desktop
 router.post('/qr', invitacionesController.generarInvitacionQR)

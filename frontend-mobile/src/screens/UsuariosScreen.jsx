@@ -19,7 +19,7 @@ const UsuariosScreen = () => {
   const { data, isLoading, isFetching } = useQuery(
     ['usuarios-subordinados'],
     () => usuariosApi.getSubordinados(),
-    { select: (r) => r.data.datos || [], enabled: hasRole('contable') || hasRole('administrador') || hasRole('contador'), onError: handleApiError }
+    { select: (r) => r.data.datos || [], enabled: hasRole('contable') || hasRole('administrador') || hasRole('contable'), onError: handleApiError }
   )
 
   const resetForm = () => setForm({ nombre: '', email: '', password: '', telefono: '', rol: 'colaborador', limiteColaboradores: '' })
@@ -117,7 +117,7 @@ const UsuariosScreen = () => {
     </View>
   )
 
-  if (!hasRole('contable') && !hasRole('administrador') && !hasRole('contador')) {
+  if (!hasRole('contable') && !hasRole('administrador') && !hasRole('contable')) {
     return (
       <View style={styles.center}>
         <Text style={styles.info}>No tienes permisos para acceder a esta sección</Text>
@@ -160,11 +160,11 @@ const UsuariosScreen = () => {
             <TouchableOpacity onPress={() => setForm({ ...form, rol: 'colaborador' })} style={[styles.roleChip, form.rol === 'colaborador' ? styles.roleChipActive : null]}>
               <Text style={[styles.roleChipText, form.rol === 'colaborador' ? styles.roleChipTextActive : null]}>Colaborador</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setForm({ ...form, rol: 'contador' })} style={[styles.roleChip, form.rol === 'contador' ? styles.roleChipActive : null]}>
-              <Text style={[styles.roleChipText, form.rol === 'contador' ? styles.roleChipTextActive : null]}>Contador</Text>
+            <TouchableOpacity onPress={() => setForm({ ...form, rol: 'contable' })} style={[styles.roleChip, form.rol === 'contable' ? styles.roleChipActive : null]}>
+              <Text style={[styles.roleChipText, form.rol === 'contable' ? styles.roleChipTextActive : null]}>Contable</Text>
             </TouchableOpacity>
           </View>
-          {(hasRole('administrador') || hasRole('contable') || hasRole('contador')) && form.rol === 'contador' && (
+          {(hasRole('administrador') || hasRole('contable') || hasRole('contable')) && form.rol === 'contable' && (
             <TextInput
               style={styles.input}
               placeholder="Límite de colaboradores (ej. 3). Vacío = sin límite"
@@ -179,7 +179,7 @@ const UsuariosScreen = () => {
             </TouchableOpacity>
             <TouchableOpacity style={[styles.button, styles.primary]} onPress={() => {
               const payload = { ...form }
-              if ((hasRole('administrador') || hasRole('contable')) && form.rol === 'contador' && form.limiteColaboradores !== '' && form.limiteColaboradores != null) {
+              if ((hasRole('administrador') || hasRole('contable')) && form.rol === 'contable' && form.limiteColaboradores !== '' && form.limiteColaboradores != null) {
                 payload.limiteColaboradores = Number(form.limiteColaboradores)
               } else {
                 delete payload.limiteColaboradores
@@ -203,11 +203,11 @@ const UsuariosScreen = () => {
             <TouchableOpacity onPress={() => setForm({ ...form, rol: 'colaborador' })} style={[styles.roleChip, form.rol === 'colaborador' ? styles.roleChipActive : null]}>
               <Text style={[styles.roleChipText, form.rol === 'colaborador' ? styles.roleChipTextActive : null]}>Colaborador</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setForm({ ...form, rol: 'contador' })} style={[styles.roleChip, form.rol === 'contador' ? styles.roleChipActive : null]}>
-              <Text style={[styles.roleChipText, form.rol === 'contador' ? styles.roleChipTextActive : null]}>Contador</Text>
+            <TouchableOpacity onPress={() => setForm({ ...form, rol: 'contable' })} style={[styles.roleChip, form.rol === 'contable' ? styles.roleChipActive : null]}>
+              <Text style={[styles.roleChipText, form.rol === 'contable' ? styles.roleChipTextActive : null]}>Contable</Text>
             </TouchableOpacity>
           </View>
-          {hasRole('administrador') && form.rol === 'contador' && (
+          {hasRole('administrador') && form.rol === 'contable' && (
             <TextInput
               style={styles.input}
               placeholder="Límite de colaboradores (ej. 3). Vacío = sin límite"
@@ -224,7 +224,7 @@ const UsuariosScreen = () => {
               const id = usuarioSel?._id ?? usuarioSel?.id
               if (!id) return
               const data = { nombre: form.nombre, email: form.email, telefono: form.telefono, rol: form.rol }
-              if ((hasRole('administrador') || hasRole('contable')) && usuarioSel?.rol === 'contador') {
+              if ((hasRole('administrador') || hasRole('contable')) && usuarioSel?.rol === 'contable') {
                 data.limiteColaboradores = form.limiteColaboradores === '' || form.limiteColaboradores == null ? null : Number(form.limiteColaboradores)
               }
               updateMutation.mutate({ id, data })

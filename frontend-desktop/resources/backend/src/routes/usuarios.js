@@ -6,7 +6,7 @@ import { validar, schemaRegistroUsuario } from '../middlewares/validation.js'
 const router = express.Router()
 
 router.use(validarJWT)
-router.use(validarRol('contable', 'contador', 'administrador'))
+router.use(validarRol('contable', 'contable', 'administrador'))
 
 router.get('/subordinados', usuariosController.obtenerSubordinados)
 router.post('/', validar(schemaRegistroUsuario), usuariosController.crearUsuario)

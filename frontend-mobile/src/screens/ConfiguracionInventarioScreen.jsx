@@ -259,7 +259,7 @@ const ConfiguracionInventarioScreen = ({ navigation }) => {
             </TouchableOpacity>
           </ScrollView>
         );
-      case 'contador':
+      case 'contable':
         return (
           <ScrollView>
             <View style={styles.section}>
@@ -419,11 +419,11 @@ const ConfiguracionInventarioScreen = ({ navigation }) => {
             <Text style={[styles.tabText, activeTab === 'distribucion' && styles.activeTabText]}>Distribución</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tab, activeTab === 'contador' && styles.activeTab]}
-            onPress={() => setActiveTab('contador')}
+            style={[styles.tab, activeTab === 'contable' && styles.activeTab]}
+            onPress={() => setActiveTab('contable')}
           >
-            <Ionicons name="calendar-outline" size={20} color={activeTab === 'contador' ? '#ffffff' : '#3b82f6'} />
-            <Text style={[styles.tabText, activeTab === 'contador' && styles.activeTabText]}>Contador</Text>
+            <Ionicons name="calendar-outline" size={20} color={activeTab === 'contable' ? '#ffffff' : '#3b82f6'} />
+            <Text style={[styles.tabText, activeTab === 'contable' && styles.activeTabText]}>Contable</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tab, activeTab === 'exportar' && styles.activeTab]}

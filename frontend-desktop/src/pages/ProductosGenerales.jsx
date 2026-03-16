@@ -282,7 +282,8 @@ const ProductosGenerales = () => {
 
   // Escuchar resultado del envío de inventario
   useEffect(() => {
-    if (user?.rol !== 'administrador' || !isConnected) return
+    const allowedRoles = ['administrador', 'contable']
+    if (!allowedRoles.includes(user?.rol) || !isConnected) return
 
     const handleResultado = (data) => {
       setIsEnviandoInventario(false)
@@ -301,7 +302,8 @@ const ProductosGenerales = () => {
 
   // Debug: Log del estado de colaboradores
   useEffect(() => {
-    if (user?.rol === 'administrador') {
+    const allowedRoles = ['administrador', 'contable']
+    if (allowedRoles.includes(user?.rol)) {
       console.log('🔍 [ProductosGenerales] Estado:', {
         isConnected,
         onlineColaboradores,
@@ -429,8 +431,8 @@ const ProductosGenerales = () => {
           <p className="text-gray-600">Gestiona la lista maestra de productos disponibles</p>
         </div>
         <div className="flex gap-2 items-center">
-          {/* Colaboradores en línea (solo para admins) */}
-          {user?.rol === 'administrador' && (
+          {/* Colaboradores en línea (admin y contable) */}
+          {['administrador', 'contable'].includes(user?.rol) && (
             <div
               className="flex items-center space-x-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors"
               onClick={() => {
@@ -450,18 +452,20 @@ const ProductosGenerales = () => {
               </span>
             </div>
           )}
-          {user?.rol === 'administrador' && (
+          {['administrador', 'contable'].includes(user?.rol) && (
             <>
-              <Button
-                onClick={handleDeleteAllProducts}
-                disabled={deleteAllMutation.isLoading}
-                variant="outline"
-                className="flex items-center space-x-2 bg-red-50 hover:bg-red-100 border-red-200 text-red-700"
-                title="Eliminar todos los productos"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>{deleteAllMutation.isLoading ? 'Eliminando...' : 'Eliminar Todo'}</span>
-              </Button>
+              {user?.rol === 'administrador' && (
+                <Button
+                  onClick={handleDeleteAllProducts}
+                  disabled={deleteAllMutation.isLoading}
+                  variant="outline"
+                  className="flex items-center space-x-2 bg-red-50 hover:bg-red-100 border-red-200 text-red-700"
+                  title="Eliminar todos los productos"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{deleteAllMutation.isLoading ? 'Eliminando...' : 'Eliminar Todo'}</span>
+                </Button>
+              )}
               <Button
                 onClick={handleEnviarProductosAColaboradores}
                 disabled={!isConnected || onlineColaboradores === 0 || isEnviandoInventario}
@@ -472,14 +476,16 @@ const ProductosGenerales = () => {
                 <Send className="w-4 h-4" />
                 <span>{isEnviandoInventario ? 'Enviando...' : 'Enviar a Colabs'}</span>
               </Button>
-              <Button
-                onClick={() => setShowImportModal(true)}
-                variant="outline"
-                className="flex items-center space-x-2 bg-yellow-50 hover:bg-yellow-100 border-yellow-200 text-yellow-700"
-              >
-                <Upload className="w-4 h-4" />
-                <span>Importar</span>
-              </Button>
+              {user?.rol === 'administrador' && (
+                <Button
+                  onClick={() => setShowImportModal(true)}
+                  variant="outline"
+                  className="flex items-center space-x-2 bg-yellow-50 hover:bg-yellow-100 border-yellow-200 text-yellow-700"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Importar</span>
+                </Button>
+              )}
             </>
           )}
           <Button

@@ -14,7 +14,7 @@ export const useSocket = () => {
 
   // Obtener contador de colaboradores en línea
   const obtenerColaboradoresEnLinea = useCallback(() => {
-    const rolesAutorizados = ['administrador', 'contable', 'contador']
+    const rolesAutorizados = ['administrador', 'contable', 'contable']
     if (isConnected && rolesAutorizados.includes(user?.rol)) {
       console.log('📡 [useSocket] Solicitando contador de colaboradores...')
       webSocketService.emit('get_online_colaborators')
@@ -57,7 +57,7 @@ export const useSocket = () => {
       console.log('✅ [useSocket] WebSocket conectado, usuario:', user?.rol)
       setIsConnected(true)
 
-      const rolesAutorizados = ['administrador', 'contable', 'contador']
+      const rolesAutorizados = ['administrador', 'contable', 'contable']
       if (rolesAutorizados.includes(user?.rol)) {
         console.log('👑 [useSocket] Usuario autorizado, solicitando sincronización inicial...')
         // Solicitar inmediatamente
@@ -87,7 +87,7 @@ export const useSocket = () => {
     const status = webSocketService.getConnectionStatus()
     setIsConnected(status.isConnected)
 
-    const rolesAutorizados = ['administrador', 'contable', 'contador']
+    const rolesAutorizados = ['administrador', 'contable', 'contable']
     if (status.isConnected && rolesAutorizados.includes(user?.rol)) {
       obtenerColaboradoresEnLinea()
       setTimeout(obtenerColaboradoresEnLinea, 1000)

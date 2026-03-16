@@ -166,7 +166,7 @@ export const validarClienteDelContador = (req, res, next) => {
 
   // Esto se debe implementar verificando en la base de datos
   // Por ahora, permitir si es contable o administrador
-  if (['administrador', 'contable', 'contador'].includes(usuario.rol)) {
+  if (['administrador', 'contable', 'contable'].includes(usuario.rol)) {
     return next()
   }
 

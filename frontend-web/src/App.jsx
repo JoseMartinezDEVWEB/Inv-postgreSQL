@@ -50,13 +50,24 @@ const AppContent = () => {
   const [showSplash, setShowSplash] = useState(true)
   const { isAuthenticated, user } = useAuth()
 
-  // Mostrar splash screen por 3 segundos
+  // Mostrar splash screen por 3 segundos y escuchar expiración de sesión
   React.useEffect(() => {
     const timer = setTimeout(() => {
       setShowSplash(false)
     }, 3000)
 
-    return () => clearTimeout(timer)
+    const handleSessionExpired = () => {
+      // Redirigir a login forzando la limpieza de estado de React Router si es necesario,
+      // pero de una forma controlada sin recargar toda la SPA
+      window.location.href = '/login?expired=true'
+    }
+
+    window.addEventListener('session-expired', handleSessionExpired)
+
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('session-expired', handleSessionExpired)
+    }
   }, [])
 
   // Manejar F5 para refrescar la aplicación
@@ -82,7 +93,7 @@ const AppContent = () => {
       {/* Rutas públicas */}
       <Route path="/login" element={<Login />} />
       <Route path="/colaborador/espera/:solicitudId" element={<EsperaAutorizacion />} />
-      
+
       {/* Rutas protegidas */}
       <Route
         path="/dashboard"
@@ -94,7 +105,7 @@ const AppContent = () => {
           </ProtectedRoute>
         }
       />
-      
+
       <Route
         path="/clientes"
         element={
@@ -105,7 +116,7 @@ const AppContent = () => {
           </ProtectedRoute>
         }
       />
-      
+
       <Route
         path="/inventarios"
         element={
@@ -124,7 +135,7 @@ const AppContent = () => {
           </ProtectedRoute>
         }
       />
-      
+
       <Route
         path="/productos-generales"
         element={
@@ -135,7 +146,7 @@ const AppContent = () => {
           </ProtectedRoute>
         }
       />
-      
+
       <Route
         path="/agenda"
         element={
@@ -146,7 +157,7 @@ const AppContent = () => {
           </ProtectedRoute>
         }
       />
-      
+
       <Route
         path="/perfil"
         element={
@@ -157,7 +168,7 @@ const AppContent = () => {
           </ProtectedRoute>
         }
       />
-      
+
       <Route
         path="/usuarios"
         element={
@@ -168,7 +179,7 @@ const AppContent = () => {
           </ProtectedRoute>
         }
       />
-      
+
       <Route
         path="/invitaciones"
         element={
@@ -226,8 +237,8 @@ const AppContent = () => {
                 ? user?.rol === 'administrador'
                   ? '/admin/dashboard'
                   : user?.rol === 'contable'
-                  ? '/contable/dashboard'
-                  : '/dashboard'
+                    ? '/contable/dashboard'
+                    : '/dashboard'
                 : '/login'
             }
             replace

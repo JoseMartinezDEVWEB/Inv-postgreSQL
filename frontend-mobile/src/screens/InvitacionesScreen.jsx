@@ -20,13 +20,13 @@ const InvitacionesScreen = () => {
   const { data, isLoading, isFetching } = useQuery(
     ['mis-invitaciones'],
     () => invitacionesApi.listMine(),
-    { select: (r) => r.data.datos || [], enabled: hasRole('contable') || hasRole('administrador') || hasRole('contador'), onError: handleApiError }
+    { select: (r) => r.data.datos || [], enabled: hasRole('contable') || hasRole('administrador') || hasRole('contable'), onError: handleApiError }
   )
 
   const { data: colaboradores, isLoading: loadingColab, refetch: refetchColab } = useQuery(
     ['colaboradores'],
     () => invitacionesApi.listarColaboradores(),
-    { select: (r) => r.data.datos || [], enabled: hasRole('contable') || hasRole('administrador') || hasRole('contador'), onError: handleApiError }
+    { select: (r) => r.data.datos || [], enabled: hasRole('contable') || hasRole('administrador') || hasRole('contable'), onError: handleApiError }
   )
 
   const genMutation = useMutation((payload) => invitacionesApi.createQR(payload), {
@@ -111,7 +111,7 @@ const InvitacionesScreen = () => {
     </View>
   )
 
-  if (!hasRole('contable') && !hasRole('administrador') && !hasRole('contador')) {
+  if (!hasRole('contable') && !hasRole('administrador') && !hasRole('contable')) {
     return (
       <View style={styles.center}>
         <Text style={styles.info}>No tienes permisos para acceder a esta sección</Text>
@@ -121,7 +121,7 @@ const InvitacionesScreen = () => {
 
   const countColab = (colaboradores || []).filter(c => c.rol === 'colaborador').length
   const limiteColab = user?.limiteColaboradores
-  const showLimite = hasRole('contador') && limiteColab != null
+  const showLimite = hasRole('contable') && limiteColab != null
 
   return (
     <View style={styles.container}>
@@ -132,7 +132,7 @@ const InvitacionesScreen = () => {
             <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 12, marginTop: 2 }}>Colaboradores: {countColab}/{limiteColab}</Text>
           )}
         </View>
-        {(hasRole('contable') || hasRole('administrador') || hasRole('contador')) && (
+        {(hasRole('contable') || hasRole('administrador') || hasRole('contable')) && (
           <TouchableOpacity style={styles.addButton} onPress={() => setModalGenerar(true)}>
             <Ionicons name="qr-code-outline" size={18} color="#fff" />
             <Text style={styles.addButtonText}>Generar</Text>
@@ -161,7 +161,7 @@ const InvitacionesScreen = () => {
                 </View>
                 <Text style={styles.meta}>Expira: {new Date(item.expiraEn).toLocaleString()}</Text>
               </View>
-              {item.estado === 'pendiente' && (hasRole('contable') || hasRole('administrador') || hasRole('contador')) && (
+              {item.estado === 'pendiente' && (hasRole('contable') || hasRole('administrador') || hasRole('contable')) && (
                 <TouchableOpacity style={styles.iconButton} onPress={() => {
                   Alert.alert('Confirmar', '¿Cancelar invitación?', [
                     { text: 'No', style: 'cancel' },
@@ -238,8 +238,8 @@ const InvitacionesScreen = () => {
             <TouchableOpacity onPress={() => setForm({ ...form, rol: 'colaborador' })} style={[styles.roleChip, form.rol === 'colaborador' ? styles.roleChipActive : null]}>
               <Text style={[styles.roleChipText, form.rol === 'colaborador' ? styles.roleChipTextActive : null]}>Colaborador</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setForm({ ...form, rol: 'contador' })} style={[styles.roleChip, form.rol === 'contador' ? styles.roleChipActive : null]}>
-              <Text style={[styles.roleChipText, form.rol === 'contador' ? styles.roleChipTextActive : null]}>Contador</Text>
+            <TouchableOpacity onPress={() => setForm({ ...form, rol: 'contable' })} style={[styles.roleChip, form.rol === 'contable' ? styles.roleChipActive : null]}>
+              <Text style={[styles.roleChipText, form.rol === 'contable' ? styles.roleChipTextActive : null]}>Contable</Text>
             </TouchableOpacity>
           </View>
           <TextInput style={styles.input} placeholder="Nombre (opcional)" value={form.nombre} onChangeText={(t) => setForm({ ...form, nombre: t })} />

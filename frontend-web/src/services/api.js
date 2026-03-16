@@ -37,6 +37,10 @@ api.interceptors.request.use(
   }
 )
 
+// Función auxiliar para reintentos con Exponential Backoff
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const MAX_RETRIES = 3;
+
 // Interceptor para responses
 api.interceptors.response.use(
   (response) => {
@@ -45,9 +49,12 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config
 
+    // Inicializar contador de reintentos
+    originalRequest._retryCount = originalRequest._retryCount || 0;
+
     // Si el error es 401 y no hemos intentado refrescar el token
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true
+    if (error.response?.status === 401 && !originalRequest._isTokenRefreshAttempt) {
+      originalRequest._isTokenRefreshAttempt = true
 
       try {
         const refreshToken = localStorage.getItem('refreshToken')
@@ -67,30 +74,44 @@ api.interceptors.response.use(
           return api(originalRequest)
         }
       } catch (refreshError) {
-        // Si falla el refresh, limpiar tokens y redirigir al login
+        // Si falla el refresh, limpiar tokens y disparar evento global de sesión caducada
         localStorage.removeItem('accessToken')
         localStorage.removeItem('refreshToken')
         localStorage.removeItem('user')
 
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login'
-        }
+        const event = new CustomEvent('session-expired');
+        window.dispatchEvent(event);
       }
     }
 
-    // Manejar otros errores
+    // Exponential Backoff para errores de servidor o desconexión (excepto auth o client errors)
+    const isRetryableError = !error.response || (error.response.status >= 500);
+
+    if (isRetryableError && originalRequest._retryCount < MAX_RETRIES && !originalRequest.url.includes('/auth')) {
+      originalRequest._retryCount += 1;
+
+      // Calcular tiempo de espera: 2s, 4s, 8s
+      const delay = Math.pow(2, originalRequest._retryCount) * 1000;
+
+      console.warn(`[API] ⚠️ Error de red o servidor. Reintentando (${originalRequest._retryCount}/${MAX_RETRIES}) en ${delay}ms...`);
+      await sleep(delay);
+
+      // Reintentar la petición
+      return api(originalRequest);
+    }
+
+    // Manejar otros errores y mostrar mensajes si se acabaron los reintentos
     if (error.response?.status === 403) {
       toast.error('No tienes permisos suficientes para realizar esta acción.')
-      // No eliminamos tokens ni redirigimos, ya que puede ser solo un permiso denegado
     } else if (error.response?.status >= 500) {
-      toast.error('Error del servidor. Por favor, intente más tarde.')
+      toast.error('Error del servidor persistente. Por favor, intente más tarde.')
     } else if (error.response?.status === 404) {
       // No mostrar toast para 404, se maneja en cada llamada específica
-      console.log('Recurso no encontrado:', error.config?.url)
+      console.log('Recurso no encontrado:', originalRequest?.url)
     } else if (error.code === 'ECONNABORTED') {
       toast.error('Tiempo de espera agotado. Verifique su conexión.')
     } else if (!error.response) {
-      toast.error('Error de conexión. Verifique su internet.')
+      toast.error('Error de conexión definitivo tras reintentar. Verifique su internet.')
     }
 
     return Promise.reject(error)

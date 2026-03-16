@@ -28,7 +28,7 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false
         },
         rol: {
-            type: DataTypes.ENUM('administrador', 'contador', 'colaborador'),
+            type: DataTypes.ENUM('administrador', 'contable', 'colaborador'),
             defaultValue: 'colaborador' // Rol por defecto
         },
         activo: {

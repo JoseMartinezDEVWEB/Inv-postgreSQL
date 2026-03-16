@@ -148,7 +148,7 @@ const InventoryReportModal = ({ visible, onClose, sesionData, productosContados,
             Inventario de Mercancía y Presentación de Resultados elaborado por:
           </Text>
           <Text style={styles.portadaContadorName}>
-            {user?.nombre?.toUpperCase() || 'CONTADOR'}
+            {user?.nombre?.toUpperCase() || 'contable'}
           </Text>
           <Text style={styles.portadaContadorInfo}>Cédula: {user?.cedula || 'No disponible'}</Text>
           <Text style={styles.portadaContadorInfo}>Teléfono: {user?.telefono || user?.phone || 'No disponible'}</Text>
@@ -332,7 +332,7 @@ const InventoryReportModal = ({ visible, onClose, sesionData, productosContados,
           <View style={styles.footerBottomRow}>
             <View style={styles.footerLeftColumn}>
               <Text style={styles.footerUserName}>
-                {user?.rol === 'contador' || user?.rol === 'contable' ? 'Contador' : 'Usuario'} {user?.nombre?.toUpperCase() || 'USUARIO SISTEMA'}
+                {user?.rol === 'contable' || user?.rol === 'contable' ? 'contable' : 'Usuario'} {user?.nombre?.toUpperCase() || 'USUARIO SISTEMA'}
               </Text>
               <Text style={styles.footerPhone}>Teléfono {user?.telefono || user?.phone || 'No disponible'}</Text>
             </View>

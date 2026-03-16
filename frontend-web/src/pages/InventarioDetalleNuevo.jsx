@@ -21,15 +21,14 @@ const obtenerClienteId = (sesion) => {
     console.warn('⚠️ obtenerClienteId: sesion es null o undefined')
     return null
   }
-  
+
+  // En PostgreSQL/Sequelize suele ser .id, en MongoDB era ._id
   const clienteId = sesion?.clienteNegocio?.id || sesion?.clienteNegocio?._id || sesion?.clienteNegocioId
-  
+
   if (!clienteId) {
-    console.warn('⚠️ obtenerClienteId: No se encontró clienteId')
-    console.warn('⚠️ sesion.clienteNegocio:', sesion.clienteNegocio)
-    console.warn('⚠️ sesion.clienteNegocioId:', sesion.clienteNegocioId)
+    console.warn('⚠️ obtenerClienteId: No se encontró clienteId en:', sesion)
   }
-  
+
   return clienteId
 }
 
@@ -49,7 +48,7 @@ const InventarioDetalleNuevo = () => {
   const { id } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { user } = useAuth()
+  const { user, hasRole } = useAuth()
   // Referencias para inputs de búsqueda y formularios
   const searchInputRef = useRef(null)
   const cantidadInputRef = useRef(null)
@@ -225,15 +224,19 @@ const InventarioDetalleNuevo = () => {
       let totalPendientes = 0
 
       for (const colab of colaboradores) {
+        // En PostgreSQL el ID es .id, no ._id
+        const colabId = colab.id || colab._id;
+        if (!colabId) continue;
+
         try {
-          const prodResponse = await solicitudesConexionApi.obtenerProductosOffline(colab._id)
+          const prodResponse = await solicitudesConexionApi.obtenerProductosOffline(colabId)
           const productosOffline = prodResponse.data?.datos || []
           if (productosOffline.length > 0) {
-            productosPorColaborador[colab._id] = productosOffline
+            productosPorColaborador[colabId] = productosOffline
             totalPendientes += productosOffline.length
           }
         } catch (error) {
-          console.error(`Error al cargar productos del colaborador ${colab._id}:`, error)
+          console.error(`Error al cargar productos del colaborador ${colabId}:`, error)
         }
       }
 
@@ -319,18 +322,18 @@ const InventarioDetalleNuevo = () => {
   // Temporizador basado en cronómetro del backend
   useEffect(() => {
     if (!sesion) return
-    
+
     // Actualizar la ref con los datos actuales de la sesión
     sesionTimerRef.current = sesion
-    
+
     const tick = () => {
       const s = sesionTimerRef.current
       if (!s) return
-      
+
       const acumulado = Math.max(0, Number(s.timerAcumuladoSegundos || 0))
       const enMarcha = Boolean(s.timerEnMarcha)
       let ultimoInicio = 0
-      
+
       // Validar y parsear la fecha de inicio
       if (s.timerUltimoInicio) {
         // Convertir formato SQLite 'YYYY-MM-DD HH:MM:SS' a ISO UTC 'YYYY-MM-DDTHH:MM:SSZ'
@@ -347,7 +350,7 @@ const InventarioDetalleNuevo = () => {
           ultimoInicio = fechaInicio.getTime()
         }
       }
-      
+
       let segundos = acumulado
       if (enMarcha && ultimoInicio > 0) {
         const ahora = Date.now()
@@ -357,7 +360,7 @@ const InventarioDetalleNuevo = () => {
           segundos += diferencia
         }
       }
-      
+
       // Asegurar que nunca sea negativo
       segundos = Math.max(0, segundos)
       setTiempoTranscurrido(segundos)
@@ -381,7 +384,7 @@ const InventarioDetalleNuevo = () => {
   const addProductMutation = useMutation(
     async (data) => {
       const esElPrimerProducto = productosContados.length === 0 && !sesion?.timerEnMarcha
-      
+
       console.log('🔍 Verificando primer producto:', {
         productosContadosLength: productosContados.length,
         timerEnMarcha: sesion?.timerEnMarcha,
@@ -424,7 +427,7 @@ const InventarioDetalleNuevo = () => {
         console.error('❌ Error agregando producto:', error)
         console.error('❌ Detalles del error:', error.response?.data)
         console.error('❌ Datos enviados:', error.config?.data)
-        
+
         if (error.response?.status === 400) {
           const mensaje = error.response?.data?.mensaje || 'Error al agregar producto'
           toast.error(mensaje)
@@ -833,15 +836,15 @@ const InventarioDetalleNuevo = () => {
         console.log('🔍 Buscando por código de barras:', codigoBarras)
         const generalResponse = await productosApi.buscarPorCodigoBarras(codigoBarras)
         console.log('✅ Respuesta búsqueda código:', generalResponse.data)
-        
+
         // Backend SQLite devuelve: { exito: true, datos: producto } o { exito: true, datos: { producto } }
         let productoGeneral = generalResponse.data?.datos
-        
+
         // Si datos es un objeto con propiedad producto, extraerlo
         if (productoGeneral && productoGeneral.producto) {
           productoGeneral = productoGeneral.producto
         }
-        
+
         // Asegurar que tenga _id para compatibilidad
         if (productoGeneral && !productoGeneral._id && productoGeneral.id) {
           productoGeneral._id = productoGeneral.id
@@ -932,11 +935,11 @@ const InventarioDetalleNuevo = () => {
           pagina: 1,
           soloActivos: true
         })
-        
+
         // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-        const productosGenerales = generalesResponse.data?.datos?.productos || 
-                                   generalesResponse.data?.productos || 
-                                   []
+        const productosGenerales = generalesResponse.data?.datos?.productos ||
+          generalesResponse.data?.productos ||
+          []
 
         setSearchResults(productosGenerales)
       } catch (error) {
@@ -966,18 +969,18 @@ const InventarioDetalleNuevo = () => {
         // Buscar en productos generales con las primeras 3 letras
         const searchTerm = nombreBusqueda.trim().substring(0, 3)
         console.log('🔍 Buscando por nombre (primeras 3 letras):', searchTerm)
-        
+
         const generalesResponse = await productosApi.getAllGenerales({
           buscar: searchTerm,
           limite: 20,
           pagina: 1,
           soloActivos: true
         })
-        
+
         // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-        const productosGenerales = generalesResponse.data?.datos?.productos || 
-                                   generalesResponse.data?.productos || 
-                                   []
+        const productosGenerales = generalesResponse.data?.datos?.productos ||
+          generalesResponse.data?.productos ||
+          []
 
         // Filtrar productos que empiecen con las primeras 3 letras (case insensitive)
         const productosFiltrados = productosGenerales.filter(producto => {
@@ -997,12 +1000,12 @@ const InventarioDetalleNuevo = () => {
               pagina: 1,
               soloActivos: true
             })
-            
+
             // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-            productosCliente = clienteResponse.data?.datos?.productos || 
-                              clienteResponse.data?.productos || 
-                              []
-            
+            productosCliente = clienteResponse.data?.datos?.productos ||
+              clienteResponse.data?.productos ||
+              []
+
             // Filtrar también productos del cliente
             const productosClienteFiltrados = productosCliente.filter(producto => {
               const nombreProducto = (producto.nombre || '').toLowerCase()
@@ -1020,14 +1023,20 @@ const InventarioDetalleNuevo = () => {
         const todosProductos = [...productosCliente, ...productosFiltrados]
         // Eliminar duplicados por nombre o ID
         const productosUnicos = todosProductos.filter((producto, index, self) =>
-          index === self.findIndex((p) => 
-            (p.nombre === producto.nombre) || 
-            (p._id === producto._id) || 
-            (p.id === producto.id)
+          index === self.findIndex((p) =>
+            (p.nombre === producto.nombre) ||
+            (p.id !== undefined && p.id === producto.id) ||
+            (p._id !== undefined && p._id === producto._id)
           )
         )
 
-        setSearchResults(productosUnicos.slice(0, 20))
+        // Asegurar que todos tengan un ID consistente para el frontend
+        const productosProcesados = productosUnicos.map(p => ({
+          ...p,
+          _id: p.id || p._id || p.productoId // Asegurar un ID para la key de React
+        }))
+
+        setSearchResults(productosProcesados.slice(0, 20))
       } catch (error) {
         console.error('Error buscando productos:', error)
         setSearchResults([])
@@ -1041,7 +1050,19 @@ const InventarioDetalleNuevo = () => {
   }, [nombreBusqueda, showSearchModal, sesion?.clienteNegocio?.id, sesion?.clienteNegocio?._id, sesion?.clienteNegocioId])
 
   const handleSelectProduct = (producto) => {
-    setSelectedProducto(producto)
+    // Asegurar que tenemos un ID
+    const prodId = producto.id || producto._id || producto.productoId
+    if (!prodId) {
+      console.error('❌ Error: El producto seleccionado no tiene ID', producto)
+      toast.error('Error al seleccionar producto: ID faltante')
+      return
+    }
+
+    setSelectedProducto({
+      ...producto,
+      _id: prodId // Usar _id internamente para compatibilidad
+    })
+
     // Usar costoBase para productos generales o costo para productos de cliente
     const costoProducto = producto.costoBase !== undefined ? producto.costoBase : producto.costo
     setCosto(costoProducto?.toString() || '')
@@ -1137,14 +1158,14 @@ const InventarioDetalleNuevo = () => {
 
     // Obtener ID del cliente usando helper
     const clienteId = obtenerClienteId(sesion)
-    
+
     if (!clienteId) {
       toast.error('Error: No se pudo obtener el ID del cliente')
       console.error('❌ Sesión completa:', JSON.stringify(sesion, null, 2))
       console.error('❌ clienteNegocio:', sesion?.clienteNegocio)
       console.error('❌ clienteNegocioId:', sesion?.clienteNegocioId)
       console.error('❌ Estructura de sesion:', Object.keys(sesion || {}))
-      
+
       // Intentar refrescar la sesión
       console.log('🔄 Intentando refrescar la sesión...')
       refetch()
@@ -1186,9 +1207,9 @@ const InventarioDetalleNuevo = () => {
 
         // Backend SQLite usa 'id' no '_id', asegurar compatibilidad
         const productoClienteId = productoClienteCreado?.id || productoClienteCreado?._id
-        
+
         console.log('🔍 ID del producto creado:', productoClienteId)
-        
+
         if (!productoClienteId) {
           console.error('❌ Estructura de respuesta:', nuevoProductoCliente.data)
           throw new Error('No se pudo obtener el ID del producto creado')
@@ -1196,7 +1217,7 @@ const InventarioDetalleNuevo = () => {
 
         // Convertir a número entero para el backend SQLite
         const productoIdNumero = parseInt(productoClienteId, 10)
-        
+
         if (isNaN(productoIdNumero) || productoIdNumero <= 0) {
           throw new Error(`ID de producto inválido: ${productoClienteId}`)
         }
@@ -1212,7 +1233,7 @@ const InventarioDetalleNuevo = () => {
         console.error('❌ Error completo:', error)
         console.error('❌ Response data:', error.response?.data)
         console.error('❌ Response status:', error.response?.status)
-        
+
         // Si el producto ya existe, el backend debería devolver el producto existente
         // o podemos simplemente mostrar un error más amigable
         if (error.response?.status === 400 && error.response?.data?.mensaje?.includes('Ya existe')) {
@@ -1227,9 +1248,9 @@ const InventarioDetalleNuevo = () => {
       // El producto ya es de ProductoCliente
       // Backend SQLite usa 'id' no '_id', asegurar compatibilidad
       const productoClienteId = selectedProducto?.id || selectedProducto?._id
-      
+
       console.log('🔄 Producto ya es de cliente, ID:', productoClienteId)
-      
+
       if (!productoClienteId) {
         console.error('❌ Producto seleccionado:', selectedProducto)
         toast.error('Error: No se pudo obtener el ID del producto')
@@ -1238,7 +1259,7 @@ const InventarioDetalleNuevo = () => {
 
       // Convertir a número entero para el backend SQLite
       const productoIdNumero = parseInt(productoClienteId, 10)
-      
+
       if (isNaN(productoIdNumero) || productoIdNumero <= 0) {
         toast.error(`Error: ID de producto inválido: ${productoClienteId}`)
         return
@@ -1422,7 +1443,7 @@ const InventarioDetalleNuevo = () => {
         setModalData({})
     }
   }
-  
+
   // Cerrar modal financiero
   const closeFinancialModal = () => {
     setActiveModal(null)
@@ -2202,7 +2223,7 @@ const InventarioDetalleNuevo = () => {
     ({ productoId, field, value }) => {
       // Si es nombreProducto, también necesitamos el productoClienteId para actualizar correctamente
       const updateData = { [field]: value }
-      
+
       // Si estamos actualizando el nombre, también necesitamos el productoClienteId
       if (field === 'nombreProducto') {
         const producto = productosContados.find(p => p.productoId === productoId)
@@ -2210,7 +2231,7 @@ const InventarioDetalleNuevo = () => {
           updateData.productoClienteId = producto.productoClienteId
         }
       }
-      
+
       return sesionesApi.updateProduct(id, productoId, updateData)
     },
     {
@@ -2305,7 +2326,7 @@ const InventarioDetalleNuevo = () => {
         productoId: p?.productoId || p?.id || p?._id || '',
         producto: p?.producto // mantener referencia original por si se necesita mostrar
       }))
-      // NO hacer reverse() porque el backend ya ordena DESC (últimos primero)
+    // NO hacer reverse() porque el backend ya ordena DESC (últimos primero)
     : []
 
   const valorTotal = safeNumber(sesion?.totales?.valorTotalInventario, 2)
@@ -2653,8 +2674,8 @@ const InventarioDetalleNuevo = () => {
                             </td>
                             <td className="px-4 py-2">
                               <span className={`text-xs px-2 py-1 rounded-full ${inv.estado === 'pendiente' ? 'bg-yellow-100 text-yellow-800' :
-                                  inv.estado === 'consumida' ? 'bg-green-100 text-green-800' :
-                                    'bg-gray-100 text-gray-800'
+                                inv.estado === 'consumida' ? 'bg-green-100 text-green-800' :
+                                  'bg-gray-100 text-gray-800'
                                 }`}>
                                 {inv.estado}
                               </span>
@@ -2738,8 +2759,8 @@ const InventarioDetalleNuevo = () => {
                               </td>
                               <td className="px-4 py-4 whitespace-nowrap">
                                 <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${colab.estadoConexion === 'conectado'
-                                    ? 'bg-green-100 text-green-800'
-                                    : 'bg-gray-100 text-gray-800'
+                                  ? 'bg-green-100 text-green-800'
+                                  : 'bg-gray-100 text-gray-800'
                                   }`}>
                                   {colab.estadoConexion === 'conectado' ? (
                                     <><Wifi className="w-3 h-3 mr-1 inline" /> Conectado</>
@@ -3000,8 +3021,8 @@ const InventarioDetalleNuevo = () => {
                     <div className="flex items-center justify-between px-4 py-2 bg-white rounded-lg">
                       <span className="text-sm font-medium text-gray-600">Estado:</span>
                       <span className={`text-sm font-semibold ${colaboradorSeleccionado?.estadoConexion === 'conectado'
-                          ? 'text-green-600'
-                          : 'text-gray-600'
+                        ? 'text-green-600'
+                        : 'text-gray-600'
                         }`}>
                         {colaboradorSeleccionado?.estadoConexion === 'conectado' ? 'Conectado' : 'Desconectado'}
                       </span>
@@ -3066,110 +3087,112 @@ const InventarioDetalleNuevo = () => {
 
       {/* Main Content */}
       <div className="flex h-[calc(100vh-60px)]">
-        {/* Left Sidebar - Financial Buttons */}
-        <div className="w-80 bg-slate-800 border-r border-slate-600 p-4 space-y-4 overflow-y-auto">
-          <h3 className="text-white font-semibold text-sm mb-4 text-center border-b border-slate-600 pb-2">
-            Gestión Financiera
-          </h3>
-          <button
-            onClick={() => openFinancialModal('ventas')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <ShoppingCart className="w-6 h-6" />
-            <span>Ventas</span>
-          </button>
+        {/* Left Sidebar - Financial Buttons (Hidden for Colaboradores) */}
+        {!hasRole('colaborador') && (
+          <div className="w-80 bg-slate-800 border-r border-slate-600 p-4 space-y-4 overflow-y-auto">
+            <h3 className="text-white font-semibold text-sm mb-4 text-center border-b border-slate-600 pb-2">
+              Gestión Financiera
+            </h3>
+            <button
+              onClick={() => openFinancialModal('ventas')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <ShoppingCart className="w-6 h-6" />
+              <span>Ventas</span>
+            </button>
 
-          <button
-            onClick={() => openFinancialModal('gastos')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <TrendingDown className="w-6 h-6" />
-            <span>Gastos</span>
-          </button>
+            <button
+              onClick={() => openFinancialModal('gastos')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <TrendingDown className="w-6 h-6" />
+              <span>Gastos</span>
+            </button>
 
-          <button
-            onClick={() => openFinancialModal('cuentasPorCobrar')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <Users className="w-6 h-6" />
-            <span>Cuentas por Cobrar</span>
-          </button>
+            <button
+              onClick={() => openFinancialModal('cuentasPorCobrar')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <Users className="w-6 h-6" />
+              <span>Cuentas por Cobrar</span>
+            </button>
 
-          <button
-            onClick={() => openFinancialModal('cuentasPorPagar')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <CreditCard className="w-6 h-6" />
-            <span>Cuentas por Pagar</span>
-          </button>
+            <button
+              onClick={() => openFinancialModal('cuentasPorPagar')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <CreditCard className="w-6 h-6" />
+              <span>Cuentas por Pagar</span>
+            </button>
 
-          <button
-            onClick={() => openFinancialModal('efectivo')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <Wallet className="w-6 h-6" />
-            <span>Efectivo en Caja o Banco</span>
-          </button>
+            <button
+              onClick={() => openFinancialModal('efectivo')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <Wallet className="w-6 h-6" />
+              <span>Efectivo en Caja o Banco</span>
+            </button>
 
-          <button
-            onClick={() => openFinancialModal('deudaANegocio')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <UserMinus className="w-6 h-6" />
-            <span>Deuda a Negocio</span>
-          </button>
+            <button
+              onClick={() => openFinancialModal('deudaANegocio')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <UserMinus className="w-6 h-6" />
+              <span>Deuda a Negocio</span>
+            </button>
 
-          <button
-            onClick={() => openFinancialModal('activosFijos')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <Briefcase className="w-6 h-6" />
-            <span>Activos Fijos</span>
-          </button>
+            <button
+              onClick={() => openFinancialModal('activosFijos')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <Briefcase className="w-6 h-6" />
+              <span>Activos Fijos</span>
+            </button>
 
-          <button
-            onClick={() => openFinancialModal('capital')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-700 hover:to-yellow-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <PiggyBank className="w-6 h-6" />
-            <span>Capital</span>
-          </button>
+            <button
+              onClick={() => openFinancialModal('capital')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-700 hover:to-yellow-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <PiggyBank className="w-6 h-6" />
+              <span>Capital</span>
+            </button>
 
-          {/* Separador */}
-          <div className="border-t border-slate-600 my-4"></div>
+            {/* Separador */}
+            <div className="border-t border-slate-600 my-4"></div>
 
-          <h3 className="text-white font-semibold text-sm mb-4 text-center border-b border-slate-600 pb-2">
-            Gestión de Inventario
-          </h3>
+            <h3 className="text-white font-semibold text-sm mb-4 text-center border-b border-slate-600 pb-2">
+              Gestión de Inventario
+            </h3>
 
-          {/* Nuevos botones de gestión */}
-          <button
-            onClick={() => openFinancialModal('imprimir')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <Printer className="w-6 h-6" />
-            <span>Imprimir</span>
-          </button>
+            {/* Nuevos botones de gestión */}
+            <button
+              onClick={() => openFinancialModal('imprimir')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <Printer className="w-6 h-6" />
+              <span>Imprimir</span>
+            </button>
 
-          <button
-            onClick={() => openFinancialModal('reporte')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <FileText className="w-6 h-6" />
-            <span>Ver Reporte</span>
-          </button>
+            <button
+              onClick={() => openFinancialModal('reporte')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <FileText className="w-6 h-6" />
+              <span>Ver Reporte</span>
+            </button>
 
-          <button
-            onClick={() => openFinancialModal('configuracion')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
-          >
-            <Settings className="w-6 h-6" />
-            <span>Configuración</span>
-          </button>
-        </div>
+            <button
+              onClick={() => openFinancialModal('configuracion')}
+              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            >
+              <Settings className="w-6 h-6" />
+              <span>Configuración</span>
+            </button>
+          </div>
+        )}
 
         {/* Center - Product Input */}
-        <div 
+        <div
           className="flex-1 flex flex-col"
           onClick={(e) => {
             // Si el click no es en un input, botón o elemento interactivo, enfocar el input de código de barras
@@ -3286,23 +3309,27 @@ const InventarioDetalleNuevo = () => {
                     Cantidad
                   </th>
 
-                  {/* Columna Costo */}
-                  <th
-                    colSpan={3}
-                    className="px-3 py-2 text-center bg-blue-100 text-gray-800 font-semibold text-sm"
-                    style={{ borderBottom: '1px solid #9ca3af' }}
-                  >
-                    Costo
-                  </th>
+                  {/* Columna Costo (Hidden for Colaboradores) */}
+                  {!hasRole('colaborador') && (
+                    <th
+                      colSpan={3}
+                      className="px-3 py-2 text-center bg-blue-100 text-gray-800 font-semibold text-sm"
+                      style={{ borderBottom: '1px solid #9ca3af' }}
+                    >
+                      Costo
+                    </th>
+                  )}
 
-                  {/* Columna Total */}
-                  <th
-                    rowSpan={2}
-                    className="px-3 py-2 text-center bg-yellow-100 text-gray-800 font-semibold text-sm"
-                    style={{ minWidth: '120px', borderBottom: '2px solid #9ca3af' }}
-                  >
-                    Total
-                  </th>
+                  {/* Columna Total (Hidden for Colaboradores) */}
+                  {!hasRole('colaborador') && (
+                    <th
+                      rowSpan={2}
+                      className="px-3 py-2 text-center bg-yellow-100 text-gray-800 font-semibold text-sm"
+                      style={{ minWidth: '120px', borderBottom: '2px solid #9ca3af' }}
+                    >
+                      Total
+                    </th>
+                  )}
 
                   {/* Columna Acciones */}
                   <th
@@ -3324,16 +3351,20 @@ const InventarioDetalleNuevo = () => {
                     Diferencia
                   </th>
 
-                  {/* Sub-columnas Costo */}
-                  <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
-                    Anterior
-                  </th>
-                  <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
-                    Actual
-                  </th>
-                  <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
-                    Diferencia
-                  </th>
+                  {/* Sub-columnas Costo (Hidden for Colaboradores) */}
+                  {!hasRole('colaborador') && (
+                    <>
+                      <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
+                        Anterior
+                      </th>
+                      <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
+                        Actual
+                      </th>
+                      <th className="px-2 py-1 text-center bg-blue-50 text-gray-700 text-xs font-medium" style={{ width: '80px', borderBottom: '2px solid #9ca3af' }}>
+                        Diferencia
+                      </th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -3355,11 +3386,11 @@ const InventarioDetalleNuevo = () => {
                         <input
                           type="text"
                           value={producto.nombreProducto || ''}
-                          onKeyDown={(e) => { 
-                            if (e.key === 'Enter') { 
-                              handleUpdateProductField(producto.productoId, 'nombreProducto', e.target.value); 
-                              e.currentTarget.blur() 
-                            } 
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              handleUpdateProductField(producto.productoId, 'nombreProducto', e.target.value);
+                              e.currentTarget.blur()
+                            }
                           }}
                           onBlur={(e) => handleUpdateProductField(producto.productoId, 'nombreProducto', e.target.value)}
                           className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1 font-medium"
@@ -3403,46 +3434,50 @@ const InventarioDetalleNuevo = () => {
                         />
                       </td>
 
-                      {/* Costo - Anterior */}
-                      <td className="px-2 py-2 text-center bg-blue-50 text-gray-600 text-sm">
-                        <input
-                          type="number"
-                          defaultValue="0.0"
-                          onKeyDown={(e) => { if (e.key === 'Enter') { handleUpdateProductField(producto.productoId, 'costoAnterior', e.target.value); e.currentTarget.blur() } }}
-                          onBlur={(e) => handleUpdateProductField(producto.productoId, 'costoAnterior', e.target.value)}
-                          className="w-full text-center bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1"
-                          step="0.01"
-                        />
-                      </td>
+                      {/* Costo - Actual (Hidden for Colaboradores) */}
+                      {!hasRole('colaborador') && (
+                        <>
+                          <td className="px-2 py-2 text-center bg-blue-50 text-gray-600 text-sm">
+                            <input
+                              type="number"
+                              defaultValue="0.0"
+                              onKeyDown={(e) => { if (e.key === 'Enter') { handleUpdateProductField(producto.productoId, 'costoAnterior', e.target.value); e.currentTarget.blur() } }}
+                              onBlur={(e) => handleUpdateProductField(producto.productoId, 'costoAnterior', e.target.value)}
+                              className="w-full text-center bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1"
+                              step="0.01"
+                            />
+                          </td>
 
-                      {/* Costo - Actual */}
-                      <td className="px-2 py-2 text-center bg-white text-gray-900 font-semibold text-sm">
-                        <input
-                          type="number"
-                          value={safeToFixed(producto.costoProducto, 2)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') { handleUpdateProductField(producto.productoId, 'costoProducto', e.target.value); e.currentTarget.blur() } }}
-                          onBlur={(e) => handleUpdateProductField(producto.productoId, 'costoProducto', e.target.value)}
-                          className="w-full text-center bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1 font-semibold"
-                          step="0.01"
-                        />
-                      </td>
+                          <td className="px-2 py-2 text-center bg-white text-gray-900 font-semibold text-sm">
+                            <input
+                              type="number"
+                              value={safeToFixed(producto.costoProducto, 2)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') { handleUpdateProductField(producto.productoId, 'costoProducto', e.target.value); e.currentTarget.blur() } }}
+                              onBlur={(e) => handleUpdateProductField(producto.productoId, 'costoProducto', e.target.value)}
+                              className="w-full text-center bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1 font-semibold"
+                              step="0.01"
+                            />
+                          </td>
 
-                      {/* Costo - Diferencia */}
-                      <td className="px-2 py-2 text-center bg-yellow-200 text-yellow-800 font-semibold text-sm">
-                        <input
-                          type="number"
-                          value={safeToFixed(producto.costoDiferencia || (producto.costoProducto - producto.costoAnterior) || 0, 2)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') { handleUpdateProductField(producto.productoId, 'costoDiferencia', e.target.value); e.currentTarget.blur() } }}
-                          onBlur={(e) => handleUpdateProductField(producto.productoId, 'costoDiferencia', e.target.value)}
-                          className="w-full text-center bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1 font-semibold"
-                          step="0.01"
-                        />
-                      </td>
+                          <td className="px-2 py-2 text-center bg-yellow-200 text-yellow-800 font-semibold text-sm">
+                            <input
+                              type="number"
+                              value={safeToFixed(producto.costoDiferencia || (producto.costoProducto - producto.costoAnterior) || 0, 2)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') { handleUpdateProductField(producto.productoId, 'costoDiferencia', e.target.value); e.currentTarget.blur() } }}
+                              onBlur={(e) => handleUpdateProductField(producto.productoId, 'costoDiferencia', e.target.value)}
+                              className="w-full text-center bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1 font-semibold"
+                              step="0.01"
+                            />
+                          </td>
+                        </>
+                      )}
 
-                      {/* Total */}
-                      <td className="px-3 py-2 text-right bg-yellow-50 text-gray-900 font-bold text-sm">
-                        {safeNumber(producto.valorTotal, 2).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                      </td>
+                      {/* Total (Hidden for Colaboradores) */}
+                      {!hasRole('colaborador') && (
+                        <td className="px-3 py-2 text-right bg-yellow-50 text-gray-900 font-bold text-sm">
+                          {safeNumber(producto.valorTotal, 2).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                        </td>
+                      )}
 
                       {/* Acciones */}
                       <td className="px-2 py-2 text-center">
@@ -3508,10 +3543,12 @@ const InventarioDetalleNuevo = () => {
               )}
             </div>
 
-            <div className="text-right">
-              <div className="text-slate-400 text-sm">Total</div>
-              <div className="text-3xl font-bold">{valorTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</div>
-            </div>
+            {!hasRole('colaborador') && (
+              <div className="text-right">
+                <div className="text-slate-400 text-sm">Total</div>
+                <div className="text-3xl font-bold">{valorTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -3556,8 +3593,8 @@ const InventarioDetalleNuevo = () => {
                     {nombreBusqueda.length === 0
                       ? 'Listado de productos generales'
                       : nombreBusqueda.length < 3
-                      ? 'Escribe al menos 3 caracteres para buscar'
-                      : 'No se encontraron productos'}
+                        ? 'Escribe al menos 3 caracteres para buscar'
+                        : 'No se encontraron productos'}
                   </p>
                 </div>
               ) : (
@@ -3602,8 +3639,8 @@ const InventarioDetalleNuevo = () => {
                     >
                       <div className="flex-1">
                         <div className="font-semibold text-gray-900">
-                          {nombreBusqueda.length >= 3 
-                            ? highlightMatch(producto.nombre, nombreBusqueda) 
+                          {nombreBusqueda.length >= 3
+                            ? highlightMatch(producto.nombre, nombreBusqueda)
                             : producto.nombre}
                         </div>
                         <div className="text-sm text-gray-600">
@@ -3943,8 +3980,8 @@ const InventarioDetalleNuevo = () => {
                         </td>
                         <td className="px-4 py-3 text-center">
                           <span className={`px-2 py-1 rounded text-sm font-medium ${nuevoTotal > 0
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-gray-100 text-gray-600'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-gray-100 text-gray-600'
                             }`}>
                             ${safeToFixed(nuevoTotal, 2)}
                           </span>
@@ -3971,27 +4008,19 @@ const InventarioDetalleNuevo = () => {
                   onClick={async () => {
                     setIsUpdatingZeroCosts(true)
                     try {
-                      // Actualizar solo los productos que tienen un nuevo costo válido
-                      const updates = Object.entries(zeroCostProductsEdits)
-                        .filter(([, value]) => Number(value) > 0)
+                      console.log('🔄 Actualizando productos con costo 0...')
+                      const updates = Object.entries(zeroCostProductsEdits).map(([productoId, costo]) => ({
+                        productoId,
+                        costoProducto: parseFloat(costo)
+                      }))
 
-                      if (updates.length === 0) {
-                        toast.error('Ingresa al menos un costo válido')
-                        setIsUpdatingZeroCosts(false)
-                        return
-                      }
+                      console.log('📊 Actualizaciones a enviar:', updates)
 
-                      console.log('🔄 Iniciando actualización de costos:', updates)
-
-                      // Actualizar cada producto secuencialmente
-                      for (const [productoId, value] of updates) {
-                        console.log('📝 Actualizando producto:', productoId, 'con costo:', Number(value))
-
-                        const response = await sesionesApi.updateProduct(id, productoId, {
-                          costoProducto: Number(value)
+                      // Actualizar en lote si el backend lo soporta, o uno por uno
+                      for (const update of updates) {
+                        await sesionesApi.updateProduct(id, update.productoId, {
+                          costoProducto: update.costoProducto
                         })
-
-                        console.log('✅ Respuesta actualización:', response.data)
                       }
 
                       console.log('🔄 Refrescando datos de la sesión...')
@@ -4016,7 +4045,7 @@ const InventarioDetalleNuevo = () => {
                   disabled={isUpdatingZeroCosts}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isUpdatingZeroCosts ? 'Actualizando...' : 'Actualizar Costos'}
+                  {isUpdatingZeroCosts ? 'Enviando...' : 'Crear'}
                 </button>
               </div>
             </div>
@@ -4219,8 +4248,8 @@ const InventarioDetalleNuevo = () => {
       {activeModal && activeModal !== 'reporteCompleto' && modalData.title && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
           <div className={`bg-white rounded-lg shadow-2xl ${modalData.isCustomModal || activeModal === 'configuracion'
-              ? 'max-w-6xl w-full max-h-[90vh] overflow-hidden'
-              : 'max-w-md w-full'
+            ? 'max-w-6xl w-full max-h-[90vh] overflow-hidden'
+            : 'max-w-md w-full'
             }`}>
             <div className="flex items-center justify-between p-6 border-b">
               <h3 className="text-xl font-bold text-gray-800">{modalData.title}</h3>
@@ -4244,8 +4273,8 @@ const InventarioDetalleNuevo = () => {
                           <button
                             onClick={() => setActiveConfigTab('general')}
                             className={`py-2 px-1 border-b-2 font-medium text-sm ${activeConfigTab === 'general'
-                                ? 'border-slate-500 text-slate-600'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                              ? 'border-slate-500 text-slate-600'
+                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                               }`}
                           >
                             Configuración General
@@ -4253,8 +4282,8 @@ const InventarioDetalleNuevo = () => {
                           <button
                             onClick={() => setActiveConfigTab('distribucion')}
                             className={`py-2 px-1 border-b-2 font-medium text-sm ${activeConfigTab === 'distribucion'
-                                ? 'border-emerald-500 text-emerald-600'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                              ? 'border-emerald-500 text-emerald-600'
+                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                               }`}
                           >
                             <Calculator className="w-4 h-4 inline mr-2" />
@@ -4263,8 +4292,8 @@ const InventarioDetalleNuevo = () => {
                           <button
                             onClick={() => setActiveConfigTab('contador')}
                             className={`py-2 px-1 border-b-2 font-medium text-sm ${activeConfigTab === 'contador'
-                                ? 'border-amber-500 text-amber-600'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                              ? 'border-amber-500 text-amber-600'
+                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                               }`}
                           >
                             <Calendar className="w-4 h-4 inline mr-2" />
@@ -4273,8 +4302,8 @@ const InventarioDetalleNuevo = () => {
                           <button
                             onClick={() => setActiveConfigTab('descargar')}
                             className={`py-2 px-1 border-b-2 font-medium text-sm ${activeConfigTab === 'descargar'
-                                ? 'border-cyan-500 text-cyan-600'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                              ? 'border-cyan-500 text-cyan-600'
+                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                               }`}
                           >
                             <Download className="w-4 h-4 inline mr-2" />
@@ -4283,8 +4312,8 @@ const InventarioDetalleNuevo = () => {
                           <button
                             onClick={() => setActiveConfigTab('empleados')}
                             className={`py-2 px-1 border-b-2 font-medium text-sm ${activeConfigTab === 'empleados'
-                                ? 'border-blue-500 text-blue-600'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                              ? 'border-blue-500 text-blue-600'
+                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                               }`}
                           >
                             <Users className="w-4 h-4 inline mr-2" />
@@ -4963,201 +4992,202 @@ const InventarioDetalleNuevo = () => {
                 {modalData.fields?.map((field, index) => {
                   const isHiddenInMultipleMode = modoMultipleGastos && ['monto', 'fecha', 'categoria', 'descripcion'].includes(field.key)
                   return (
-                  <div key={index} className={isHiddenInMultipleMode ? 'hidden' : ''}>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {field.label}
-                      {field.required !== false && ' *'}
-                    </label>
+                    <div key={index} className={isHiddenInMultipleMode ? 'hidden' : ''}>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        {field.label}
+                        {field.required !== false && ' *'}
+                      </label>
 
-                    {field.type === 'select' ? (
-                      <select
-                        name={field.key}
-                        required={field.required !== false}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                        onChange={(e) => {
-                          // Si es el campo esSocio, cambiar la visualización del campo deudor
-                          if (field.key === 'esSocio') {
-                            const socioSelect = document.getElementById('deudor-socio-select')
-                            const textInput = document.getElementById('deudor-text-input')
-
-                            if (e.target.value === 'true') {
-                              // Mostrar selector de socios
-                              if (socioSelect) {
-                                socioSelect.style.display = 'block'
-                                socioSelect.required = true
-                              }
-                              if (textInput) {
-                                textInput.style.display = 'none'
-                                textInput.required = false
-                                textInput.value = ''
-                              }
-                            } else {
-                              // Mostrar input de texto
-                              if (socioSelect) {
-                                socioSelect.style.display = 'none'
-                                socioSelect.required = false
-                                socioSelect.value = ''
-                              }
-                              if (textInput) {
-                                textInput.style.display = 'block'
-                                textInput.required = true
-                              }
-                            }
-                          }
-                        }}
-                      >
-                        <option value="">Seleccionar...</option>
-                        {field.options?.map((option, optIndex) => (
-                          <option key={optIndex} value={option}>{option}</option>
-                        ))}
-                      </select>
-                    ) : field.type === 'conditional' && field.key === 'deudor' ? (
-                      <div id="deudor-field">
+                      {field.type === 'select' ? (
                         <select
                           name={field.key}
                           required={field.required !== false}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                          style={{ display: 'none' }}
-                          id="deudor-socio-select"
+                          onChange={(e) => {
+                            // Si es el campo esSocio, cambiar la visualización del campo deudor
+                            if (field.key === 'esSocio') {
+                              const socioSelect = document.getElementById('deudor-socio-select')
+                              const textInput = document.getElementById('deudor-text-input')
+
+                              if (e.target.value === 'true') {
+                                // Mostrar selector de socios
+                                if (socioSelect) {
+                                  socioSelect.style.display = 'block'
+                                  socioSelect.required = true
+                                }
+                                if (textInput) {
+                                  textInput.style.display = 'none'
+                                  textInput.required = false
+                                  textInput.value = ''
+                                }
+                              } else {
+                                // Mostrar input de texto
+                                if (socioSelect) {
+                                  socioSelect.style.display = 'none'
+                                  socioSelect.required = false
+                                  socioSelect.value = ''
+                                }
+                                if (textInput) {
+                                  textInput.style.display = 'block'
+                                  textInput.required = true
+                                }
+                              }
+                            }
+                          }}
                         >
-                          <option value="">Seleccionar socio...</option>
-                          <option value="Socio 1">Socio 1</option>
-                          <option value="Socio 2">Socio 2</option>
+                          <option value="">Seleccionar...</option>
+                          {field.options?.map((option, optIndex) => (
+                            <option key={optIndex} value={option}>{option}</option>
+                          ))}
                         </select>
-                        <input
-                          type="text"
-                          name={field.key}
-                          placeholder={field.placeholder}
-                          required={field.required !== false}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                          id="deudor-text-input"
-                        />
-                      </div>
-                    ) : field.type === 'checkbox' ? (
-                      field.key === 'agregarMultiple' ? (
-                        <div className="space-y-3">
+                      ) : field.type === 'conditional' && field.key === 'deudor' ? (
+                        <div id="deudor-field">
+                          <select
+                            name={field.key}
+                            required={field.required !== false}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                            style={{ display: 'none' }}
+                            id="deudor-socio-select"
+                          >
+                            <option value="">Seleccionar socio...</option>
+                            <option value="Socio 1">Socio 1</option>
+                            <option value="Socio 2">Socio 2</option>
+                          </select>
+                          <input
+                            type="text"
+                            name={field.key}
+                            placeholder={field.placeholder}
+                            required={field.required !== false}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                            id="deudor-text-input"
+                          />
+                        </div>
+                      ) : field.type === 'checkbox' ? (
+                        field.key === 'agregarMultiple' ? (
+                          <div className="space-y-3">
+                            <div className="flex items-center">
+                              <input
+                                type="checkbox"
+                                name={field.key}
+                                id="agregarMultiple"
+                                checked={modoMultipleGastos}
+                                onChange={(e) => setModoMultipleGastos(e.target.checked)}
+                                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                              />
+                              <span className="ml-2 text-sm text-gray-700 font-medium">Agregar varios gastos con descripción y monto</span>
+                            </div>
+
+                            {modoMultipleGastos && (
+                              <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                <div className="flex justify-between items-center mb-3">
+                                  <h4 className="font-medium text-blue-800">Detalles de Gastos</h4>
+                                  <button
+                                    type="button"
+                                    onClick={() => setGastosDetalle([...gastosDetalle, { id: Date.now(), descripcion: '', monto: 0, categoria: 'Otros', fecha: new Date().toISOString().split('T')[0] }])}
+                                    className="text-sm px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                                  >
+                                    + Agregar Gasto
+                                  </button>
+                                </div>
+
+                                {gastosDetalle.length === 0 ? (
+                                  <p className="text-sm text-gray-500 text-center py-2">No hay gastos agregados. Haz clic en "Agregar Gasto" para comenzar.</p>
+                                ) : (
+                                  <div className="space-y-3 max-h-60 overflow-y-auto">
+                                    {gastosDetalle.map((gasto, index) => (
+                                      <div key={gasto.id} className="flex gap-2 items-start bg-white p-2 rounded border">
+                                        <div className="flex-1">
+                                          <input
+                                            type="text"
+                                            placeholder="Descripción del gasto"
+                                            value={gasto.descripcion}
+                                            onChange={(e) => {
+                                              const newGastos = [...gastosDetalle]
+                                              newGastos[index].descripcion = e.target.value
+                                              setGastosDetalle(newGastos)
+                                            }}
+                                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                                          />
+                                        </div>
+                                        <div className="w-24">
+                                          <input
+                                            type="number"
+                                            placeholder="Monto"
+                                            value={gasto.monto}
+                                            onChange={(e) => {
+                                              const newGastos = [...gastosDetalle]
+                                              newGastos[index].monto = parseFloat(e.target.value) || 0
+                                              setGastosDetalle(newGastos)
+                                            }}
+                                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                                            step="0.01"
+                                            min="0"
+                                          />
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const newGastos = gastosDetalle.filter((_, i) => i !== index)
+                                            setGastosDetalle(newGastos)
+                                          }}
+                                          className="text-red-500 hover:text-red-700 p-1"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {gastosDetalle.length > 0 && (
+                                  <div className="mt-3 pt-2 border-t border-blue-200 text-right">
+                                    <span className="font-medium text-blue-800">Total: RD$ {gastosDetalle.reduce((sum, g) => sum + (parseFloat(g.monto) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
                           <div className="flex items-center">
                             <input
                               type="checkbox"
                               name={field.key}
-                              id="agregarMultiple"
-                              checked={modoMultipleGastos}
-                              onChange={(e) => setModoMultipleGastos(e.target.checked)}
                               className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                             />
-                            <span className="ml-2 text-sm text-gray-700 font-medium">Agregar varios gastos con descripción y monto</span>
+                            <span className="ml-2 text-sm text-gray-600">Activar esta opción</span>
                           </div>
-                          
-                          {modoMultipleGastos && (
-                            <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                              <div className="flex justify-between items-center mb-3">
-                                <h4 className="font-medium text-blue-800">Detalles de Gastos</h4>
-                                <button
-                                  type="button"
-                                  onClick={() => setGastosDetalle([...gastosDetalle, { id: Date.now(), descripcion: '', monto: 0, categoria: 'Otros', fecha: new Date().toISOString().split('T')[0] }])}
-                                  className="text-sm px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-                                >
-                                  + Agregar Gasto
-                                </button>
-                              </div>
-                              
-                              {gastosDetalle.length === 0 ? (
-                                <p className="text-sm text-gray-500 text-center py-2">No hay gastos agregados. Haz clic en "Agregar Gasto" para comenzar.</p>
-                              ) : (
-                                <div className="space-y-3 max-h-60 overflow-y-auto">
-                                  {gastosDetalle.map((gasto, index) => (
-                                    <div key={gasto.id} className="flex gap-2 items-start bg-white p-2 rounded border">
-                                      <div className="flex-1">
-                                        <input
-                                          type="text"
-                                          placeholder="Descripción del gasto"
-                                          value={gasto.descripcion}
-                                          onChange={(e) => {
-                                            const newGastos = [...gastosDetalle]
-                                            newGastos[index].descripcion = e.target.value
-                                            setGastosDetalle(newGastos)
-                                          }}
-                                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
-                                        />
-                                      </div>
-                                      <div className="w-24">
-                                        <input
-                                          type="number"
-                                          placeholder="Monto"
-                                          value={gasto.monto}
-                                          onChange={(e) => {
-                                            const newGastos = [...gastosDetalle]
-                                            newGastos[index].monto = parseFloat(e.target.value) || 0
-                                            setGastosDetalle(newGastos)
-                                          }}
-                                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
-                                          step="0.01"
-                                          min="0"
-                                        />
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const newGastos = gastosDetalle.filter((_, i) => i !== index)
-                                          setGastosDetalle(newGastos)
-                                        }}
-                                        className="text-red-500 hover:text-red-700 p-1"
-                                      >
-                                        ✕
-                                      </button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              
-                              {gastosDetalle.length > 0 && (
-                                <div className="mt-3 pt-2 border-t border-blue-200 text-right">
-                                  <span className="font-medium text-blue-800">Total: RD$ {gastosDetalle.reduce((sum, g) => sum + (parseFloat(g.monto) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                        )
+                      ) : field.type === 'date' ? (
+                        <input
+                          type="date"
+                          name={field.key}
+                          required={field.required !== false}
+                          defaultValue={field.required !== false ? new Date().toISOString().split('T')[0] : ''}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        />
                       ) : (
-                        <div className="flex items-center">
-                          <input
-                            type="checkbox"
-                            name={field.key}
-                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                          />
-                          <span className="ml-2 text-sm text-gray-600">Activar esta opción</span>
-                        </div>
-                      )
-                    ) : field.type === 'date' ? (
-                      <input
-                        type="date"
-                        name={field.key}
-                        required={field.required !== false}
-                        defaultValue={field.required !== false ? new Date().toISOString().split('T')[0] : ''}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    ) : (
-                      <input
-                        type={field.type}
-                        name={field.key}
-                        placeholder={field.placeholder}
-                        required={field.required !== false}
-                        step={field.type === 'number' ? '0.01' : undefined}
-                        min={field.type === 'number' ? '0' : undefined}
-                        defaultValue={
-                          field.type === 'number' && field.key === 'monto' ?
-                            (activeModal === 'ventas' ? datosFinancieros.ventasDelMes :
-                              activeModal === 'gastos' ? datosFinancieros.gastosGenerales :
-                                activeModal === 'cuentasPorCobrar' ? datosFinancieros.cuentasPorCobrar :
-                                  activeModal === 'cuentasPorPagar' ? datosFinancieros.cuentasPorPagar :
-                                    activeModal === 'efectivo' ? datosFinancieros.efectivoEnCajaYBanco : '') :
-                            field.type === 'number' && field.key === 'valorActual' ? datosFinancieros.activosFijos : ''
-                        }
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    )}
-                  </div>
-                )})}
+                        <input
+                          type={field.type}
+                          name={field.key}
+                          placeholder={field.placeholder}
+                          required={field.required !== false}
+                          step={field.type === 'number' ? '0.01' : undefined}
+                          min={field.type === 'number' ? '0' : undefined}
+                          defaultValue={
+                            field.type === 'number' && field.key === 'monto' ?
+                              (activeModal === 'ventas' ? datosFinancieros.ventasDelMes :
+                                activeModal === 'gastos' ? datosFinancieros.gastosGenerales :
+                                  activeModal === 'cuentasPorCobrar' ? datosFinancieros.cuentasPorCobrar :
+                                    activeModal === 'cuentasPorPagar' ? datosFinancieros.cuentasPorPagar :
+                                      activeModal === 'efectivo' ? datosFinancieros.efectivoEnCajaYBanco : '') :
+                              field.type === 'number' && field.key === 'valorActual' ? datosFinancieros.activosFijos : ''
+                          }
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      )}
+                    </div>
+                  )
+                })}
 
                 <div className="flex justify-end space-x-3 pt-4 border-t">
                   <button
@@ -5182,7 +5212,7 @@ const InventarioDetalleNuevo = () => {
 
       {/* Modal de Reporte Completo */}
       {activeModal === 'reporteCompleto' && (
-        <div 
+        <div
           className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
@@ -5219,9 +5249,8 @@ const InventarioDetalleNuevo = () => {
                     <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
                       <button
                         onClick={() => handleReportSectionChange('productos')}
-                        className={`w-full flex items-center space-x-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors ${
-                          currentReportSection === 'productos' ? 'bg-teal-50 border-l-4 border-teal-600' : ''
-                        }`}
+                        className={`w-full flex items-center space-x-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors ${currentReportSection === 'productos' ? 'bg-teal-50 border-l-4 border-teal-600' : ''
+                          }`}
                       >
                         <ShoppingCart className={`w-5 h-5 ${currentReportSection === 'productos' ? 'text-teal-600' : 'text-gray-600'}`} />
                         <span className={`font-medium ${currentReportSection === 'productos' ? 'text-teal-600' : 'text-gray-700'}`}>
@@ -5230,9 +5259,8 @@ const InventarioDetalleNuevo = () => {
                       </button>
                       <button
                         onClick={() => handleReportSectionChange('distribucion')}
-                        className={`w-full flex items-center space-x-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors ${
-                          currentReportSection === 'distribucion' ? 'bg-teal-50 border-l-4 border-teal-600' : ''
-                        }`}
+                        className={`w-full flex items-center space-x-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors ${currentReportSection === 'distribucion' ? 'bg-teal-50 border-l-4 border-teal-600' : ''
+                          }`}
                       >
                         <PieChart className={`w-5 h-5 ${currentReportSection === 'distribucion' ? 'text-teal-600' : 'text-gray-600'}`} />
                         <span className={`font-medium ${currentReportSection === 'distribucion' ? 'text-teal-600' : 'text-gray-700'}`}>
@@ -5241,9 +5269,8 @@ const InventarioDetalleNuevo = () => {
                       </button>
                       <button
                         onClick={() => handleReportSectionChange('balance')}
-                        className={`w-full flex items-center space-x-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors ${
-                          currentReportSection === 'balance' ? 'bg-teal-50 border-l-4 border-teal-600' : ''
-                        }`}
+                        className={`w-full flex items-center space-x-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors ${currentReportSection === 'balance' ? 'bg-teal-50 border-l-4 border-teal-600' : ''
+                          }`}
                       >
                         <Calculator className={`w-5 h-5 ${currentReportSection === 'balance' ? 'text-teal-600' : 'text-gray-600'}`} />
                         <span className={`font-medium ${currentReportSection === 'balance' ? 'text-teal-600' : 'text-gray-700'}`}>
@@ -5313,308 +5340,308 @@ const InventarioDetalleNuevo = () => {
                   </div>
                 </div>
               ) : currentReportSection === 'balance' ? (
-                  // Página del Balance General
-                  <div className="p-8 bg-white" style={{ fontFamily: 'Arial, sans-serif' }}>
-                    <div className="text-center mb-8">
-                      <h2 className="text-2xl font-bold text-gray-800 mb-2">{sesion?.clienteNegocio?.nombre?.toUpperCase()}</h2>
-                      <h3 className="text-lg font-semibold text-gray-700 mb-1">Balance General</h3>
-                      <p className="text-sm text-gray-600">Al {formatearFecha(new Date())}</p>
-                      <p className="text-sm text-gray-600">(En RD $)</p>
-                    </div>
+                // Página del Balance General
+                <div className="p-8 bg-white" style={{ fontFamily: 'Arial, sans-serif' }}>
+                  <div className="text-center mb-8">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-2">{sesion?.clienteNegocio?.nombre?.toUpperCase()}</h2>
+                    <h3 className="text-lg font-semibold text-gray-700 mb-1">Balance General</h3>
+                    <p className="text-sm text-gray-600">Al {formatearFecha(new Date())}</p>
+                    <p className="text-sm text-gray-600">(En RD $)</p>
+                  </div>
 
-                    <div className="grid grid-cols-2 gap-8">
-                      {/* ACTIVOS */}
-                      <div>
-                        <h4 className="text-lg font-bold text-blue-600 mb-4 border-b-2 border-blue-600 pb-1">ACTIVOS</h4>
+                  <div className="grid grid-cols-2 gap-8">
+                    {/* ACTIVOS */}
+                    <div>
+                      <h4 className="text-lg font-bold text-blue-600 mb-4 border-b-2 border-blue-600 pb-1">ACTIVOS</h4>
 
-                        <div className="space-y-3">
-                          <div className="font-semibold text-gray-700">CORRIENTES</div>
-                          <div className="ml-4 space-y-1">
-                            <div className="flex justify-between">
-                              <span className="text-gray-800">EFECTIVO Y CAJA</span>
-                              <span className="text-gray-800">{formatearMoneda(calculateTotalEfectivo())}</span>
-                            </div>
-                            {Array.isArray(datosFinancieros.efectivoEnCajaYBanco) && datosFinancieros.efectivoEnCajaYBanco.length > 0 && (
-                              <div className="ml-4 mt-1 space-y-1">
-                                {datosFinancieros.efectivoEnCajaYBanco.map((efectivo, index) => (
-                                  <div key={index} className="text-xs text-gray-700 italic">
-                                    • {efectivo.tipoCuenta || 'Caja'}: {formatearMoneda(parseFloat(efectivo.monto || 0))} ({efectivo.descripcion || 'Sin descripción'})
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            <div className="flex justify-between">
-                              <span className="text-gray-800">CUENTAS POR COBRAR</span>
-                              <span className="text-gray-800">{formatearMoneda(calculateTotalCuentasPorCobrar())}</span>
-                            </div>
-                            {Array.isArray(datosFinancieros.cuentasPorCobrar) && datosFinancieros.cuentasPorCobrar.length > 0 && (
-                              <div className="ml-4 mt-1 space-y-1">
-                                {datosFinancieros.cuentasPorCobrar.map((cuenta, index) => (
-                                  <div key={index} className="text-xs text-gray-700 italic">
-                                    • {cuenta.cliente || 'Cliente'}: {formatearMoneda(parseFloat(cuenta.monto || 0))} ({cuenta.descripcion || 'Sin descripción'})
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            <div className="flex justify-between">
-                              <span className="text-gray-800">INVENTARIO DE MERCANCIA</span>
-                              <span className="text-gray-800">{formatearMoneda(valorTotal)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-800">DEUDA A NEGOCIO</span>
-                              <span className="text-gray-800">{formatearMoneda(calculateTotalDeudaANegocio())}</span>
-                            </div>
-                            {Array.isArray(datosFinancieros.deudaANegocio) && datosFinancieros.deudaANegocio.length > 0 && (
-                              <div className="ml-4 mt-1 space-y-1">
-                                {datosFinancieros.deudaANegocio.map((deuda, index) => (
-                                  <div key={index} className="text-xs text-gray-700 italic">
-                                    • {deuda.deudor || 'Deudor'}: {formatearMoneda(parseFloat(deuda.monto || 0))} ({deuda.descripcion || 'Sin descripción'})
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            <div className="flex justify-between font-semibold border-t pt-1">
-                              <span className="text-gray-900">TOTAL CORRIENTES</span>
-                              <span className="text-gray-900">{formatearMoneda(calculateTotalEfectivo() + calculateTotalCuentasPorCobrar() + valorTotal + calculateTotalDeudaANegocio())}</span>
-                            </div>
+                      <div className="space-y-3">
+                        <div className="font-semibold text-gray-700">CORRIENTES</div>
+                        <div className="ml-4 space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-gray-800">EFECTIVO Y CAJA</span>
+                            <span className="text-gray-800">{formatearMoneda(calculateTotalEfectivo())}</span>
                           </div>
-
-                          <div className="font-semibold text-gray-900 mt-4">FIJOS</div>
-                          <div className="ml-4 space-y-1">
-                            <div className="flex justify-between">
-                              <span className="text-gray-900">ACTIVOS FIJOS</span>
-                              <span className="text-gray-900">{formatearMoneda(datosFinancieros.activosFijos)}</span>
+                          {Array.isArray(datosFinancieros.efectivoEnCajaYBanco) && datosFinancieros.efectivoEnCajaYBanco.length > 0 && (
+                            <div className="ml-4 mt-1 space-y-1">
+                              {datosFinancieros.efectivoEnCajaYBanco.map((efectivo, index) => (
+                                <div key={index} className="text-xs text-gray-700 italic">
+                                  • {efectivo.tipoCuenta || 'Caja'}: {formatearMoneda(parseFloat(efectivo.monto || 0))} ({efectivo.descripcion || 'Sin descripción'})
+                                </div>
+                              ))}
                             </div>
-                            <div className="flex justify-between font-semibold border-t pt-1">
-                              <span className="text-gray-900">TOTAL FIJOS</span>
-                              <span className="text-gray-900">{formatearMoneda(datosFinancieros.activosFijos)}</span>
-                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <span className="text-gray-800">CUENTAS POR COBRAR</span>
+                            <span className="text-gray-800">{formatearMoneda(calculateTotalCuentasPorCobrar())}</span>
                           </div>
-
-                          <div className="flex justify-between font-bold text-lg border-t-2 border-gray-400 pt-2 mt-4">
-                            <span className="text-gray-900">TOTAL ACTIVOS</span>
-                            <span className="text-gray-900">{formatearMoneda(calculateTotalEfectivo() + calculateTotalCuentasPorCobrar() + valorTotal + calculateTotalDeudaANegocio() + datosFinancieros.activosFijos)}</span>
+                          {Array.isArray(datosFinancieros.cuentasPorCobrar) && datosFinancieros.cuentasPorCobrar.length > 0 && (
+                            <div className="ml-4 mt-1 space-y-1">
+                              {datosFinancieros.cuentasPorCobrar.map((cuenta, index) => (
+                                <div key={index} className="text-xs text-gray-700 italic">
+                                  • {cuenta.cliente || 'Cliente'}: {formatearMoneda(parseFloat(cuenta.monto || 0))} ({cuenta.descripcion || 'Sin descripción'})
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <span className="text-gray-800">INVENTARIO DE MERCANCIA</span>
+                            <span className="text-gray-800">{formatearMoneda(valorTotal)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-800">DEUDA A NEGOCIO</span>
+                            <span className="text-gray-800">{formatearMoneda(calculateTotalDeudaANegocio())}</span>
+                          </div>
+                          {Array.isArray(datosFinancieros.deudaANegocio) && datosFinancieros.deudaANegocio.length > 0 && (
+                            <div className="ml-4 mt-1 space-y-1">
+                              {datosFinancieros.deudaANegocio.map((deuda, index) => (
+                                <div key={index} className="text-xs text-gray-700 italic">
+                                  • {deuda.deudor || 'Deudor'}: {formatearMoneda(parseFloat(deuda.monto || 0))} ({deuda.descripcion || 'Sin descripción'})
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex justify-between font-semibold border-t pt-1">
+                            <span className="text-gray-900">TOTAL CORRIENTES</span>
+                            <span className="text-gray-900">{formatearMoneda(calculateTotalEfectivo() + calculateTotalCuentasPorCobrar() + valorTotal + calculateTotalDeudaANegocio())}</span>
                           </div>
                         </div>
-                      </div>
 
-                      {/* PASIVOS Y CAPITAL */}
-                      <div>
-                        <h4 className="text-lg font-bold text-red-600 mb-4 border-b-2 border-red-600 pb-1">PASIVOS Y CAPITAL</h4>
-
-                        <div className="space-y-3">
-                          <div className="font-semibold text-gray-700">PASIVOS</div>
-                          <div className="ml-4 space-y-1">
-                            <div className="flex justify-between">
-                              <span className="text-gray-800">CUENTAS POR PAGAR</span>
-                              <span className="text-gray-800">{formatearMoneda(calculateTotalCuentasPorPagar())}</span>
-                            </div>
-                            {Array.isArray(datosFinancieros.cuentasPorPagar) && datosFinancieros.cuentasPorPagar.length > 0 && (
-                              <div className="ml-4 mt-1 space-y-1">
-                                {datosFinancieros.cuentasPorPagar.map((cuenta, index) => (
-                                  <div key={index} className="text-xs text-gray-700 italic">
-                                    • {cuenta.proveedor || 'Proveedor'}: {formatearMoneda(parseFloat(cuenta.monto || 0))} ({cuenta.descripcion || 'Sin descripción'})
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            <div className="flex justify-between font-semibold border-t pt-1">
-                              <span className="text-gray-900">TOTAL PASIVOS</span>
-                              <span className="text-gray-900">{formatearMoneda(calculateTotalCuentasPorPagar())}</span>
-                            </div>
+                        <div className="font-semibold text-gray-900 mt-4">FIJOS</div>
+                        <div className="ml-4 space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-gray-900">ACTIVOS FIJOS</span>
+                            <span className="text-gray-900">{formatearMoneda(datosFinancieros.activosFijos)}</span>
                           </div>
-
-                          <div className="font-semibold text-gray-900 mt-4">CAPITAL</div>
-                          <div className="ml-4 space-y-1">
-                            <div className="flex justify-between font-semibold border-t pt-1">
-                              <span className="text-gray-900">CAPITAL CONTABLE</span>
-                              <span className="text-gray-900">{formatearMoneda(capitalContable)}</span>
-                            </div>
-                          </div>
-
-                          <div className="flex justify-between font-bold text-lg border-t-2 border-gray-400 pt-2 mt-4">
-                            <span className="text-gray-900">TOTAL PASIVOS + CAPITAL</span>
-                            <span className="text-gray-900">{formatearMoneda(calculateTotalEfectivo() + calculateTotalCuentasPorCobrar() + valorTotal + calculateTotalDeudaANegocio() + datosFinancieros.activosFijos)}</span>
+                          <div className="flex justify-between font-semibold border-t pt-1">
+                            <span className="text-gray-900">TOTAL FIJOS</span>
+                            <span className="text-gray-900">{formatearMoneda(datosFinancieros.activosFijos)}</span>
                           </div>
                         </div>
-                        {/* Ventas y Gastos */}
-                        <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-                          <div className="font-semibold text-blue-700 mb-3">VENTAS Y GASTOS</div>
-                          <div className="space-y-2">
-                            <div className="flex justify-between">
-                              <span className="text-gray-900">VENTAS DEL MES</span>
-                              <span className="font-semibold text-green-600">{formatearMoneda(datosFinancieros.ventasDelMes)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-900">GASTOS GENERALES</span>
-                              <span className="font-semibold text-red-600">({formatearMoneda(calculateTotalGastos())})</span>
-                            </div>
-                            {Array.isArray(datosFinancieros.gastosGenerales) && datosFinancieros.gastosGenerales.length > 0 && (
-                              <div className="ml-4 mt-1 space-y-1">
-                                {datosFinancieros.gastosGenerales.map((gasto, index) => (
-                                  <div key={index} className="text-xs text-red-600 italic">
-                                    • {gasto.categoria || 'Sin categoría'}: ({formatearMoneda(parseFloat(gasto.monto || 0))}) ({gasto.descripcion || 'Sin descripción'})
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {empleadosData.empleados.filter(e => e.activo).length > 0 && empleadosData.incluirEnReporte && (
-                              <div className="mt-2 pt-2 border-t border-red-200">
-                                <div className="flex justify-between text-sm text-red-500">
-                                  <span className="font-medium">NÓMINA DE EMPLEADOS</span>
-                                  <span className="font-semibold">({formatearMoneda(calculateTotalNominaEmpleados())})</span>
-                                </div>
-                                <div className="ml-4 mt-1 space-y-1">
-                                  {empleadosData.empleados.filter(e => e.activo).map((empleado, index) => (
-                                    <div key={empleado.id} className="text-xs text-red-400 italic">
-                                      • {empleado.nombre || `Empleado ${index + 1}`}: {formatearMoneda(parseFloat(empleado.salario || 0))}
-                                      {empleado.deuda > 0 && ` (Deuda: ${formatearMoneda(parseFloat(empleado.deuda))} - Neto: ${formatearMoneda(parseFloat(empleado.salario || 0) - parseFloat(empleado.deuda || 0))})`}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            <div className="flex justify-between text-lg font-bold text-blue-800 border-t pt-2">
-                              <span className="text-gray-900">UTILIDAD NETA</span>
-                              <span className="text-gray-900">{formatearMoneda(calculateUtilidadesNetas())}</span>
-                            </div>
-                          </div>
-                          <div className="text-sm text-gray-900 mt-2 pt-2 border-t">
-                            <div className="text-gray-900">PORCENTAJE NETO: {datosFinancieros.ventasDelMes > 0 ? ((calculateUtilidadesNetas() / datosFinancieros.ventasDelMes * 100).toFixed(2)) : '0.00'}%</div>
-                            <div className="text-gray-900">PORCENTAJE BRUTO: {datosFinancieros.ventasDelMes > 0 ? (((datosFinancieros.ventasDelMes - valorTotal - calculateTotalGastos()) / datosFinancieros.ventasDelMes * 100).toFixed(2)) : '0.00'}%</div>
-                          </div>
+
+                        <div className="flex justify-between font-bold text-lg border-t-2 border-gray-400 pt-2 mt-4">
+                          <span className="text-gray-900">TOTAL ACTIVOS</span>
+                          <span className="text-gray-900">{formatearMoneda(calculateTotalEfectivo() + calculateTotalCuentasPorCobrar() + valorTotal + calculateTotalDeudaANegocio() + datosFinancieros.activosFijos)}</span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="mt-8 pt-4 border-t text-center text-sm text-gray-600">
-                      <p className="font-semibold">
-                        Contador: {user?.nombre?.toUpperCase() || 'USUARIO SISTEMA'}
-                      </p>
-                      <p className="text-gray-700">Teléfono: {user?.telefono || user?.phone || 'No disponible'}</p>
-                      <p className="mt-2 text-xs">
-                        Solo somos responsables de los datos introducidos en el inventario de mercancía. Los resultados del balance del
-                        negocio son responsabilidad del propietario del negocio resultados del inventario y reconocimiento del
-                        propietario estos datos numéricos reales según su desempeño del negocio en el período evaluado.
-                      </p>
+                    {/* PASIVOS Y CAPITAL */}
+                    <div>
+                      <h4 className="text-lg font-bold text-red-600 mb-4 border-b-2 border-red-600 pb-1">PASIVOS Y CAPITAL</h4>
+
+                      <div className="space-y-3">
+                        <div className="font-semibold text-gray-700">PASIVOS</div>
+                        <div className="ml-4 space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-gray-800">CUENTAS POR PAGAR</span>
+                            <span className="text-gray-800">{formatearMoneda(calculateTotalCuentasPorPagar())}</span>
+                          </div>
+                          {Array.isArray(datosFinancieros.cuentasPorPagar) && datosFinancieros.cuentasPorPagar.length > 0 && (
+                            <div className="ml-4 mt-1 space-y-1">
+                              {datosFinancieros.cuentasPorPagar.map((cuenta, index) => (
+                                <div key={index} className="text-xs text-gray-700 italic">
+                                  • {cuenta.proveedor || 'Proveedor'}: {formatearMoneda(parseFloat(cuenta.monto || 0))} ({cuenta.descripcion || 'Sin descripción'})
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex justify-between font-semibold border-t pt-1">
+                            <span className="text-gray-900">TOTAL PASIVOS</span>
+                            <span className="text-gray-900">{formatearMoneda(calculateTotalCuentasPorPagar())}</span>
+                          </div>
+                        </div>
+
+                        <div className="font-semibold text-gray-900 mt-4">CAPITAL</div>
+                        <div className="ml-4 space-y-1">
+                          <div className="flex justify-between font-semibold border-t pt-1">
+                            <span className="text-gray-900">CAPITAL CONTABLE</span>
+                            <span className="text-gray-900">{formatearMoneda(capitalContable)}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between font-bold text-lg border-t-2 border-gray-400 pt-2 mt-4">
+                          <span className="text-gray-900">TOTAL PASIVOS + CAPITAL</span>
+                          <span className="text-gray-900">{formatearMoneda(calculateTotalEfectivo() + calculateTotalCuentasPorCobrar() + valorTotal + calculateTotalDeudaANegocio() + datosFinancieros.activosFijos)}</span>
+                        </div>
+                      </div>
+                      {/* Ventas y Gastos */}
+                      <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+                        <div className="font-semibold text-blue-700 mb-3">VENTAS Y GASTOS</div>
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <span className="text-gray-900">VENTAS DEL MES</span>
+                            <span className="font-semibold text-green-600">{formatearMoneda(datosFinancieros.ventasDelMes)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-900">GASTOS GENERALES</span>
+                            <span className="font-semibold text-red-600">({formatearMoneda(calculateTotalGastos())})</span>
+                          </div>
+                          {Array.isArray(datosFinancieros.gastosGenerales) && datosFinancieros.gastosGenerales.length > 0 && (
+                            <div className="ml-4 mt-1 space-y-1">
+                              {datosFinancieros.gastosGenerales.map((gasto, index) => (
+                                <div key={index} className="text-xs text-red-600 italic">
+                                  • {gasto.categoria || 'Sin categoría'}: ({formatearMoneda(parseFloat(gasto.monto || 0))}) ({gasto.descripcion || 'Sin descripción'})
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {empleadosData.empleados.filter(e => e.activo).length > 0 && empleadosData.incluirEnReporte && (
+                            <div className="mt-2 pt-2 border-t border-red-200">
+                              <div className="flex justify-between text-sm text-red-500">
+                                <span className="font-medium">NÓMINA DE EMPLEADOS</span>
+                                <span className="font-semibold">({formatearMoneda(calculateTotalNominaEmpleados())})</span>
+                              </div>
+                              <div className="ml-4 mt-1 space-y-1">
+                                {empleadosData.empleados.filter(e => e.activo).map((empleado, index) => (
+                                  <div key={empleado.id} className="text-xs text-red-400 italic">
+                                    • {empleado.nombre || `Empleado ${index + 1}`}: {formatearMoneda(parseFloat(empleado.salario || 0))}
+                                    {empleado.deuda > 0 && ` (Deuda: ${formatearMoneda(parseFloat(empleado.deuda))} - Neto: ${formatearMoneda(parseFloat(empleado.salario || 0) - parseFloat(empleado.deuda || 0))})`}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex justify-between text-lg font-bold text-blue-800 border-t pt-2">
+                            <span className="text-gray-900">UTILIDAD NETA</span>
+                            <span className="text-gray-900">{formatearMoneda(calculateUtilidadesNetas())}</span>
+                          </div>
+                        </div>
+                        <div className="text-sm text-gray-900 mt-2 pt-2 border-t">
+                          <div className="text-gray-900">PORCENTAJE NETO: {datosFinancieros.ventasDelMes > 0 ? ((calculateUtilidadesNetas() / datosFinancieros.ventasDelMes * 100).toFixed(2)) : '0.00'}%</div>
+                          <div className="text-gray-900">PORCENTAJE BRUTO: {datosFinancieros.ventasDelMes > 0 ? (((datosFinancieros.ventasDelMes - valorTotal - calculateTotalGastos()) / datosFinancieros.ventasDelMes * 100).toFixed(2)) : '0.00'}%</div>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                ) : currentReportSection === 'distribucion' ? (
-                  // Página de Distribución de Saldo
-                  <div className="p-8 bg-white" style={{ fontFamily: 'Arial, sans-serif' }}>
-                    <div className="text-center mb-8">
-                      <h2 className="text-2xl font-bold text-gray-800 mb-2">{sesion?.clienteNegocio?.nombre?.toUpperCase()}</h2>
-                      <h3 className="text-lg font-semibold text-gray-700 mb-1">Distribución de Saldo</h3>
-                      <p className="text-sm text-gray-600">Al {formatearFecha(new Date())}</p>
-                      <p className="text-sm text-gray-600">(En RD $)</p>
-                    </div>
 
-                    <div className="space-y-6">
-                      {/* Información General */}
-                      <div className="bg-gray-50 p-5 rounded-lg border border-gray-200">
-                        <h4 className="font-bold text-black mb-4 text-base">Información General</h4>
-                        <div className="grid grid-cols-2 gap-4 text-base">
-                          <div>
-                            <span className="font-semibold text-black">Total de Utilidades Netas:</span>
-                            <span className="ml-2 text-black font-bold">{formatearMoneda(calculateUtilidadesNetas())}</span>
-                          </div>
-                          <div>
-                            <span className="font-semibold text-black">Número de Socios:</span>
-                            <span className="ml-2 text-black font-bold">{distribucionData.numeroSocios}</span>
-                          </div>
-                          <div>
-                            <span className="font-semibold text-black">Período:</span>
-                            <span className="ml-2 text-black font-bold">{distribucionData.fechaDesde} - {distribucionData.fechaHasta}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Tabla de Distribución por Socios */}
-                      <div>
-                        <h4 className="font-bold text-black mb-5 text-lg">Distribución por Socios</h4>
-                        <table className="w-full border-collapse border border-gray-300">
-                          <thead>
-                            <tr className="bg-gray-100">
-                              <th className="border border-gray-300 px-4 py-3 text-left font-bold text-black text-sm">Socio</th>
-                              <th className="border border-gray-300 px-4 py-3 text-center font-bold text-black text-sm">Porcentaje</th>
-                              <th className="border border-gray-300 px-4 py-3 text-center font-bold text-black text-sm">Utilidad del Período</th>
-                              <th className="border border-gray-300 px-4 py-3 text-center font-bold text-black text-sm">Utilidad Acumulada</th>
-                              <th className="border border-gray-300 px-4 py-3 text-center font-bold text-black text-sm">Cuenta Adeudada</th>
-                              <th className="border border-gray-300 px-4 py-3 text-center font-bold text-black text-sm">Saldo Neto</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {distribucionData.socios.map((socio, index) => {
-                              const utilidadPeriodo = (calculateUtilidadesNetas() * socio.porcentaje) / 100;
-                              const utilidadAcumulada = (socio.utilidadAcumulada || 0) + utilidadPeriodo;
-                              const cuentaAdeudada = socio.cuentaAdeudada || 0;
-                              const saldoNeto = utilidadAcumulada - cuentaAdeudada;
-                              return (
-                                <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                                  <td className="border border-gray-300 px-4 py-3 font-semibold text-black text-sm">{socio.nombre || `Socio ${index + 1}`}</td>
-                                  <td className="border border-gray-300 px-4 py-3 text-center text-black font-medium text-sm">{safeToFixed(socio.porcentaje, 2)}%</td>
-                                  <td className="border border-gray-300 px-4 py-3 text-right text-black font-medium text-sm">{formatearMoneda(utilidadPeriodo)}</td>
-                                  <td className="border border-gray-300 px-4 py-3 text-right text-black font-medium text-sm">{formatearMoneda(utilidadAcumulada)}</td>
-                                  <td className="border border-gray-300 px-4 py-3 text-right text-black font-medium text-sm">{formatearMoneda(cuentaAdeudada)}</td>
-                                  <td className={`border border-gray-300 px-4 py-3 text-right font-bold text-sm ${saldoNeto < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                    {formatearMoneda(saldoNeto)}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                          <tfoot>
-                            <tr className="bg-gray-200 font-semibold">
-                              <td className="border border-gray-300 px-4 py-2">TOTAL</td>
-                              <td className="border border-gray-300 px-4 py-2 text-center">100.00%</td>
-                              <td className="border border-gray-300 px-4 py-2 text-right">{formatearMoneda(calculateUtilidadesNetas())}</td>
-                              <td className="border border-gray-300 px-4 py-2 text-right">{formatearMoneda(
-                                distribucionData.socios.reduce((sum, socio) => {
-                                  const utilidadPeriodo = (calculateUtilidadesNetas() * socio.porcentaje) / 100;
-                                  return sum + (socio.utilidadAcumulada || 0) + utilidadPeriodo;
-                                }, 0)
-                              )}</td>
-                              <td className="border border-gray-300 px-4 py-2 text-right">{formatearMoneda(
-                                distribucionData.socios.reduce((sum, socio) => sum + (socio.cuentaAdeudada || 0), 0)
-                              )}</td>
-                              <td className="border border-gray-300 px-4 py-2 text-right font-bold">{formatearMoneda(
-                                distribucionData.socios.reduce((sum, socio) => {
-                                  const utilidadPeriodo = (calculateUtilidadesNetas() * socio.porcentaje) / 100;
-                                  const utilidadAcumulada = (socio.utilidadAcumulada || 0) + utilidadPeriodo;
-                                  const cuentaAdeudada = socio.cuentaAdeudada || 0;
-                                  return sum + (utilidadAcumulada - cuentaAdeudada);
-                                }, 0)
-                              )}</td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-
-                      {/* Firmas de Socios */}
-                      <div className="mt-12">
-                        <h4 className="font-semibold text-gray-800 mb-6">Firmas</h4>
-                        <div className="grid grid-cols-2 gap-8">
-                          {distribucionData.socios.map((socio, index) => (
-                            <div key={index} className="text-center">
-                              <div className="border-t-2 border-gray-400 pt-2 mt-16">
-                                <p className="font-medium text-gray-800">{socio.nombre || `Socio ${index + 1}`}</p>
-                                <p className="text-sm text-gray-600">Firma y Cédula</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Comentarios */}
-                      {distribucionData.comentarios && (
-                        <div className="bg-blue-50 p-4 rounded-lg mt-6">
-                          <h5 className="font-semibold text-blue-900 mb-2">Comentarios</h5>
-                          <p className="text-blue-800 text-sm">{distribucionData.comentarios}</p>
-                        </div>
-                      )}
-                    </div>
+                  <div className="mt-8 pt-4 border-t text-center text-sm text-gray-600">
+                    <p className="font-semibold">
+                      Contador: {user?.nombre?.toUpperCase() || 'USUARIO SISTEMA'}
+                    </p>
+                    <p className="text-gray-700">Teléfono: {user?.telefono || user?.phone || 'No disponible'}</p>
+                    <p className="mt-2 text-xs">
+                      Solo somos responsables de los datos introducidos en el inventario de mercancía. Los resultados del balance del
+                      negocio son responsabilidad del propietario del negocio resultados del inventario y reconocimiento del
+                      propietario estos datos numéricos reales según su desempeño del negocio en el período evaluado.
+                    </p>
                   </div>
-                ) : currentReportSection === 'productos' ? (
+                </div>
+              ) : currentReportSection === 'distribucion' ? (
+                // Página de Distribución de Saldo
+                <div className="p-8 bg-white" style={{ fontFamily: 'Arial, sans-serif' }}>
+                  <div className="text-center mb-8">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-2">{sesion?.clienteNegocio?.nombre?.toUpperCase()}</h2>
+                    <h3 className="text-lg font-semibold text-gray-700 mb-1">Distribución de Saldo</h3>
+                    <p className="text-sm text-gray-600">Al {formatearFecha(new Date())}</p>
+                    <p className="text-sm text-gray-600">(En RD $)</p>
+                  </div>
+
+                  <div className="space-y-6">
+                    {/* Información General */}
+                    <div className="bg-gray-50 p-5 rounded-lg border border-gray-200">
+                      <h4 className="font-bold text-black mb-4 text-base">Información General</h4>
+                      <div className="grid grid-cols-2 gap-4 text-base">
+                        <div>
+                          <span className="font-semibold text-black">Total de Utilidades Netas:</span>
+                          <span className="ml-2 text-black font-bold">{formatearMoneda(calculateUtilidadesNetas())}</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-black">Número de Socios:</span>
+                          <span className="ml-2 text-black font-bold">{distribucionData.numeroSocios}</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-black">Período:</span>
+                          <span className="ml-2 text-black font-bold">{distribucionData.fechaDesde} - {distribucionData.fechaHasta}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tabla de Distribución por Socios */}
+                    <div>
+                      <h4 className="font-bold text-black mb-5 text-lg">Distribución por Socios</h4>
+                      <table className="w-full border-collapse border border-gray-300">
+                        <thead>
+                          <tr className="bg-gray-100">
+                            <th className="border border-gray-300 px-4 py-3 text-left font-bold text-black text-sm">Socio</th>
+                            <th className="border border-gray-300 px-4 py-3 text-center font-bold text-black text-sm">Porcentaje</th>
+                            <th className="border border-gray-300 px-4 py-3 text-center font-bold text-black text-sm">Utilidad del Período</th>
+                            <th className="border border-gray-300 px-4 py-3 text-center font-bold text-black text-sm">Utilidad Acumulada</th>
+                            <th className="border border-gray-300 px-4 py-3 text-center font-bold text-black text-sm">Cuenta Adeudada</th>
+                            <th className="border border-gray-300 px-4 py-3 text-center font-bold text-black text-sm">Saldo Neto</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {distribucionData.socios.map((socio, index) => {
+                            const utilidadPeriodo = (calculateUtilidadesNetas() * socio.porcentaje) / 100;
+                            const utilidadAcumulada = (socio.utilidadAcumulada || 0) + utilidadPeriodo;
+                            const cuentaAdeudada = socio.cuentaAdeudada || 0;
+                            const saldoNeto = utilidadAcumulada - cuentaAdeudada;
+                            return (
+                              <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                <td className="border border-gray-300 px-4 py-3 font-semibold text-black text-sm">{socio.nombre || `Socio ${index + 1}`}</td>
+                                <td className="border border-gray-300 px-4 py-3 text-center text-black font-medium text-sm">{safeToFixed(socio.porcentaje, 2)}%</td>
+                                <td className="border border-gray-300 px-4 py-3 text-right text-black font-medium text-sm">{formatearMoneda(utilidadPeriodo)}</td>
+                                <td className="border border-gray-300 px-4 py-3 text-right text-black font-medium text-sm">{formatearMoneda(utilidadAcumulada)}</td>
+                                <td className="border border-gray-300 px-4 py-3 text-right text-black font-medium text-sm">{formatearMoneda(cuentaAdeudada)}</td>
+                                <td className={`border border-gray-300 px-4 py-3 text-right font-bold text-sm ${saldoNeto < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                  {formatearMoneda(saldoNeto)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-gray-200 font-semibold">
+                            <td className="border border-gray-300 px-4 py-2">TOTAL</td>
+                            <td className="border border-gray-300 px-4 py-2 text-center">100.00%</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatearMoneda(calculateUtilidadesNetas())}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatearMoneda(
+                              distribucionData.socios.reduce((sum, socio) => {
+                                const utilidadPeriodo = (calculateUtilidadesNetas() * socio.porcentaje) / 100;
+                                return sum + (socio.utilidadAcumulada || 0) + utilidadPeriodo;
+                              }, 0)
+                            )}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatearMoneda(
+                              distribucionData.socios.reduce((sum, socio) => sum + (socio.cuentaAdeudada || 0), 0)
+                            )}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right font-bold">{formatearMoneda(
+                              distribucionData.socios.reduce((sum, socio) => {
+                                const utilidadPeriodo = (calculateUtilidadesNetas() * socio.porcentaje) / 100;
+                                const utilidadAcumulada = (socio.utilidadAcumulada || 0) + utilidadPeriodo;
+                                const cuentaAdeudada = socio.cuentaAdeudada || 0;
+                                return sum + (utilidadAcumulada - cuentaAdeudada);
+                              }, 0)
+                            )}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    {/* Firmas de Socios */}
+                    <div className="mt-12">
+                      <h4 className="font-semibold text-gray-800 mb-6">Firmas</h4>
+                      <div className="grid grid-cols-2 gap-8">
+                        {distribucionData.socios.map((socio, index) => (
+                          <div key={index} className="text-center">
+                            <div className="border-t-2 border-gray-400 pt-2 mt-16">
+                              <p className="font-medium text-gray-800">{socio.nombre || `Socio ${index + 1}`}</p>
+                              <p className="text-sm text-gray-600">Firma y Cédula</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Comentarios */}
+                    {distribucionData.comentarios && (
+                      <div className="bg-blue-50 p-4 rounded-lg mt-6">
+                        <h5 className="font-semibold text-blue-900 mb-2">Comentarios</h5>
+                        <p className="text-blue-800 text-sm">{distribucionData.comentarios}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : currentReportSection === 'productos' ? (
                 // Páginas de productos paginados
                 <div className="p-8 bg-white" style={{ fontFamily: 'Arial, sans-serif' }}>
                   <div className="text-center mb-6">
@@ -5686,7 +5713,7 @@ const InventarioDetalleNuevo = () => {
 
                   <div className="mt-8 text-center text-sm">
                     <p className="font-semibold text-black">
-                      {user?.rol === 'contador' || user?.rol === 'contable' ? 'Contador' : 'Usuario'} {user?.nombre?.toUpperCase() || 'USUARIO SISTEMA'}
+                      {user?.rol === 'contable' ? 'Contable' : 'Usuario'} {user?.nombre?.toUpperCase() || 'USUARIO SISTEMA'}
                     </p>
                     <p className="text-black">Teléfono: {user?.telefono || user?.phone || 'No disponible'}</p>
                     <p className="text-right text-xs mt-4 text-black font-semibold">Pág. {currentReportPage + 1} de {getTotalPaginasProductos()}</p>
@@ -5718,10 +5745,10 @@ const InventarioDetalleNuevo = () => {
                       <div
                         key={index}
                         className={`w-2 h-2 rounded-full transition-colors ${index === currentReportPage
-                            ? 'bg-teal-600'
-                            : index < currentReportPage
-                              ? 'bg-teal-300'
-                              : 'bg-gray-300'
+                          ? 'bg-teal-600'
+                          : index < currentReportPage
+                            ? 'bg-teal-300'
+                            : 'bg-gray-300'
                           }`}
                       />
                     ))}
