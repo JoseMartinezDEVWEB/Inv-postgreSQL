@@ -2,7 +2,68 @@ const express = require('express');
 const db = require('../models');
 const { authenticateToken } = require('./authRoutes');
 
+const multer = require('multer');
+const { processFile } = require('../utils/importProcessor');
+
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage() });
+
+/**
+ * Importar productos desde archivo XLSX o PDF (Usa IA)
+ */
+router.post('/generales/importar', authenticateToken, upload.single('archivo'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ mensaje: 'No se ha subido ningún archivo' });
+        }
+
+        const apiKey = req.body.apiKey || process.env.GEMINI_API_KEY;
+        const productosProcesados = await processFile(req.file.buffer, req.file.originalname, apiKey);
+
+        if (!productosProcesados || productosProcesados.length === 0) {
+            return res.status(400).json({ mensaje: 'No se encontraron productos en el archivo' });
+        }
+
+        const resultados = [];
+        for (const p of productosProcesados) {
+            // Lógica de "upsert" manual por nombre o código de barras
+            let producto = null;
+            
+            if (p.codigoBarras) {
+                producto = await db.ProductoGeneral.findOne({ where: { codigoBarras: p.codigoBarras } });
+            }
+            
+            if (!producto && p.nombre) {
+                producto = await db.ProductoGeneral.findOne({ where: { nombre: p.nombre } });
+            }
+
+            if (producto) {
+                await producto.update({
+                    ...p,
+                    activo: true
+                });
+                resultados.push({ ...producto.toJSON(), _importStatus: 'updated' });
+            } else {
+                const nuevo = await db.ProductoGeneral.create({
+                    ...p,
+                    activo: true,
+                    creadoPorId: req.user.id,
+                    tipoCreacion: 'importacion'
+                });
+                resultados.push({ ...nuevo.toJSON(), _importStatus: 'created' });
+            }
+        }
+
+        res.json({
+            mensaje: `Importación completada: ${resultados.length} productos procesados`,
+            productos: resultados
+        });
+
+    } catch (error) {
+        console.error('Error en importación:', error);
+        res.status(500).json({ mensaje: 'Error al importar productos: ' + error.message });
+    }
+});
 
 /**
  * Obtener todos los productos activos (Tabla Producto - Inventario Actual)

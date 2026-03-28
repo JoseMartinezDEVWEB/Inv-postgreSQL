@@ -45,7 +45,7 @@ const ImportModal = ({ isOpen, onClose, onImport }) => {
             }
 
             addLog("Enviando archivo al servidor...");
-            addLog("El servidor procesará el archivo con Python e IA...");
+            addLog("El servidor procesará el archivo con Inteligencia Artificial (Gemini)...");
 
             // Guardar API Key para futuros usos
             if (apiKey) localStorage.setItem('gemini_api_key', apiKey);

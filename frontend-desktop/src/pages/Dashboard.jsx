@@ -14,7 +14,9 @@ import {
   AlertCircle,
   BarChart3,
   Plus,
+  Users2
 } from 'lucide-react'
+import { useSocket } from '../hooks/useSocket'
 import Button from '../components/ui/Button'
 import { Link } from 'react-router-dom'
 
@@ -26,6 +28,7 @@ const Dashboard = () => {
     sesionesCompletadas: 0,
     valorTotalInventarios: 0,
   })
+  const { onlineColaboradores } = useSocket()
 
   // Obtener estadísticas de clientes (total en BD)
   const { data: clientesData } = useQuery(
@@ -125,6 +128,15 @@ const Dashboard = () => {
       color: 'text-danger-600',
       bgColor: 'bg-danger-100',
       change: '+15%',
+      changeType: 'positive',
+    },
+    {
+      title: 'Colaboradores Online',
+      value: onlineColaboradores || 0,
+      icon: Users2,
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-100',
+      change: 'Tiempo real',
       changeType: 'positive',
     },
   ]

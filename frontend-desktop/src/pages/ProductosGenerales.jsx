@@ -155,7 +155,7 @@ const ProductosGenerales = () => {
     }
   )
 
-  const productos = productosData?.productos || []
+  const productos = productosData?.datos || []
   const paginacion = productosData?.paginacion || {}
   const categorias = categoriasData?.categorias || categoriasData || []
 
@@ -177,7 +177,7 @@ const ProductosGenerales = () => {
 
   const handleDeleteProduct = (producto) => {
     if (window.confirm(`¿Estás seguro de que quieres eliminar "${producto.nombre}"?`)) {
-      deleteMutation.mutate(producto._id)
+      deleteMutation.mutate(producto.id)
     }
   }
 
@@ -191,7 +191,7 @@ const ProductosGenerales = () => {
 
   const handleSubmitProduct = (productoData) => {
     if (editingProduct) {
-      updateMutation.mutate({ id: editingProduct._id, productoData })
+      updateMutation.mutate({ id: editingProduct.id, productoData })
     } else {
       createMutation.mutate(productoData)
     }
@@ -593,7 +593,7 @@ const ProductosGenerales = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Productos Activos</p>
               <p className="text-2xl font-bold text-gray-900">
-                {productos.filter(p => p.activo !== false).length}
+                {paginacion.totalRegistros || 0}
               </p>
             </div>
           </div>

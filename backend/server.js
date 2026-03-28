@@ -23,31 +23,177 @@ app.use(express.json()); // Permitir el procesamiento de JSON en el cuerpo de la
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET;
 
+const fs = require('fs');
+const path = require('path');
+
+// Función de trazado para depuración de sockets
+const traceSocket = (msg) => {
+    const timestamp = new Date().toISOString();
+    const logMsg = `[${timestamp}] ${msg}\n`;
+    try {
+        fs.appendFileSync(path.join(__dirname, 'socket_trace.log'), logMsg);
+    } catch (err) {
+        console.error('Error writing to trace log:', err);
+    }
+};
+
+// Middlewares de Socket.io para Autenticación
+io.use(async (socket, next) => {
+    const token = socket.handshake.auth?.token;
+    const clientType = socket.handshake.auth?.clientType;
+
+    if (!token) {
+        traceSocket(`⚠️ Intento de conexión sin token de: ${socket.id}`);
+        return next(new Error('Autenticación fallida: Token no proporcionado'));
+    }
+
+    // Caso 1: Token Local de Colaborador (Móvil)
+    if (token.startsWith('colaborador-token-')) {
+        try {
+            const parts = token.split('-');
+            const solicitudId = parts[2]; // colaborador-token-ID-TIMESTAMP
+            
+            traceSocket(`🔍 Verificando token local para solicitud: ${solicitudId}`);
+            
+            const solicitud = await db.SolicitudConexion.findByPk(solicitudId, {
+                include: [{ model: db.Invitacion, as: 'Invitacion' }]
+            });
+
+            if (solicitud && solicitud.estado === 'aceptada') {
+                socket.user = {
+                    id: `sol_${solicitudId}`,
+                    nombre: solicitud.Invitacion?.nombre || 'Colaborador',
+                    rol: 'colaborador',
+                    isLocal: true,
+                    solicitudId: solicitudId
+                };
+                traceSocket(`✅ Colaborador autenticado por token local: ${socket.user.nombre}`);
+                return next();
+            } else {
+                traceSocket(`❌ Solicitud no encontrada o no aceptada: ${solicitudId}`);
+                return next(new Error('Sesión de colaborador no válida o expirada'));
+            }
+        } catch (err) {
+            traceSocket(`❌ Error procesando token local: ${err.message}`);
+            return next(new Error('Error interno de autenticación'));
+        }
+    }
+
+    // Caso 2: Token JWT (Admin, Contable, Web, Desktop)
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        socket.user = decoded;
+        traceSocket(`✅ Usuario autenticado por JWT: ${socket.user.nombre} (${socket.user.rol})`);
+        return next();
+    } catch (err) {
+        traceSocket(`❌ Token JWT inválido: ${err.message}`);
+        return next(new Error('Token inválido o expirado'));
+    }
+});
+
 // Lógica de WebSockets para Colaboradores
 let colaboradoresActivos = new Map();
 
-io.on('connection', (socket) => {
-    console.log('📱 Nuevo colaborador conectado:', socket.id);
+// Función auxiliar para emitir el conteo actualizado a todos
+const emitirConteoColaboradores = () => {
+    const count = colaboradoresActivos.size;
+    const detalles = Array.from(colaboradoresActivos.values());
+    
+    traceSocket(`📊 Emitiendo conteo: ${count} colaboradores conectados. Detalles: ${JSON.stringify(detalles)}`);
+    
+    // Evento esperado por frontend-desktop (useSocket.js)
+    io.emit('online_colaboradores_count', { 
+        count, 
+        detalles,
+        timestamp: new Date()
+    });
+    
+    // Evento para compatibilidad con otras versiones
+    io.emit('colaboradores-actualizados', detalles);
+};
 
-    socket.on('join-session', (userData) => {
+io.on('connection', (socket) => {
+    traceSocket(`📱 Nueva conexión socket: ${socket.id} (Usuario: ${socket.user?.nombre || 'Anónimo'})`);
+
+    // Si el usuario es un colaborador, registrarlo automáticamente
+    if (socket.user && socket.user.rol === 'colaborador') {
+        traceSocket(`👥 Registro automático de colaborador: ${socket.user.nombre}`);
         colaboradoresActivos.set(socket.id, {
-            ...userData,
+            ...socket.user,
             idSocket: socket.id,
             ultimaActividad: new Date()
         });
-        io.emit('colaboradores-actualizados', Array.from(colaboradoresActivos.values()));
+        emitirConteoColaboradores();
+        
+        io.emit('colaborador_conectado', { 
+            totalColaboradores: colaboradoresActivos.size,
+            colaborador: socket.user 
+        });
+    }
+
+    // Cuando un colaborador se une a una sesión (redundante por el auto-join pero queda para compatibilidad)
+    const handleJoin = (userData) => {
+        traceSocket(`🤝 Intento de unión manual (join): ${socket.id} - Datos: ${JSON.stringify(userData)}`);
+        
+        // Evitar duplicados si ya fue auto-registrado
+        const existing = colaboradoresActivos.get(socket.id);
+        const finalData = {
+            ...(existing || socket.user || {}),
+            ...userData,
+            idSocket: socket.id,
+            ultimaActividad: new Date()
+        };
+
+        colaboradoresActivos.set(socket.id, finalData);
+        emitirConteoColaboradores();
+        
+        // Solo notificar si no estaba registrado o si los datos cambiaron
+        io.emit('colaborador_conectado', { 
+            totalColaboradores: colaboradoresActivos.size,
+            colaborador: finalData 
+        });
+    };
+
+    socket.on('join-session', handleJoin);
+    socket.on('join_session', handleJoin);
+
+    // Petición manual del conteo (usada por Admin en ProductosGenerales)
+    socket.on('get_online_colaborators', () => {
+        traceSocket(`📡 Petición manual de conteo recibida de: ${socket.id}`);
+        emitirConteoColaboradores();
     });
 
     socket.on('disconnect', () => {
-        colaboradoresActivos.delete(socket.id);
-        io.emit('colaboradores-actualizados', Array.from(colaboradoresActivos.values()));
-        console.log('👋 Colaborador desconectado');
+        const userData = colaboradoresActivos.get(socket.id);
+        if (userData) {
+            traceSocket(`👋 Colaborador desconectado: ${userData.nombre || socket.id}`);
+            colaboradoresActivos.delete(socket.id);
+            
+            emitirConteoColaboradores();
+            
+            io.emit('colaborador_desconectado', { 
+                totalColaboradores: colaboradoresActivos.size,
+                colaborador: userData 
+            });
+        } else {
+            traceSocket(`👋 Conexión cerrada (no era colaborador activo): ${socket.id}`);
+        }
     });
 });
 
 // Endpoint de Salud para Electron
 app.get('/api/salud', (req, res) => {
     res.json({ status: 'ok', message: 'Servidor PostgreSQL + Socket.io activo' });
+});
+
+// Endpoint de depuración para verificar colaboradores activos
+app.get('/api/debug-sockets', (req, res) => {
+    res.json({
+        ok: true,
+        count: colaboradoresActivos.size,
+        colaboradores: Array.from(colaboradoresActivos.values()),
+        socketClients: io.engine.clientsCount
+    });
 });
 
 /**

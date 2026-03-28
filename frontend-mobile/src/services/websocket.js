@@ -63,10 +63,10 @@ class WebSocketService {
 
     const sanitizedToken = token.trim()
     
-    // Si es un token local, no intentar conectar WebSocket
+    // Si es un token local, permitimos la conexión para que el servidor lo identifique
     if (sanitizedToken.startsWith('local-token-')) {
-      console.log('🔐 [WebSocket] Token local detectado - WebSocket no requerido para modo offline')
-      return null
+      console.log('🔐 [WebSocket] Token local detectado - Intentando conectar igualmente para modo online...')
+      // No retornamos null, permitimos que continúe
     }
 
     // Si está bloqueado por error de auth, no intentar reconectar
