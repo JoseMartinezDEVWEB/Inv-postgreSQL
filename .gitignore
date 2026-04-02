@@ -5,3 +5,5 @@ build/
 .env
 .env.local
 temp_context.txt
+socket_trace.log
+*.log

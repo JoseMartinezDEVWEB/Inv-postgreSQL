@@ -45,7 +45,13 @@ router.get('/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
         const sesion = await db.SesionInventario.findByPk(id, {
-            include: [{ model: db.ClienteNegocio }]
+            include: [
+                { model: db.ClienteNegocio },
+                { 
+                    model: db.ProductoContado,
+                    order: [['updatedAt', 'DESC']]
+                }
+            ]
         });
 
         if (!sesion) {
@@ -101,7 +107,10 @@ router.post('/', authenticateToken, async (req, res) => {
         });
 
         const sesionCompleta = await db.SesionInventario.findByPk(sesion.id, {
-            include: [{ model: db.ClienteNegocio }]
+            include: [
+                { model: db.ClienteNegocio },
+                { model: db.ProductoContado }
+            ]
         });
 
         res.status(201).json(sesionCompleta);
@@ -123,7 +132,10 @@ router.put('/:id', authenticateToken, async (req, res) => {
         await sesion.update({ estado, datosFinancieros, totales, configuracion });
 
         const sesionActualizada = await db.SesionInventario.findByPk(id, {
-            include: [{ model: db.ClienteNegocio }]
+            include: [
+                { model: db.ClienteNegocio },
+                { model: db.ProductoContado }
+            ]
         });
 
         res.json(sesionActualizada);

@@ -8,6 +8,7 @@ import LoadingSpinner from '../components/ui/LoadingSpinner';
 import toast from 'react-hot-toast';
 import api, { solicitudesConexionApi } from '../services/api';
 import { QrCode, X, Download, Clock, CheckCircle, XCircle, Ban, UserCheck, UserX, Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { useSocket } from '../hooks/useSocket';
 
 const Invitaciones = () => {
   const { user, hasRole } = useAuth();
@@ -15,6 +16,7 @@ const Invitaciones = () => {
   const [colaboradores, setColaboradores] = useState([]);
   const [solicitudesPendientes, setSolicitudesPendientes] = useState([]);
   const [colaboradoresConectados, setColaboradoresConectados] = useState([]);
+  const { on, off, isConnected } = useSocket();
   const [loading, setLoading] = useState(true);
   const [loadingColaboradores, setLoadingColaboradores] = useState(true);
   const [loadingSolicitudes, setLoadingSolicitudes] = useState(true);
@@ -52,6 +54,59 @@ const Invitaciones = () => {
 
     return () => clearInterval(interval);
   }, []);
+
+  // Escuchar eventos de socket para actualización en tiempo real
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const handleCountUpdate = (data) => {
+      console.log('🔄 [Invitaciones] Sincronización de colaboradores recibida:', data);
+      if (data.detalles) {
+        setColaboradoresConectados(prev => {
+          return prev.map(colab => {
+            const socketMatch = data.detalles.find(d => d.solicitudId === colab.id.toString() || d.solicitudId === colab.id);
+            return {
+              ...colab,
+              estadoConexion: socketMatch ? 'conectado' : 'desconectado',
+              ultimoPing: socketMatch ? (socketMatch.ultimaActividad || new Date()) : colab.ultimoPing
+            };
+          });
+        });
+      }
+    };
+
+    const handleConectado = (data) => {
+      const solicitudId = data.colaborador?.solicitudId;
+      if (!solicitudId) return;
+
+      setColaboradoresConectados(prev => prev.map(c => 
+        (c.id.toString() === solicitudId.toString()) 
+          ? { ...c, estadoConexion: 'conectado', ultimoPing: new Date() } 
+          : c
+      ));
+    };
+
+    const handleDesconectado = (data) => {
+      const solicitudId = data.colaborador?.solicitudId;
+      if (!solicitudId) return;
+
+      setColaboradoresConectados(prev => prev.map(c => 
+        (c.id.toString() === solicitudId.toString()) 
+          ? { ...c, estadoConexion: 'desconectado', ultimoPing: new Date() } 
+          : c
+      ));
+    };
+
+    on('online_colaboradores_count', handleCountUpdate);
+    on('colaborador_conectado', handleConectado);
+    on('colaborador_desconectado', handleDesconectado);
+
+    return () => {
+      off('online_colaboradores_count', handleCountUpdate);
+      off('colaborador_conectado', handleConectado);
+      off('colaborador_desconectado', handleDesconectado);
+    };
+  }, [isConnected, on, off]);
 
   const cargarInvitaciones = async () => {
     try {

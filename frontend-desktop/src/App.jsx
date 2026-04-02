@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { NotificationProvider } from './context/NotificationContext'
@@ -6,23 +6,31 @@ import SplashScreen from './components/SplashScreen'
 import TitleBar from './components/TitleBar'
 import { initConfig } from './config/env'
 
-// Páginas
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import Clientes from './pages/Clientes'
-import Inventarios from './pages/Inventarios'
-import InventarioDetalle from './pages/InventarioDetalleNuevo'
-import ProductosGenerales from './pages/ProductosGenerales'
-import Agenda from './pages/Agenda'
-import Perfil from './pages/Perfil'
-import Usuarios from './pages/Usuarios'
-import Invitaciones from './pages/Invitaciones'
-import EsperaAutorizacion from './pages/EsperaAutorizacion'
+// Páginas (Lazy Loaded para Code-Splitting y mejor rendimiento)
+const Login = React.lazy(() => import('./pages/Login'))
+const Dashboard = React.lazy(() => import('./pages/Dashboard'))
+const Clientes = React.lazy(() => import('./pages/Clientes'))
+const Inventarios = React.lazy(() => import('./pages/Inventarios'))
+const InventarioDetalle = React.lazy(() => import('./pages/InventarioDetalleNuevo'))
+const ProductosGenerales = React.lazy(() => import('./pages/ProductosGenerales'))
+const Agenda = React.lazy(() => import('./pages/Agenda'))
+const Perfil = React.lazy(() => import('./pages/Perfil'))
+const Usuarios = React.lazy(() => import('./pages/Usuarios'))
+const Invitaciones = React.lazy(() => import('./pages/Invitaciones'))
+const EsperaAutorizacion = React.lazy(() => import('./pages/EsperaAutorizacion'))
 
 // Layouts
 import MainLayout from './layouts/MainLayout'
 import AdminLayout from './layouts/AdminLayout'
 import ContableLayout from './layouts/ContableLayout'
+
+// Loading Fallback genérico para Suspense
+const GlobalLoader = () => (
+  <div className="h-screen flex items-center justify-center overflow-hidden">
+    <div className="loading-spinner w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
+  </div>
+)
+
 
 // Componente de rutas protegidas
 const ProtectedRoute = ({ children, requiredRole = null }) => {
@@ -92,6 +100,7 @@ const AppContent = () => {
   return (
     <>
       <TitleBar />
+      <Suspense fallback={<GlobalLoader />}>
       <Routes>
         {/* Rutas públicas */}
         <Route path="/login" element={<Login />} />
@@ -200,6 +209,7 @@ const AppContent = () => {
           element={
             <ProtectedRoute requiredRole="administrador">
               <AdminLayout>
+                <Suspense fallback={<GlobalLoader />}>
                 <Routes>
                   <Route path="dashboard" element={<Dashboard />} />
                   <Route path="clientes" element={<Clientes />} />
@@ -207,6 +217,7 @@ const AppContent = () => {
                   <Route path="agenda" element={<Agenda />} />
                   <Route path="perfil" element={<Perfil />} />
                 </Routes>
+                </Suspense>
               </AdminLayout>
             </ProtectedRoute>
           }
@@ -218,6 +229,7 @@ const AppContent = () => {
           element={
             <ProtectedRoute requiredRole="contable">
               <ContableLayout>
+                <Suspense fallback={<GlobalLoader />}>
                 <Routes>
                   <Route path="dashboard" element={<Dashboard />} />
                   <Route path="clientes" element={<Clientes />} />
@@ -225,6 +237,7 @@ const AppContent = () => {
                   <Route path="agenda" element={<Agenda />} />
                   <Route path="perfil" element={<Perfil />} />
                 </Routes>
+                </Suspense>
               </ContableLayout>
             </ProtectedRoute>
           }
@@ -268,6 +281,7 @@ const AppContent = () => {
           }
         />
       </Routes>
+      </Suspense>
     </>
   )
 }

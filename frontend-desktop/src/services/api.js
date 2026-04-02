@@ -244,6 +244,7 @@ export const solicitudesConexionApi = {
   rechazar: (solicitudId) => api.post(`/solicitudes-conexion/${solicitudId}/rechazar`),
   obtenerProductosOffline: (solicitudId) => api.get(`/solicitudes-conexion/${solicitudId}/productos-offline`),
   sincronizar: (solicitudId, temporalIds) => api.post(`/solicitudes-conexion/${solicitudId}/sincronizar`, { temporalIds }),
+  batchSyncProductos: (solicitudId, data) => api.post(`/solicitudes-conexion/${solicitudId}/batch-sync-productos`, data),
   desconectar: (solicitudId) => api.post(`/solicitudes-conexion/${solicitudId}/desconectar`),
 
   // Cola de productos (Admin)

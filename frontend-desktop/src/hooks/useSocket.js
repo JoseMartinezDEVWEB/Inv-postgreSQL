@@ -9,6 +9,7 @@ import webSocketService from '../services/websocket'
 export const useSocket = () => {
   const { token, user, isAuthenticated } = useAuth()
   const [onlineColaboradores, setOnlineColaboradores] = useState(0)
+  const [onlineColaboradoresDetalles, setOnlineColaboradoresDetalles] = useState([])
   const [isConnected, setIsConnected] = useState(false)
   const listenersSetupRef = useRef(false)
 
@@ -38,18 +39,21 @@ export const useSocket = () => {
         console.log('⚠️ [useSocket] No hay detalles de colaboradores en la respuesta')
       }
       setOnlineColaboradores(data.count || 0)
+      setOnlineColaboradoresDetalles(data.detalles || [])
     }
 
     // Escuchar cuando un colaborador se conecta
     const handleColaboradorConectado = (data) => {
       console.log('👥 [useSocket] Colaborador conectado, total:', data.totalColaboradores, data)
       setOnlineColaboradores(data.totalColaboradores || 0)
+      obtenerColaboradoresEnLinea() // Refrescar detalles completos
     }
 
     // Escuchar cuando un colaborador se desconecta
     const handleColaboradorDesconectado = (data) => {
       console.log('👥 [useSocket] Colaborador desconectado, total:', data.totalColaboradores, data)
       setOnlineColaboradores(data.totalColaboradores || 0)
+      obtenerColaboradoresEnLinea() // Refrescar detalles completos
     }
 
     // Escuchar cambios de conexión
@@ -146,8 +150,9 @@ export const useSocket = () => {
       throw new Error('No hay conexión con el servidor')
     }
 
-    if (user?.rol !== 'administrador') {
-      throw new Error('Solo los administradores pueden enviar inventario')
+    const rolesAutorizados = ['administrador', 'contable']
+    if (!rolesAutorizados.includes(user?.rol)) {
+      throw new Error('No tienes permisos para enviar inventario')
     }
 
     // Emitir evento de envío de inventario (nuevo evento send_inventory)
@@ -157,6 +162,7 @@ export const useSocket = () => {
   return {
     isConnected,
     onlineColaboradores,
+    onlineColaboradoresDetalles,
     obtenerColaboradoresEnLinea,
     enviarInventarioAColaboradores,
     emit: webSocketService.emit.bind(webSocketService),

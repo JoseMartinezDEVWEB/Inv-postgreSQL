@@ -1499,6 +1499,22 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
     setQrInvitacionData(null)
   }
 
+  // Ver QR de una invitación existente
+  const handleVerQRInvitacion = async (inv) => {
+    try {
+      setIsGeneratingQR(true)
+      // Usar el UUID para obtener los datos del QR
+      const response = await invitacionesApi.getQR(inv.uuid || inv.id || inv._id)
+      if (response.data?.exito) {
+        setQrInvitacionData(response.data.datos)
+      }
+    } catch (error) {
+      handleApiError(error)
+    } finally {
+      setIsGeneratingQR(false)
+    }
+  }
+
   // Imprimir/descargar páginas específicas del PDF
   const handlePrintPages = async (pageSpec) => {
     if (!isConnected) {
@@ -2188,7 +2204,7 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
         </TouchableOpacity>
       </Modal>
 
-      {/* Connect Modal - QR de Invitación */}
+      {/* Connect Modal - Gestión de Colaboradores */}
       <Modal
         animationType="slide"
         transparent={false}
@@ -2200,68 +2216,152 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
           style={{ flex: 1 }}
         >
           {/* Header */}
-          <View style={{ paddingTop: 50, paddingHorizontal: 20, paddingBottom: 20 }}>
+          <View style={{ paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingHorizontal: 20, paddingBottom: 20 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <TouchableOpacity onPress={handleCerrarModalQR} style={{ padding: 8 }}>
                 <Ionicons name="close" size={28} color="#fff" />
               </TouchableOpacity>
               <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#fff' }}>
-                Conectar Colaboradores
+                {qrInvitacionData ? 'Código de Invitación' : 'Colaboración'}
               </Text>
               <View style={{ width: 44 }} />
             </View>
           </View>
 
-          <Modal
-            animationType="fade"
-            transparent={true}
-            visible={showFindEditModal}
-            onRequestClose={() => setShowFindEditModal(false)}
-          >
-            <TouchableOpacity style={styles.menuModalOverlay} activeOpacity={1} onPressOut={() => setShowFindEditModal(false)}>
-              <View style={styles.menuModalContainer}>
-                <Text style={styles.menuTitle}>Buscar producto</Text>
-                <View style={{ backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 10 }}>
-                  <TextInput
-                    placeholder="Buscar por nombre o código"
-                    value={findTerm}
-                    onChangeText={setFindTerm}
-                    style={{ fontSize: 14, color: '#111827' }}
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }}>
+            {qrInvitacionData ? (
+              /* VISTA DE CÓDIGO QR */
+              <View style={{ alignItems: 'center', padding: 30 }}>
+                <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 20, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 10 }}>
+                  <Image 
+                    source={{ uri: qrInvitacionData.qrDataUrl }} 
+                    style={{ width: width * 0.7, height: width * 0.7 }} 
+                    resizeMode="contain"
                   />
                 </View>
-                <ScrollView style={{ maxHeight: height * 0.5 }}>
-                  {productosContados.filter(p => {
-                    const q = (findTerm || '').toLowerCase()
-                    if (!q) return true
-                    return (p.nombreProducto || '').toLowerCase().includes(q) || (p.skuProducto || '').toLowerCase().includes(q)
-                  }).map((item) => {
-                    const key = typeof item.producto === 'object' ? item.producto?._id : item.producto
-                    const cantidad = editDraft[key]?.cantidad ?? String(item.cantidadContada)
-                    const costo = editDraft[key]?.costo ?? String(item.costoProducto)
-                    return (
-                      <View key={key} style={{ backgroundColor: '#0f172a', borderRadius: 10, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#334155' }}>
-                        <Text style={{ color: '#fff', fontWeight: '600' }}>{item.nombreProducto}</Text>
-                        <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{item.skuProducto || 'Sin código'}</Text>
-                        <View style={{ flexDirection: 'row', marginTop: 8, alignItems: 'center' }}>
-                          <View style={{ flex: 1, marginRight: 6 }}>
-                            <Text style={{ color: '#cbd5e1', fontSize: 12 }}>Cantidad</Text>
-                            <TextInput value={String(cantidad)} onChangeText={(t) => setEditDraft(v => ({ ...v, [key]: { ...(v[key] || {}), cantidad: t } }))} keyboardType="numeric" style={{ backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 }} />
-                          </View>
-                          <View style={{ flex: 1, marginLeft: 6 }}>
-                            <Text style={{ color: '#cbd5e1', fontSize: 12 }}>Costo</Text>
-                            <TextInput value={String(costo)} onChangeText={(t) => setEditDraft(v => ({ ...v, [key]: { ...(v[key] || {}), costo: t } }))} keyboardType="numeric" style={{ backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 }} />
-                          </View>
-                        </View>
-                        <TouchableOpacity onPress={() => handleSaveEdit(item)} style={{ backgroundColor: '#22c55e', borderRadius: 8, paddingVertical: 10, marginTop: 10, alignItems: 'center' }}>
-                          <Text style={{ color: '#fff', fontWeight: '700' }}>Guardar</Text>
+                
+                <Text style={{ color: '#fff', fontSize: 24, fontWeight: 'bold', marginTop: 30 }}>
+                  {qrInvitacionData.codigoNumerico}
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 16, marginTop: 10, textAlign: 'center' }}>
+                  El colaborador debe escanear este código o ingresarlo manualmente.
+                </Text>
+
+                <TouchableOpacity 
+                  onPress={handleCompartirQR}
+                  style={{ backgroundColor: '#fff', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 12, marginTop: 40, flexDirection: 'row', alignItems: 'center' }}
+                >
+                  <Ionicons name="share-outline" size={24} color="#7c3aed" />
+                  <Text style={{ color: '#7c3aed', fontWeight: 'bold', marginLeft: 10, fontSize: 16 }}>Compartir Invitación</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  onPress={() => setQrInvitacionData(null)}
+                  style={{ marginTop: 25 }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: 'bold', textDecorationLine: 'underline' }}>Volver al listado</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              /* VISTA DE GESTIÓN */
+              <View style={{ paddingHorizontal: 20 }}>
+                {/* Generar Nueva */}
+                <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 15, padding: 20, marginBottom: 25 }}>
+                  <Text style={{ color: '#fff', fontWeight: 'bold', marginBottom: 15 }}>Nueva Invitación</Text>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TextInput
+                      placeholder="Nombre del colaborador..."
+                      placeholderTextColor="rgba(255,255,255,0.6)"
+                      value={newProductData.nombreInput || ''}
+                      onChangeText={(t) => setNewProductData(v => ({ ...v, nombreInput: t }))}
+                      style={{ flex: 1, backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 12, height: 45 }}
+                    />
+                    <TouchableOpacity 
+                      onPress={() => {
+                        const nombre = newProductData.nombreInput;
+                        handleGenerarQR(nombre);
+                        setNewProductData(v => ({ ...v, nombreInput: '' }));
+                      }}
+                      disabled={isGeneratingQR}
+                      style={{ backgroundColor: '#22c55e', paddingHorizontal: 15, borderRadius: 8, justifyContent: 'center' }}
+                    >
+                      {isGeneratingQR ? (
+                        <ActivityIndicator color="#fff" />
+                      ) : (
+                        <Ionicons name="qr-code" size={24} color="#fff" />
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Invitaciones Activas */}
+                <Text style={{ color: '#fff', fontWeight: 'bold', marginBottom: 10, fontSize: 16 }}>Invitaciones Pendientes</Text>
+                {invitaciones.length === 0 ? (
+                  <View style={{ padding: 20, backgroundColor: 'rgba(0,0,0,0.1)', borderRadius: 10, alignItems: 'center' }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.5)' }}>No hay invitaciones activas</Text>
+                  </View>
+                ) : (
+                  invitaciones.map((inv, idx) => (
+                    <View key={inv._id || idx} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 15, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View>
+                        <Text style={{ fontWeight: 'bold', color: '#1e293b' }}>{inv.nombre || 'Colaborador'}</Text>
+                        <Text style={{ color: '#8b5cf6', fontWeight: 'bold', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }}>{inv.codigoNumerico}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: 15 }}>
+                        <TouchableOpacity onPress={() => handleVerQRInvitacion(inv)}>
+                          <Ionicons name="qr-code-outline" size={24} color="#7c3aed" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={async () => {
+                          Alert.alert('Eliminar', '¿Deseas cancelar esta invitación?', [
+                            { text: 'No' },
+                            { text: 'Sí', onPress: async () => {
+                                await invitacionesApi.cancel(inv._id || inv.id)
+                                cargarInvitaciones()
+                            }}
+                          ])
+                        }}>
+                          <Ionicons name="trash-outline" size={24} color="#ef4444" />
                         </TouchableOpacity>
                       </View>
+                    </View>
+                  ))
+                )}
+
+                {/* Colaboradores Activos */}
+                <Text style={{ color: '#fff', fontWeight: 'bold', marginBottom: 10, marginTop: 25, fontSize: 16 }}>Colaboradores en Sesión</Text>
+                {colaboradoresActivos.length === 0 ? (
+                  <View style={{ padding: 20, backgroundColor: 'rgba(0,0,0,0.1)', borderRadius: 10, alignItems: 'center' }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.5)' }}>No hay colaboradores conectados</Text>
+                  </View>
+                ) : (
+                  colaboradoresActivos.map((colab, idx) => {
+                    const cantPendientes = (productosColaboradorPendientes[colab._id] || []).length;
+                    return (
+                      <View key={colab._id || idx} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 15, marginBottom: 10 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <View>
+                            <Text style={{ fontWeight: 'bold', color: '#1e293b' }}>{colab.nombreColaborador || colab.colaborador?.nombre || 'Desconocido'}</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22c55e', marginRight: 5 }} />
+                              <Text style={{ fontSize: 12, color: '#64748b' }}>Activo ahora</Text>
+                            </View>
+                          </View>
+                          {cantPendientes > 0 && (
+                            <TouchableOpacity 
+                              onPress={() => handleSincronizarColaborador(colab._id)}
+                              style={{ backgroundColor: '#f59e0b', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                            >
+                              <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>Sincronizar ({cantPendientes})</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </View>
                     )
-                  })}
-                </ScrollView>
+                  })
+                )}
               </View>
-            </TouchableOpacity>
-          </Modal>
+            )}
+          </ScrollView>
         </LinearGradient>
       </Modal>
     </View>

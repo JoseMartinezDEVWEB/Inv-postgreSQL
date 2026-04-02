@@ -69,11 +69,13 @@ router.post('/qr', authenticateToken, async (req, res) => {
             expiraEn: new Date(Date.now() + expiraEnMinutos * 60 * 1000),
             estado: 'pendiente'
         });
+        // Derivar IP dinámicamente
+        const serverIp = process.env.APP_HOST_URL || req.hostname || '127.0.0.1';
 
         const qrPayload = JSON.stringify({
             invitacionId: invitacion.uuid,
             codigo: codigoNumerico,
-            serverIp: '10.0.0.41', // Idealmente sacar de var de entorno o request
+            serverIp: serverIp,
             port: PORT
         });
 
@@ -229,6 +231,11 @@ router.get('/conectados', authenticateToken, async (req, res) => {
             include: [
                 { model: db.Usuario, as: 'colaborador', attributes: ['id', 'nombre', 'email'] },
                 { model: db.Invitacion, attributes: ['id', 'nombre', 'email'] }
+            ],
+            order: [
+                ['estadoConexion', 'ASC'], // 'conectado' viene antes que 'desconectado' alfabéticamente
+                ['ultimoPing', 'DESC'],
+                ['updatedAt', 'DESC']
             ]
         });
 
@@ -483,6 +490,166 @@ router.post('/:id/sincronizar', authenticateToken, async (req, res) => {
         res.json({ ok: true, mensaje: 'Productos marcados como sincronizados' });
     } catch (error) {
         res.status(500).json({ mensaje: error.message });
+    }
+});
+
+/**
+ * Endpoint de sincronización masiva para colaboradores
+ * Procesa múltiples productos en una sola transacción
+ */
+router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => {
+    const t = await db.sequelize.transaction();
+    try {
+        const { id } = req.params;
+        const { sesionInventarioId, productos } = req.body;
+
+        if (!productos || !Array.isArray(productos) || !sesionInventarioId) {
+            return res.status(400).json({ mensaje: 'Datos incompletos para la sincronización' });
+        }
+
+        // 1. Resolver solicitud (soporte UUID e ID)
+        let solicitud;
+        if (id.length > 20) {
+            solicitud = await db.SolicitudConexion.findOne({ where: { uuid: id }, transaction: t });
+        } else {
+            solicitud = await db.SolicitudConexion.findByPk(id, { transaction: t });
+        }
+
+        if (!solicitud) {
+            await t.rollback();
+            return res.status(404).json({ mensaje: 'Solicitud de conexión no encontrada' });
+        }
+
+        // 2. Obtener sesión y cliente
+        const sesion = await db.SesionInventario.findByPk(sesionInventarioId, { transaction: t });
+        if (!sesion) {
+            await t.rollback();
+            return res.status(404).json({ mensaje: 'Sesión de inventario no encontrada' });
+        }
+        const clienteId = sesion.clienteNegocioId;
+
+        console.log(`🚀 Iniciando sincronización masiva para ${productos.length} productos. Colaborador: ${req.user.nombre}`);
+
+        const temporalIdsExitosos = [];
+
+        // 3. Procesar cada producto
+        for (const item of productos) {
+            try {
+                const { temporalId, productoData } = item;
+                if (!productoData) continue;
+
+                const { nombre, cantidad, costo, unidad, categoria, sku, codigoBarras } = productoData;
+                const finalCantidad = Number(cantidad) || 1;
+                const finalCosto = Number(costo) || 0;
+
+                // A. Buscar/Crear en ProductoGeneral
+                // Usar solo el nombre para evitar falsos positivos con código de barras vacío
+                let productoGeneral = await db.ProductoGeneral.findOne({
+                    where: { nombre: nombre.trim() },
+                    transaction: t
+                });
+
+                if (!productoGeneral && (codigoBarras || sku)) {
+                    productoGeneral = await db.ProductoGeneral.findOne({
+                        where: { codigoBarras: codigoBarras || sku },
+                        transaction: t
+                    });
+                }
+
+                if (!productoGeneral) {
+                    productoGeneral = await db.ProductoGeneral.create({
+                        nombre: nombre.trim(),
+                        costoBase: finalCosto,
+                        codigoBarras: codigoBarras || sku || '',
+                        unidad: unidad || 'unidad',
+                        categoria: categoria || 'General',
+                        descripcion: 'Sincronizado desde colaborador',
+                        activo: true,
+                        tipoCreacion: 'colaborador'
+                    }, { transaction: t });
+                }
+
+                // B. Buscar/Crear en Producto (tabla general, no tiene clienteNegocioId)
+                let productoCliente = await db.Producto.findOne({
+                    where: { nombre: nombre.trim() },
+                    transaction: t
+                });
+
+                if (!productoCliente) {
+                    productoCliente = await db.Producto.create({
+                        nombre: nombre.trim(),
+                        costo: finalCosto,
+                        unidad: unidad || 'unidad',
+                        categoria: categoria || 'General',
+                        sku: sku || codigoBarras || '',
+                        activo: true
+                    }, { transaction: t });
+                }
+
+                // C. Agregar/Actualizar en la Sesión (ProductoContado)
+                // Usar la clave correcta: productoClienteId (FK en ProductoContado)
+                const [productoContado, created] = await db.ProductoContado.findOrCreate({
+                    where: {
+                        sesionInventarioId: sesionInventarioId,
+                        nombreProducto: nombre.trim()  // buscar por nombre para evitar duplicados
+                    },
+                    defaults: {
+                        sesionInventarioId: sesionInventarioId,
+                        productoClienteId: productoCliente.id,
+                        cantidadContada: finalCantidad,
+                        costoProducto: finalCosto,
+                        nombreProducto: nombre.trim(),
+                        skuProducto: sku || codigoBarras || '',
+                        valorTotal: finalCantidad * finalCosto
+                    },
+                    transaction: t
+                });
+
+                if (!created) {
+                    const nuevaCantidad = Number(productoContado.cantidadContada) + finalCantidad;
+                    await productoContado.update({
+                        cantidadContada: nuevaCantidad,
+                        costoProducto: finalCosto,
+                        valorTotal: nuevaCantidad * finalCosto
+                    }, { transaction: t });
+                }
+
+                temporalIdsExitosos.push(temporalId);
+            } catch (prodErr) {
+                console.error(`❌ Error procesando producto ${item.productoData?.nombre}:`, prodErr.message);
+                // Continuamos con el siguiente producto del lote
+            }
+        }
+
+        // 4. Marcar como sincronizados en el metadata de la solicitud
+        const metadata = solicitud.metadata || {};
+        const existentes = metadata.productosOffline || [];
+        const actualizados = existentes.map(prod => {
+            // Sincronizar tanto si el ID coincide como si está en nuestra lista de exitosos
+            if (temporalIdsExitosos.includes(prod.id) || temporalIdsExitosos.includes(prod.temporalId)) {
+                return { ...prod, sincronizado: true };
+            }
+            return prod;
+        });
+
+        await solicitud.update({
+            metadata: {
+                ...metadata,
+                productosOffline: actualizados
+            }
+        }, { transaction: t });
+
+        await t.commit();
+        res.json({ 
+            success: true, 
+            mensaje: `Sincronización exitosa: ${temporalIdsExitosos.length} productos procesados`,
+            count: temporalIdsExitosos.length
+        });
+
+    } catch (error) {
+        if (t) await t.rollback();
+        console.error('💥 Error en batch-sync-productos:', error);
+        res.status(500).json({ mensaje: 'Error interno del servidor: ' + error.message });
     }
 });
 

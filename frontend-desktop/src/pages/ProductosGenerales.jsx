@@ -243,7 +243,14 @@ const ProductosGenerales = () => {
       })
 
       const data = handleApiResponse(response)
-      const todosLosProductos = data.productos || []
+      
+      // Manejo robusto de la respuesta (puede ser un array directo o un objeto con datos/productos/rows)
+      let todosLosProductos = [];
+      if (Array.isArray(data)) {
+        todosLosProductos = data;
+      } else if (data && typeof data === 'object') {
+        todosLosProductos = data.datos || data.productos || data.rows || [];
+      }
 
       if (todosLosProductos.length === 0) {
         toast.dismiss(toastId)
@@ -252,15 +259,20 @@ const ProductosGenerales = () => {
         return
       }
 
-      const productosFormateados = todosLosProductos.map(producto => ({
-        nombre: producto.nombre,
-        costo: producto.costoBase || 0,
-        codigo_barra: producto.codigoBarras || '',
-        cantidad: 0,
-        codigoBarras: producto.codigoBarras || '',
-        categoria: producto.categoria || '',
-        unidad: producto.unidad || '',
-        descripcion: producto.descripcion || ''
+      console.log(`📦 [Desktop] Procesando ${todosLosProductos.length} productos para enviar al móvil`)
+
+      const productosFormateados = todosLosProductos.map(p => ({
+        _id: p._id || p.id,
+        id: p.id || p._id,
+        nombre: p.nombre || '',
+        sku: p.sku || '',
+        codigoBarras: p.codigoBarras || '',
+        codigo_barra: p.codigoBarras || '',
+        costo: p.costo || p.costoBase || 0,
+        precioVenta: p.precioVenta || 0,
+        unidad: p.unidad || 'unidad',
+        categoria: p.categoria || 'General',
+        descripcion: p.descripcion || ''
       }))
 
       toast.dismiss(toastId)

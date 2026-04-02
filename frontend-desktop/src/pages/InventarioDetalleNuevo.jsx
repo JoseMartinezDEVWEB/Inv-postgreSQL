@@ -11,6 +11,7 @@ import logoInfocolmados from '../img/logo_transparent.png'
 import { ArrowLeft, Search, Trash2, Clock, TrendingUp, Users, CreditCard, Briefcase, PiggyBank, DollarSign, ShoppingCart, Barcode, X, Printer, FileText, Settings, TrendingDown, Wallet, Calculator, Calendar, Download, Share2, FileSpreadsheet, FileImage, UserMinus, Menu, Smartphone, QrCode, RefreshCw, Wifi, WifiOff, PieChart, Eye, CheckCircle, XCircle, Package, Edit3 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '../context/AuthContext'
+import { useSocket } from '../hooks/useSocket'
 import ProductoForm from '../components/ProductoForm'
 import ReporteInventarioModal from '../components/ReporteInventarioModal'
 
@@ -51,6 +52,7 @@ const InventarioDetalleNuevo = () => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { user, hasRole } = useAuth()
+  const { onlineColaboradoresDetalles } = useSocket()
   // Referencias para inputs de búsqueda y formularios
   const searchInputRef = useRef(null)
   const cantidadInputRef = useRef(null)
@@ -90,6 +92,26 @@ const InventarioDetalleNuevo = () => {
   const [colaboradoresConectados, setColaboradoresConectados] = useState([])
   const [invitaciones, setInvitaciones] = useState([])
   const [productosColaboradorPendientes, setProductosColaboradorPendientes] = useState({})
+
+  // Ordenar colaboradores para que los ACTIVOS aparezcan primero
+  const colaboradoresOrdenados = useMemo(() => {
+    if (!Array.isArray(colaboradoresConectados)) return [];
+    
+    return [...colaboradoresConectados].sort((a, b) => {
+      const aId = String(a.id || a._id);
+      const bId = String(b.id || b._id);
+      
+      const isAOnline = onlineColaboradoresDetalles?.some(o => String(o.solicitudId) === aId);
+      const isBOnline = onlineColaboradoresDetalles?.some(o => String(o.solicitudId) === bId);
+      
+      if (isAOnline && !isBOnline) return -1;
+      if (!isAOnline && isBOnline) return 1;
+      
+      const aTime = new Date(a.ultimoPing || a.updatedAt || 0).getTime();
+      const bTime = new Date(b.ultimoPing || b.updatedAt || 0).getTime();
+      return bTime - aTime;
+    });
+  }, [colaboradoresConectados, onlineColaboradoresDetalles]);
   const [showColaboradoresModal, setShowColaboradoresModal] = useState(false)
   const [showRevisarProductosModal, setShowRevisarProductosModal] = useState(false)
   const [colaboradorSeleccionado, setColaboradorSeleccionado] = useState(null)
@@ -747,6 +769,29 @@ const InventarioDetalleNuevo = () => {
     }
   }
 
+  // Función para obtener y mostrar el QR de una invitación específica
+  const handleVerQRInvitacion = async (invitacion) => {
+    try {
+      setCargandoQR(true)
+      const response = await invitacionesApi.getQR(invitacion.uuid || invitacion.id || invitacion._id)
+      
+      if (response.data && response.data.datos) {
+        setQrColaboradorData(response.data.datos)
+        // Simulamos un objeto colaborador mínimo para el visor de QR
+        setColaboradorSeleccionado({
+          nombreColaborador: invitacion.nombre || 'Invitación',
+          colaborador: { nombre: invitacion.nombre || 'Colaborador' }
+        })
+        setShowQRColaboradorModal(true)
+      }
+    } catch (error) {
+      console.error('Error al obtener QR de invitación:', error)
+      toast.error('No se pudo cargar el código QR')
+    } finally {
+      setCargandoQR(false)
+    }
+  }
+
   // Función para cerrar modal de QR de colaborador
   const handleCerrarQRColaborador = () => {
     setShowQRColaboradorModal(false)
@@ -768,189 +813,61 @@ const InventarioDetalleNuevo = () => {
     toast.success('QR descargado exitosamente')
   }
 
-  // Función para aceptar y sincronizar productos del colaborador
+  // Función para aceptar y sincronizar productos del colaborador (REFACTORIZADA - Batch Sync)
   const handleAceptarProductos = async (productosSeleccionados) => {
-    if (!colaboradorSeleccionado) return
+    if (!colaboradorSeleccionado || !productosSeleccionados?.length) return
 
-    // Iniciar reloj inmediatamente si es el primer producto
-    if (productosContados.length === 0 && !sesion?.timerEnMarcha && productosSeleccionados.length > 0) {
-      try {
-        await sesionesApi.resumeTimer(id)
-        console.log('✅ Reloj iniciado al aceptar productos de colaborador')
-        await refetch()
-      } catch (error) {
-        console.error('Error al iniciar reloj:', error)
-      }
-    }
+    const toastId = toast.loading(`Sincronizando ${productosSeleccionados.length} producto(s)...`)
 
     try {
-      // Agregar cada producto a la sesión de inventario
-      for (const productoOffline of productosSeleccionados) {
-        if (!productoOffline || !productoOffline.productoData) {
-          continue // Saltar productos inválidos
-        }
-        const productoData = productoOffline.productoData
-        const cantidadEditada = cantidadesEditadas[productoOffline.temporalId] || productoData.cantidad || 1
-
-        // Buscar si el producto ya existe en la sesión
-        const productoExistente = productosContados.find(p =>
-          p.nombreProducto?.toLowerCase().trim() === productoData.nombre?.toLowerCase().trim()
-        )
-
-        if (productoExistente) {
-          // Actualizar cantidad sumando
-          const nuevaCantidad = (productoExistente.cantidadContada || 0) + Number(cantidadEditada)
-          const productoIdToUpdate = productoExistente.productoId || productoExistente.id || productoExistente._id
-          if (!productoIdToUpdate) {
-            throw new Error('No se pudo obtener el ID del producto contado')
+      // Construir el payload aplicando las cantidades editadas por el usuario
+      const productosConCantidadEditada = productosSeleccionados
+        .filter(p => p && p.productoData)
+        .map(productoOffline => ({
+          temporalId: productoOffline.temporalId,
+          productoData: {
+            ...productoOffline.productoData,
+            // Usar la cantidad que el usuario haya editado en el modal
+            cantidad: cantidadesEditadas[productoOffline.temporalId] ?? productoOffline.productoData.cantidad ?? 1
           }
-          await sesionesApi.updateProduct(id, productoIdToUpdate, {
-            cantidadContada: nuevaCantidad,
-            costoProducto: Number(productoData.costo) || 0
-          })
-        } else {
-          // ===========================================
-          // LÓGICA DE SINCRONIZACIÓN CON PRODUCTOS GENERALES
-          // ===========================================
-          try {
-            // 1. Verificar si existe en Productos Generales (por código de barras o nombre)
-            let productoGeneralId = null
-            let existeEnGeneral = false
+        }))
 
-            // Intentar buscar por código de barras si tiene
-            if (productoData.codigoBarras) {
-              try {
-                const respGeneral = await productosApi.buscarPorCodigoBarras(productoData.codigoBarras)
-                if (respGeneral.data?.datos || respGeneral.data?.id) {
-                  existeEnGeneral = true
-                }
-              } catch (e) {
-                // No existe o error, continuamos
-              }
-            }
+      // Obtener el ID de la solicitud (puede ser _id numérico o UUID)
+      const solicitudId = colaboradorSeleccionado._id || colaboradorSeleccionado.id || colaboradorSeleccionado.uuid
 
-            // Si no encontró por código, buscar por nombre exacto
-            if (!existeEnGeneral && productoData.nombre) {
-              try {
-                const respGeneralNombre = await productosApi.buscarPorNombre(productoData.nombre)
-                const coincidencias = respGeneralNombre.data?.datos?.productos || []
-                const encontrado = coincidencias.find(p => p.nombre.toLowerCase().trim() === productoData.nombre.toLowerCase().trim())
-                if (encontrado) {
-                  existeEnGeneral = true
-                }
-              } catch (e) {
-                // Error en búsqueda, ignorar
-              }
-            }
+      if (!solicitudId) {
+        toast.error('No se pudo identificar la solicitud del colaborador', { id: toastId })
+        return
+      }
 
-            // 2. Si NO existe en generales, CREARLO
-            if (!existeEnGeneral) {
-              try {
-                console.log('✨ Creando producto en catálogo general:', productoData.nombre)
-                await productosApi.createGeneral({
-                  nombre: productoData.nombre,
-                  costoBase: Number(productoData.costo) || 0,
-                  codigoBarras: productoData.codigoBarras || '',
-                  unidad: productoData.unidad || 'unidad',
-                  categoria: productoData.categoria || 'General',
-                  descripcion: 'Creado automáticamente desde sincronización de colaborador'
-                })
-                toast.success(`Producto "${productoData.nombre}" agregado al catálogo general`)
-              } catch (error) {
-                console.error('Error creando producto en general:', error)
-                // No bloqueamos el flujo si falla esto, pero avisamos
-                toast.error(`No se pudo agregar "${productoData.nombre}" al catálogo general`)
-              }
-            }
-          } catch (error) {
-            console.error('Error en lógica de sincronización general:', error)
-          }
-          // ===========================================
+      if (!id) {
+        toast.error('No se pudo identificar la sesión de inventario', { id: toastId })
+        return
+      }
 
-          // Buscar o crear el producto en ProductoCliente
-          let productoClienteId
-          const clienteId = obtenerClienteId(sesion)
-
-          if (!clienteId) {
-            console.error('No se pudo obtener el ID del cliente')
-            continue
-          }
-
-          try {
-            // Buscar primero en productos del cliente
-            const busqueda = await productosApi.getByCliente(clienteId, {
-              buscar: productoData.nombre,
-              limite: 1
-            })
-            const encontrado = busqueda.data?.datos?.productos?.[0]
-            if (encontrado && encontrado._id) {
-              productoClienteId = encontrado._id
-            }
-          } catch (error) {
-            console.log('Error buscando producto en cliente:', error)
-          }
-
-          // Si no se encontró, crear uno nuevo
-          if (!productoClienteId) {
-            try {
-              const nuevoProducto = await productosApi.createForCliente(clienteId, {
-                nombre: productoData.nombre,
-                costo: Number(productoData.costo) || 0,
-                unidad: productoData.unidad || 'unidad',
-                sku: productoData.sku || '',
-                categoria: productoData.categoria || 'General',
-                codigoBarras: productoData.codigoBarras || '' // Asegurar que se guarde el código de barras también en el del cliente
-              })
-              // El backend devuelve el producto directamente en datos, no en datos.producto
-              productoClienteId = nuevoProducto.data?.datos?.id || nuevoProducto.data?.datos?._id
-              if (!productoClienteId) {
-                console.error('❌ No se pudo extraer el ID del producto creado:', nuevoProducto.data)
-                toast.error(`Error: No se pudo obtener el ID del producto ${productoData.nombre} después de crearlo`)
-                continue
-              }
-            } catch (error) {
-              console.error('Error creando producto:', error)
-              toast.error(`Error al crear producto ${productoData.nombre}: ${error.response?.data?.mensaje || error.message}`)
-              continue
-            }
-          }
-
-          // Agregar a la sesión
-          if (productoClienteId) {
-            try {
-              await sesionesApi.addProduct(id, {
-                productoClienteId: productoClienteId,
-                cantidadContada: Number(cantidadEditada),
-                costoProducto: Number(productoData.costo) || 0
-              })
-            } catch (error) {
-              console.error('Error agregando producto a sesión:', error)
-              toast.error(`Error al agregar producto ${productoData.nombre}: ${error.response?.data?.mensaje || error.message}`)
-            }
-          } else {
-            console.error('No se pudo obtener el ID del producto cliente')
-            toast.error(`No se pudo procesar el producto ${productoData.nombre}`)
-          }
+      // Iniciar reloj si es el primer producto y el timer no está en marcha
+      if (productosContados.length === 0 && !sesion?.timerEnMarcha) {
+        try {
+          await sesionesApi.resumeTimer(id)
+        } catch (timerErr) {
+          console.warn('No se pudo iniciar el timer:', timerErr.message)
         }
       }
 
-      // Marcar productos como sincronizados en el backend
-      // El backend espera un array de IDs, no un objeto
-      const temporalIds = productosSeleccionados.map(p => p.temporalId)
-      await solicitudesConexionApi.sincronizar(colaboradorSeleccionado._id, temporalIds)
+      // ─── LLAMADA ÚNICA AL BACKEND (batch sync) ───────────────────────────────
+      const response = await solicitudesConexionApi.batchSyncProductos(solicitudId, {
+        sesionInventarioId: id,
+        productos: productosConCantidadEditada
+      })
+      // ────────────────────────────────────────────────────────────────────────
 
-      toast.success(`${productosSeleccionados.length} producto(s) sincronizado(s) exitosamente`)
+      const { count = productosConCantidadEditada.length } = response.data
 
-      // Invalidar queries y refrescar datos - hacer múltiples invalidaciones para asegurar actualización
+      toast.success(`✅ ${count} producto(s) sincronizados exitosamente`, { id: toastId })
+
+      // Refrescar datos de la sesión
       queryClient.invalidateQueries(['sesion-inventario', id])
-
-      // Esperar un poco para asegurar que el backend haya procesado los cambios
-      await new Promise(resolve => setTimeout(resolve, 800))
-
-      // Forzar refetch completo de la sesión
       await refetch()
-      queryClient.invalidateQueries(['sesion-inventario', id])
-      queryClient.refetchQueries(['sesion-inventario', id])
 
       // Cerrar modal y limpiar estado
       setShowRevisarProductosModal(false)
@@ -958,17 +875,13 @@ const InventarioDetalleNuevo = () => {
       setProductosParaRevisar([])
       setCantidadesEditadas({})
 
-      // Recargar colaboradores para actualizar conteo
-      const response = await solicitudesConexionApi.listarConectados(id)
-      setColaboradoresConectados(response.data?.datos || [])
+      // Recargar colaboradores para actualizar estado de productos pendientes
+      await cargarColaboradoresConectados()
 
-      // Recargar productos pendientes después de un breve delay
-      setTimeout(async () => {
-        await cargarColaboradoresConectados()
-      }, 500)
     } catch (error) {
-      console.error('Error al aceptar productos:', error)
-      toast.error('Error al sincronizar productos')
+      console.error('❌ Error en batch sync de productos:', error)
+      const mensaje = error.response?.data?.mensaje || error.message || 'Error al sincronizar productos'
+      toast.error(`Error: ${mensaje}`, { id: toastId })
     }
   }
 
@@ -1078,14 +991,16 @@ const InventarioDetalleNuevo = () => {
 
   // Función para rechazar productos del colaborador
   const handleRechazarProductos = async (productosRechazados) => {
-    if (!colaboradorSeleccionado) return
+    if (!colaboradorSeleccionado || !productosRechazados?.length) return
 
+    const toastId = toast.loading('Rechazando productos...')
     try {
-      // Marcar como sincronizados (aunque no se agreguen) para que no aparezcan más
       const temporalIds = productosRechazados.map(p => p.temporalId)
-      await solicitudesConexionApi.sincronizar(colaboradorSeleccionado._id, temporalIds)
+      // Usar ID robusto (soporta numérico y UUID)
+      const solicitudId = colaboradorSeleccionado._id || colaboradorSeleccionado.id || colaboradorSeleccionado.uuid
+      await solicitudesConexionApi.sincronizar(solicitudId, temporalIds)
 
-      toast.success(`${productosRechazados.length} producto(s) rechazado(s)`)
+      toast.success(`${productosRechazados.length} producto(s) rechazado(s)`, { id: toastId })
 
       // Cerrar modal y limpiar estado
       setShowRevisarProductosModal(false)
@@ -1094,11 +1009,10 @@ const InventarioDetalleNuevo = () => {
       setCantidadesEditadas({})
 
       // Recargar colaboradores
-      const response = await solicitudesConexionApi.listarConectados(id)
-      setColaboradoresConectados(response.data?.datos || [])
+      await cargarColaboradoresConectados()
     } catch (error) {
       console.error('Error al rechazar productos:', error)
-      toast.error('Error al procesar rechazo')
+      toast.error('Error al procesar rechazo', { id: toastId })
     }
   }
 
@@ -3160,8 +3074,8 @@ const InventarioDetalleNuevo = () => {
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
-                        {invitaciones.map((inv) => (
-                          <tr key={inv._id}>
+                        {invitaciones.map((inv, index) => (
+                          <tr key={inv.id || inv._id || `inv-${index}`}>
                             <td className="px-4 py-2 text-sm text-gray-900">{inv.nombre || '-'}</td>
                             <td className="px-4 py-2">
                               <span className="font-mono font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded">
@@ -3177,19 +3091,31 @@ const InventarioDetalleNuevo = () => {
                               </span>
                             </td>
                             <td className="px-4 py-2 text-right">
-                              {inv.estado === 'pendiente' && (
-                                <button
-                                  onClick={async () => {
-                                    if (confirm('¿Cancelar invitación?')) {
-                                      await invitacionesApi.cancel(inv._id)
-                                      cargarInvitaciones()
-                                    }
-                                  }}
-                                  className="text-red-600 hover:text-red-800"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              )}
+                              <div className="flex justify-end gap-2">
+                                {inv.estado === 'pendiente' && (
+                                  <>
+                                    <button
+                                      onClick={() => handleVerQRInvitacion(inv)}
+                                      className="text-purple-600 hover:text-purple-800"
+                                      title="Ver Código QR"
+                                    >
+                                      <QrCode className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={async () => {
+                                        if (confirm('¿Cancelar invitación?')) {
+                                          await invitacionesApi.cancel(inv.id || inv._id)
+                                          cargarInvitaciones()
+                                        }
+                                      }}
+                                      className="text-red-600 hover:text-red-800"
+                                      title="Eliminar"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -3203,7 +3129,11 @@ const InventarioDetalleNuevo = () => {
               <div className="border-t pt-4">
                 <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
                   <Wifi className="w-5 h-5 text-green-600" />
-                  <span>Colaboradores Conectados ({colaboradoresConectados.length})</span>
+                  <span>Colaboradores Conectados ({
+                    colaboradoresConectados.filter(c => 
+                      onlineColaboradoresDetalles?.some(online => String(online.solicitudId) === String(c.id || c._id))
+                    ).length
+                  })</span>
                 </h4>
 
                 {colaboradoresConectados.length === 0 ? (
@@ -3239,12 +3169,18 @@ const InventarioDetalleNuevo = () => {
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
-                        {colaboradoresConectados.map((colab) => {
+                        {colaboradoresOrdenados.map((colab, index) => {
                           const productosPendientes = productosColaboradorPendientes[colab.id || colab._id] || []
                           const cantidadPendientes = productosPendientes.length
 
+                          // Verificar conectividad real usando WebSocket
+                          const isOnline = onlineColaboradoresDetalles?.some(online => 
+                            String(online.solicitudId) === String(colab.id || colab._id)
+                          );
+                          const currentConnectionState = isOnline ? 'conectado' : 'desconectado';
+
                           return (
-                            <tr key={colab.id || colab._id} className="hover:bg-gray-50">
+                            <tr key={colab.id || colab._id || `colab-${index}`} className="hover:bg-gray-50">
                               <td className="px-4 py-4 whitespace-nowrap">
                                 <div className="text-sm font-medium text-gray-900">
                                   {colab.nombreColaborador || colab.colaborador?.nombre || 'Desconocido'}
@@ -3256,30 +3192,25 @@ const InventarioDetalleNuevo = () => {
                                 {colab.metadata?.rolInvitacion && (
                                   <div className="mt-1 text-xs text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded inline-block font-mono tracking-wider">
                                     Código Inv: {colab.metadata.invitacionId ? '****' : 'Manual'}
-                                    {/* Nota: No tenemos el código numérico original aquí fácilmente sin hacer join, 
-                                        pero podemos intentar inferirlo o mostrar un indicador */}
                                   </div>
                                 )}
                               </td>
                               <td className="px-4 py-4 whitespace-nowrap">
-                                <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${colab.estadoConexion === 'conectado'
+                                <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${currentConnectionState === 'conectado'
                                   ? 'bg-green-100 text-green-800'
-                                  : colab.estadoConexion === 'esperando_reconexion'
-                                    ? 'bg-yellow-100 text-yellow-800'
-                                    : 'bg-gray-100 text-gray-800'
+                                  : 'bg-gray-100 text-gray-800'
                                   }`}>
-                                  {colab.estadoConexion === 'conectado' ? (
-                                    <><Wifi className="w-3 h-3 mr-1 inline" /> Conectado</>
-                                  ) : colab.estadoConexion === 'esperando_reconexion' ? (
-                                    <><Wifi className="w-3 h-3 mr-1 inline animate-pulse" /> Reconectando...</>
+                                  {currentConnectionState === 'conectado' ? (
+                                    <><Wifi className="w-3 h-3 mr-1 inline" /> activo</>
                                   ) : (
-                                    <><WifiOff className="w-3 h-3 mr-1 inline" /> Desconectado</>
+                                    <><WifiOff className="w-3 h-3 mr-1 inline" /> desconectado</>
                                   )}
                                 </span>
                               </td>
                               <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {colab.ultimaConexion
-                                  ? new Date(colab.ultimaConexion).toLocaleString('es-MX', {
+                                {colab.ultimaConexion || currentConnectionState === 'conectado'
+                                  ? new Date(colab.ultimaConexion || Date.now()).toLocaleString('es-MX', {
+
                                     dateStyle: 'short',
                                     timeStyle: 'short'
                                   })
@@ -3409,7 +3340,7 @@ const InventarioDetalleNuevo = () => {
 
                       return (
                         <div
-                          key={temporalId || index}
+                          key={`producto-revisar-${temporalId}-${index}`}
                           className="border border-gray-200 rounded-lg p-4 hover:border-purple-300 transition-colors"
                         >
                           <div className="flex items-start justify-between">

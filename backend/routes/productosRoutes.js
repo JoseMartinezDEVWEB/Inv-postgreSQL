@@ -83,6 +83,7 @@ router.get('/', authenticateToken, async (req, res) => {
 const getProductosGenerales = async (req, res) => {
     try {
         const { limite = 50, pagina = 1, buscar = '', categoria = '' } = req.query;
+        console.log(`🔍 API: Obtener productos generales - Pág: ${pagina}, Límite: ${limite}`);
         const offset = (pagina - 1) * limite;
 
         const where = { activo: true };
