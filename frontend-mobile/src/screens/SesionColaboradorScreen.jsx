@@ -15,7 +15,7 @@ import {
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
-import { BarCodeScanner } from 'expo-barcode-scanner'
+import { CameraView, Camera } from 'expo-camera'
 import { productosApi, solicitudesConexionApi } from '../services/api'
 import localDb from '../services/localDb'
 import NetInfo from '@react-native-community/netinfo'
@@ -44,6 +44,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
   const [envioTiempoReal, setEnvioTiempoReal] = useState(true) // Checkbox para envío en tiempo real
 
   const [showScanner, setShowScanner] = useState(false)
+  const [flashOn, setFlashOn] = useState(false)
   const [modalBuscar, setModalBuscar] = useState(false)
   const [modalManual, setModalManual] = useState(false)
   const [modalEditar, setModalEditar] = useState(false)
@@ -217,11 +218,11 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       }
     })
 
-    const getBarCodeScannerPermissions = async () => {
-      const { status } = await BarCodeScanner.requestPermissionsAsync()
+    const getCameraPermissions = async () => {
+      const { status } = await Camera.requestCameraPermissionsAsync()
       setHasPermission(status === 'granted')
     }
-    getBarCodeScannerPermissions()
+    getCameraPermissions()
 
     // Escuchar evento de sincronización de inventario desde el admin
     const handleSendInventory = async (data) => {
@@ -1191,16 +1192,27 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       {showScanner && hasPermission && (
         <Modal visible={showScanner} animationType="slide">
           <View style={styles.scannerContainer}>
-            <BarCodeScanner
-              onBarCodeScanned={handleBarCodeScanned}
+            <CameraView
+              onBarcodeScanned={handleBarCodeScanned}
               style={StyleSheet.absoluteFillObject}
+              enableTorch={flashOn}
             />
             <View style={styles.scannerOverlay}>
               <TouchableOpacity
                 style={styles.scannerClose}
-                onPress={() => setShowScanner(false)}
+                onPress={() => { setShowScanner(false); setFlashOn(false); }}
               >
                 <Ionicons name="close" size={28} color="#fff" />
+              </TouchableOpacity>
+              {/* Botón de Flash */}
+              <TouchableOpacity
+                style={[styles.flashToggleBtn, flashOn && styles.flashToggleBtnActive]}
+                onPress={() => setFlashOn(prev => !prev)}
+              >
+                <Ionicons name={flashOn ? 'flash' : 'flash-off'} size={24} color={flashOn ? '#fbbf24' : '#fff'} />
+                <Text style={[styles.flashToggleText, flashOn && { color: '#fbbf24' }]}>
+                  {flashOn ? 'Flash ON' : 'Flash OFF'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2518,6 +2530,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#94a3b8',
     marginTop: 8,
+  },
+  // Estilos para botón de flash en escáner
+  flashToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
+    borderRadius: 25,
+    paddingVertical: 10,
+    paddingHorizontal: 22,
+    marginTop: 20,
+    gap: 8,
+  },
+  flashToggleBtnActive: {
+    backgroundColor: 'rgba(251,191,36,0.15)',
+    borderColor: '#fbbf24',
+  },
+  flashToggleText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 15,
   },
 })
 

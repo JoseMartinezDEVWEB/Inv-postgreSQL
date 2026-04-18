@@ -104,10 +104,20 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   const getParserEstado = async () => {
     try {
-      const resp = await api.get('/clientes-negocios/importar-pdf/estado', { headers: { 'X-Client-Type': 'web' } })
+      const resp = await api.get('/clientes-negocios/importar-pdf/estado', { 
+        headers: { 'X-Client-Type': 'web' },
+        timeout: 5000 // Timeout corto para el preflight
+      })
       return resp?.data?.datos || { ready: false }
-    } catch (_) {
-      return { ready: false }
+    } catch (err) {
+      console.warn('⚠️ Error al verificar estado del parser:', err.message)
+      // Si el error es 404, puede que la ruta haya cambiado o el servidor esté desactualizado
+      if (err.response?.status === 404) {
+        console.error('❌ Ruta de estado no encontrada (404). Verifique la configuración del backend.')
+        // En este caso, asumimos ready: true pero registramos el error para depuración
+        return { ready: true, warning: 'Endpoint ignore 404' }
+      }
+      return { ready: false, error: err.message }
     }
   }
   const ensureServidorListo = async () => {
@@ -165,7 +175,7 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
 
       // Realizar petición
       const response = await api.post(
-        `/clientes-negocios/${cliente._id}/importar-pdf`,
+        `/clientes-negocios/${cliente.id}/importar-pdf`,
         formData,
         {
           headers: {
@@ -202,7 +212,7 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
         setResultado(response.data.datos)
         setPasoActual(3)
         queryClient.invalidateQueries('clientes')
-        queryClient.invalidateQueries(['sesiones', cliente._id])
+        queryClient.invalidateQueries(['sesiones', cliente.id])
       } else {
         throw new Error(response.data.mensaje || 'Error al procesar PDFs')
       }
@@ -247,7 +257,7 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
 
   const handleGuardarCambios = async () => {
     try {
-      const id = resultado?.sesion?._id
+      const id = resultado?.sesion?.id
       if (!id) return
       setGuardando(true)
       const resp = await api.patch(`/sesiones-inventario/${id}/completar`)
@@ -257,7 +267,7 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
           ...prev,
           sesion: resp.data?.datos?.sesion || prev?.sesion
         }))
-        queryClient.invalidateQueries(['sesiones', cliente._id])
+        queryClient.invalidateQueries(['sesiones', cliente.id])
       } else {
         throw new Error(resp.data?.mensaje || 'No se pudo guardar la sesión')
       }
@@ -668,13 +678,13 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
             <Button
               variant="outline"
               onClick={() => {
-                const id = resultado?.sesion?._id ?? resultado?.sesion?.id
+                const id = resultado?.sesion?.id
                 if (id) {
                   onClose?.()
                   navigate(`/inventarios/${id}`)
                 }
               }}
-              disabled={!(resultado?.sesion?._id ?? resultado?.sesion?.id)}
+              disabled={!resultado?.sesion?.id}
             >
               Ver sesión
             </Button>

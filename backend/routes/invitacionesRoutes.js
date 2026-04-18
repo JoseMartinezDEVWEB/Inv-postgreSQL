@@ -1,10 +1,12 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../models');
-const { authenticateToken } = require('./authRoutes');
+const { authenticateToken, authorizeRole } = require('./authRoutes');
 
 const router = express.Router();
 let io; // Referencia a Socket.io que se inyectará desde server.js
+
+console.log('✅ [Backend] Invitaciones router cargado con soporte para GET /qr/:id');
 
 // Función para inyectar io
 router.setIo = (socketIoInstance) => {
@@ -49,7 +51,6 @@ router.post('/qr', authenticateToken, async (req, res) => {
     try {
         const { rol = 'colaborador', nombre, email, expiraEnMinutos = 1440 } = req.body;
 
-        // El puerto se debe obtener del env o req
         const PORT = process.env.PORT || 4000;
 
         if (req.user.rol === 'colaborador') {
@@ -69,14 +70,27 @@ router.post('/qr', authenticateToken, async (req, res) => {
             expiraEn: new Date(Date.now() + expiraEnMinutos * 60 * 1000),
             estado: 'pendiente'
         });
-        // Derivar IP dinámicamente
         const serverIp = process.env.APP_HOST_URL || req.hostname || '127.0.0.1';
 
         const qrPayload = JSON.stringify({
+            tipo: 'invitacion_j4_v2',
+            url: `http://${serverIp}:${PORT}`,
             invitacionId: invitacion.uuid,
             codigo: codigoNumerico,
-            serverIp: serverIp,
-            port: PORT
+            rol: rol
+        });
+
+        await db.AuditoriaMovimiento.create({
+            usuarioId: req.user.id,
+            tipoMovimiento: 'INVITACION_CREADA',
+            detalles: { 
+                action: 'invite_create',
+                invitacionId: invitacion.id,
+                rol: rol,
+                email: email
+            },
+            fecha: new Date(),
+            notas: `Nueva invitación para colaborador (${rol}) generada por ${req.user.nombre}`
         });
 
         res.status(201).json({
@@ -88,6 +102,44 @@ router.post('/qr', authenticateToken, async (req, res) => {
         });
     } catch (error) {
         res.status(500).json({ mensaje: 'Error al generar QR: ' + error.message });
+    }
+});
+
+router.get('/qr/:id', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        let invitacion;
+
+        if (id && id.length > 20) {
+            invitacion = await db.Invitacion.findOne({ where: { uuid: id } });
+        } else if (id) {
+            invitacion = await db.Invitacion.findByPk(id);
+        }
+
+        if (!invitacion) {
+            return res.status(404).json({ mensaje: 'Invitación no encontrada' });
+        }
+
+        const PORT = process.env.PORT || 4000;
+        const serverIp = process.env.APP_HOST_URL || req.hostname || '127.0.0.1';
+
+        const qrPayload = JSON.stringify({
+            tipo: 'invitacion_j4_v2',
+            url: `http://${serverIp}:${PORT}`,
+            invitacionId: invitacion.uuid,
+            codigo: invitacion.codigoNumerico,
+            rol: invitacion.rol
+        });
+
+        res.json({
+            exito: true,
+            datos: {
+                ...invitacion.toJSON(),
+                qrDataUrl: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrPayload)}`
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al obtener QR: ' + error.message });
     }
 });
 
@@ -109,8 +161,6 @@ router.delete('/:id', authenticateToken, async (req, res) => {
         res.status(500).json({ mensaje: 'Error al eliminar invitación: ' + error.message });
     }
 });
-
-// --- ENDPOINTS DE SOLICITUDES DE CONEXIÓN ---
 
 router.post('/solicitar', async (req, res) => {
     try {
@@ -176,7 +226,7 @@ router.get('/pendientes', authenticateToken, async (req, res) => {
     try {
         const userRol = (req.user.rol || '').toLowerCase();
         const isAdmin = userRol === 'administrador';
-        const isManager = userRol === 'contable' || userRol === 'contable';
+        const isManager = userRol === 'contable';
 
         if (!isAdmin && !isManager) {
             return res.status(403).json({ mensaje: 'No tienes permisos para ver solicitudes' });
@@ -215,7 +265,7 @@ router.get('/conectados', authenticateToken, async (req, res) => {
     try {
         const userRol = (req.user.rol || '').toLowerCase();
         const isAdmin = userRol === 'administrador';
-        const isManager = userRol === 'contable' || userRol === 'contable';
+        const isManager = userRol === 'contable';
 
         if (!isAdmin && !isManager) {
             return res.status(403).json({ mensaje: 'No tienes permisos para ver conectados' });
@@ -233,7 +283,7 @@ router.get('/conectados', authenticateToken, async (req, res) => {
                 { model: db.Invitacion, attributes: ['id', 'nombre', 'email'] }
             ],
             order: [
-                ['estadoConexion', 'ASC'], // 'conectado' viene antes que 'desconectado' alfabéticamente
+                ['estadoConexion', 'ASC'],
                 ['ultimoPing', 'DESC'],
                 ['updatedAt', 'DESC']
             ]
@@ -303,6 +353,19 @@ router.post('/:id/aceptar', authenticateToken, async (req, res) => {
         }
 
         await solicitud.update(updateData);
+
+        await db.AuditoriaMovimiento.create({
+            usuarioId: req.user.id,
+            tipoMovimiento: 'COLABORADOR_ACEPTADO',
+            detalles: { 
+                action: 'collab_accept',
+                solicitudId: solicitud.id,
+                sesionInventarioId,
+                colaboradorId: updateData.colaboradorId
+            },
+            fecha: new Date(),
+            notas: `Solicitud de conexión aceptada para sesión ${sesionInventarioId}`
+        });
 
         if (io) {
             io.emit(`estado-solicitud-actualizado-${solicitud.id}`, {
@@ -495,10 +558,9 @@ router.post('/:id/sincronizar', authenticateToken, async (req, res) => {
 
 /**
  * Endpoint de sincronización masiva para colaboradores
- * Procesa múltiples productos en una sola transacción
+ * Procesa múltiples productos en una sola transacción gestionada
  */
 router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => {
-    const t = await db.sequelize.transaction();
     try {
         const { id } = req.params;
         const { sesionInventarioId, productos } = req.body;
@@ -507,149 +569,164 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
             return res.status(400).json({ mensaje: 'Datos incompletos para la sincronización' });
         }
 
-        // 1. Resolver solicitud (soporte UUID e ID)
-        let solicitud;
-        if (id.length > 20) {
-            solicitud = await db.SolicitudConexion.findOne({ where: { uuid: id }, transaction: t });
-        } else {
-            solicitud = await db.SolicitudConexion.findByPk(id, { transaction: t });
-        }
+        const resultado = await db.sequelize.transaction(async (t) => {
+            // 1. Resolver solicitud (soporte UUID e ID)
+            let solicitud;
+            if (id.length > 20) {
+                solicitud = await db.SolicitudConexion.findOne({ where: { uuid: id }, transaction: t });
+            } else {
+                solicitud = await db.SolicitudConexion.findByPk(id, { transaction: t });
+            }
 
-        if (!solicitud) {
-            await t.rollback();
-            return res.status(404).json({ mensaje: 'Solicitud de conexión no encontrada' });
-        }
+            if (!solicitud) throw new Error('SOLICITUD_NOT_FOUND');
 
-        // 2. Obtener sesión y cliente
-        const sesion = await db.SesionInventario.findByPk(sesionInventarioId, { transaction: t });
-        if (!sesion) {
-            await t.rollback();
-            return res.status(404).json({ mensaje: 'Sesión de inventario no encontrada' });
-        }
-        const clienteId = sesion.clienteNegocioId;
+            // 2. Obtener sesión
+            const sesion = await db.SesionInventario.findByPk(sesionInventarioId, { transaction: t });
+            if (!sesion) throw new Error('SESION_NOT_FOUND');
 
-        console.log(`🚀 Iniciando sincronización masiva para ${productos.length} productos. Colaborador: ${req.user.nombre}`);
+            console.log(`🚀 Iniciando sincronización masiva para ${productos.length} productos. Colaborador: ${req.user.nombre}`);
 
-        const temporalIdsExitosos = [];
+            const temporalIdsExitosos = [];
 
-        // 3. Procesar cada producto
-        for (const item of productos) {
-            try {
-                const { temporalId, productoData } = item;
-                if (!productoData) continue;
+            // 3. Procesar cada producto
+            for (const item of productos) {
+                try {
+                    const { temporalId, productoData } = item;
+                    if (!productoData) continue;
 
-                const { nombre, cantidad, costo, unidad, categoria, sku, codigoBarras } = productoData;
-                const finalCantidad = Number(cantidad) || 1;
-                const finalCosto = Number(costo) || 0;
+                    const { nombre, cantidad, costo, unidad, categoria, sku, codigoBarras } = productoData;
+                    const finalCantidad = Number(cantidad) || 1;
+                    const finalCosto = Number(costo) || 0;
 
-                // A. Buscar/Crear en ProductoGeneral
-                // Usar solo el nombre para evitar falsos positivos con código de barras vacío
-                let productoGeneral = await db.ProductoGeneral.findOne({
-                    where: { nombre: nombre.trim() },
-                    transaction: t
-                });
-
-                if (!productoGeneral && (codigoBarras || sku)) {
-                    productoGeneral = await db.ProductoGeneral.findOne({
-                        where: { codigoBarras: codigoBarras || sku },
+                    // A. Buscar/Crear en ProductoGeneral
+                    let productoGeneral = await db.ProductoGeneral.findOne({
+                        where: { nombre: nombre.trim() },
                         transaction: t
                     });
+
+                    if (!productoGeneral && (codigoBarras || sku)) {
+                        productoGeneral = await db.ProductoGeneral.findOne({
+                            where: { codigoBarras: codigoBarras || sku },
+                            transaction: t
+                        });
+                    }
+
+                    if (!productoGeneral) {
+                        productoGeneral = await db.ProductoGeneral.create({
+                            nombre: nombre.trim(),
+                            costoBase: finalCosto,
+                            codigoBarras: codigoBarras || sku || '',
+                            unidad: unidad || 'unidad',
+                            categoria: categoria || 'General',
+                            descripcion: 'Sincronizado desde colaborador',
+                            activo: true,
+                            tipoCreacion: 'colaborador'
+                        }, { transaction: t });
+                    }
+
+                    // B. Buscar/Crear en Producto
+                    let productoCliente = await db.Producto.findOne({
+                        where: { nombre: nombre.trim() },
+                        transaction: t
+                    });
+
+                    if (!productoCliente && (codigoBarras || sku)) {
+                        productoCliente = await db.Producto.findOne({
+                            where: { sku: codigoBarras || sku },
+                            transaction: t
+                        });
+                    }
+
+                    if (!productoCliente) {
+                        productoCliente = await db.Producto.create({
+                            nombre: nombre.trim(),
+                            costo: finalCosto,
+                            sku: codigoBarras || sku || '',
+                            unidad: unidad || 'unidad',
+                            activo: true
+                        }, { transaction: t });
+                    }
+
+                    // C. Crear o actualizar registro en ProductoContado
+                    const [productoContado, created] = await db.ProductoContado.findOrCreate({
+                        where: {
+                            sesionInventarioId: sesionInventarioId,
+                            nombreProducto: nombre.trim()
+                        },
+                        defaults: {
+                            sesionInventarioId: sesionInventarioId,
+                            productoClienteId: productoCliente.id,
+                            cantidadContada: finalCantidad,
+                            costoProducto: finalCosto,
+                            nombreProducto: nombre.trim(),
+                            skuProducto: codigoBarras || sku || '',
+                            valorTotal: finalCantidad * finalCosto,
+                            agregadoPorId: req.user.id
+                        },
+                        transaction: t
+                    });
+
+                    if (!created) {
+                        const nuevaCantidad = Number(productoContado.cantidadContada) + finalCantidad;
+                        await productoContado.update({
+                            cantidadContada: nuevaCantidad,
+                            costoProducto: finalCosto,
+                            valorTotal: nuevaCantidad * finalCosto
+                        }, { transaction: t });
+                    }
+
+                    temporalIdsExitosos.push(temporalId);
+                } catch (prodError) {
+                    console.error(`⚠️ Error al sincronizar producto individual:`, prodError.message);
                 }
-
-                if (!productoGeneral) {
-                    productoGeneral = await db.ProductoGeneral.create({
-                        nombre: nombre.trim(),
-                        costoBase: finalCosto,
-                        codigoBarras: codigoBarras || sku || '',
-                        unidad: unidad || 'unidad',
-                        categoria: categoria || 'General',
-                        descripcion: 'Sincronizado desde colaborador',
-                        activo: true,
-                        tipoCreacion: 'colaborador'
-                    }, { transaction: t });
-                }
-
-                // B. Buscar/Crear en Producto (tabla general, no tiene clienteNegocioId)
-                let productoCliente = await db.Producto.findOne({
-                    where: { nombre: nombre.trim() },
-                    transaction: t
-                });
-
-                if (!productoCliente) {
-                    productoCliente = await db.Producto.create({
-                        nombre: nombre.trim(),
-                        costo: finalCosto,
-                        unidad: unidad || 'unidad',
-                        categoria: categoria || 'General',
-                        sku: sku || codigoBarras || '',
-                        activo: true
-                    }, { transaction: t });
-                }
-
-                // C. Agregar/Actualizar en la Sesión (ProductoContado)
-                // Usar la clave correcta: productoClienteId (FK en ProductoContado)
-                const [productoContado, created] = await db.ProductoContado.findOrCreate({
-                    where: {
-                        sesionInventarioId: sesionInventarioId,
-                        nombreProducto: nombre.trim()  // buscar por nombre para evitar duplicados
-                    },
-                    defaults: {
-                        sesionInventarioId: sesionInventarioId,
-                        productoClienteId: productoCliente.id,
-                        cantidadContada: finalCantidad,
-                        costoProducto: finalCosto,
-                        nombreProducto: nombre.trim(),
-                        skuProducto: sku || codigoBarras || '',
-                        valorTotal: finalCantidad * finalCosto
-                    },
-                    transaction: t
-                });
-
-                if (!created) {
-                    const nuevaCantidad = Number(productoContado.cantidadContada) + finalCantidad;
-                    await productoContado.update({
-                        cantidadContada: nuevaCantidad,
-                        costoProducto: finalCosto,
-                        valorTotal: nuevaCantidad * finalCosto
-                    }, { transaction: t });
-                }
-
-                temporalIdsExitosos.push(temporalId);
-            } catch (prodErr) {
-                console.error(`❌ Error procesando producto ${item.productoData?.nombre}:`, prodErr.message);
-                // Continuamos con el siguiente producto del lote
             }
+
+            // 4. Marcar en la solicitud como sincronizados
+            const metadata = solicitud.metadata || {};
+            const existentes = metadata.productosOffline || [];
+            const actualizados = existentes.map(prod => {
+                const pId = prod.id || prod.temporalId;
+                if (temporalIdsExitosos.includes(pId)) {
+                    return { ...prod, sincronizado: true };
+                }
+                return prod;
+            });
+
+            await solicitud.update({
+                metadata: { ...metadata, productosOffline: actualizados }
+            }, { transaction: t });
+
+            // 5. Auditoría
+            await db.AuditoriaMovimiento.create({
+                usuarioId: req.user.id,
+                tipoMovimiento: 'SINCRONIZACION_MOVIL',
+                detalles: { 
+                    action: 'batch_sync',
+                    solicitudId: solicitud.id,
+                    sesionInventarioId,
+                    totalProductos: temporalIdsExitosos.length
+                },
+                fecha: new Date(),
+                notas: `Sincronización masiva de ${temporalIdsExitosos.length} productos`
+            }, { transaction: t });
+
+            return {
+                exito: true,
+                mensaje: `Sincronizados ${temporalIdsExitosos.length} de ${productos.length} productos`,
+                procesados: temporalIdsExitosos.length,
+                sesionInventarioId
+            };
+        });
+
+        if (io && resultado.exito && resultado.sesionInventarioId) {
+            io.emit('update_session_inventory', { sesionId: resultado.sesionInventarioId, timestamp: Date.now() });
         }
-
-        // 4. Marcar como sincronizados en el metadata de la solicitud
-        const metadata = solicitud.metadata || {};
-        const existentes = metadata.productosOffline || [];
-        const actualizados = existentes.map(prod => {
-            // Sincronizar tanto si el ID coincide como si está en nuestra lista de exitosos
-            if (temporalIdsExitosos.includes(prod.id) || temporalIdsExitosos.includes(prod.temporalId)) {
-                return { ...prod, sincronizado: true };
-            }
-            return prod;
-        });
-
-        await solicitud.update({
-            metadata: {
-                ...metadata,
-                productosOffline: actualizados
-            }
-        }, { transaction: t });
-
-        await t.commit();
-        res.json({ 
-            success: true, 
-            mensaje: `Sincronización exitosa: ${temporalIdsExitosos.length} productos procesados`,
-            count: temporalIdsExitosos.length
-        });
-
+        res.json(resultado);
     } catch (error) {
-        if (t) await t.rollback();
-        console.error('💥 Error en batch-sync-productos:', error);
-        res.status(500).json({ mensaje: 'Error interno del servidor: ' + error.message });
+        console.error('❌ Error Batch Sync:', error);
+        if (error.message === 'SOLICITUD_NOT_FOUND') return res.status(404).json({ mensaje: 'Solicitud de conexión no encontrada' });
+        if (error.message === 'SESION_NOT_FOUND') return res.status(404).json({ mensaje: 'Sesión de inventario no encontrada' });
+        res.status(500).json({ mensaje: error.message });
     }
 });
 

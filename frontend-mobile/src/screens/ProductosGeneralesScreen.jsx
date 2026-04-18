@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, Alert } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,12 +19,12 @@ const SkeletonCard = () => (
   </View>
 );
 
-// Tarjeta para mostrar cada producto
-const ProductCard = ({ item, onEdit }) => (
+// Tarjeta para mostrar cada producto - MEMOIZADA
+const ProductCard = memo(({ item, onEdit }) => (
   <TouchableOpacity style={styles.productCard} onPress={() => onEdit(item)}>
     <View style={styles.cardHeader}>
       <Text style={styles.productName} numberOfLines={2}>{item.nombre}</Text>
-      <Text style={styles.productPrice}>${(item.precioVenta || 0).toFixed(2)}</Text>
+      <Text style={styles.productPrice}>${(item.precioVenta || item.precio || 0).toFixed(2)}</Text>
     </View>
     <View style={styles.cardBody}>
       <Text style={styles.productDescription} numberOfLines={3}>{item.descripcion || 'Sin descripción'}</Text>
@@ -32,15 +32,15 @@ const ProductCard = ({ item, onEdit }) => (
     <View style={styles.cardFooter}>
       <View style={styles.footerItem}>
         <Ionicons name="barcode-outline" size={16} color="#64748b" />
-        <Text style={styles.footerText}>{item.codigoBarras || 'N/A'}</Text>
+        <Text style={styles.footerText}>{item.codigoBarras || item.sku || 'N/A'}</Text>
       </View>
       <View style={styles.footerItem}>
         <Ionicons name="cube-outline" size={16} color="#64748b" />
-        <Text style={styles.footerText}>Stock: {item.stock}</Text>
+        <Text style={styles.footerText}>Stock: {item.stock || 0}</Text>
       </View>
     </View>
   </TouchableOpacity>
-);
+));
 
 const ProductosGeneralesScreen = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -267,15 +267,24 @@ const ProductosGeneralesScreen = () => {
       );
     }
 
+    const renderItem = useCallback(({ item }) => (
+      <ProductCard item={item} onEdit={handleOpenModal} />
+    ), [handleOpenModal]);
+
     return (
       <FlatList
         data={data?.productos || []}
-        renderItem={({ item }) => <ProductCard item={item} onEdit={handleOpenModal} />}
+        renderItem={renderItem}
         keyExtractor={(item, index) => item._id || item.id || `producto-${index}`}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
         onRefresh={refetch}
         refreshing={isLoading}
+        // Props de optimización
+        initialNumToRender={10}
+        windowSize={5}
+        maxToRenderPerBatch={5}
+        removeClippedSubviews={true}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="cube-outline" size={64} color="#cbd5e1" />

@@ -11,10 +11,14 @@ const sequelize = new Sequelize(
         dialect: 'postgres',
         logging: false,
         pool: {
-            max: 5,
-            min: 0,
-            acquire: 30000,
-            idle: 10000
+            max: 20,          // Aumentado de 5 a 20 para soportar alta concurrencia
+            min: 2,           // Mantener mínimo 2 conexiones calientes
+            acquire: 60000,   // Tiempo max para obtener una conexión del pool
+            idle: 15000,      // Tiempo antes de liberar una conexión inactiva
+            evict: 5000       // Intervalo para remover conexiones muertas
+        },
+        retry: {
+            max: 3            // Reintentar hasta 3 veces en caso de error de conexión
         }
     }
 );
@@ -33,6 +37,7 @@ db.SesionInventario = require('./SesionInventario')(sequelize, Sequelize);
 db.ProductoContado = require('./ProductoContado')(sequelize, Sequelize);
 db.Invitacion = require('./Invitacion')(sequelize, Sequelize);
 db.SolicitudConexion = require('./SolicitudConexion')(sequelize, Sequelize);
+db.AuditoriaMovimiento = require('./AuditoriaMovimiento')(sequelize, Sequelize);
 
 // Define associations
 
@@ -50,9 +55,12 @@ db.SesionInventario.belongsTo(db.Usuario, { foreignKey: 'contadorId' });
 db.ClienteNegocio.hasMany(db.SesionInventario, { foreignKey: 'clienteNegocioId' });
 db.SesionInventario.belongsTo(db.ClienteNegocio, { foreignKey: 'clienteNegocioId' });
 
+db.ClienteNegocio.hasMany(db.Producto, { foreignKey: 'clienteNegocioId' });
+db.Producto.belongsTo(db.ClienteNegocio, { foreignKey: 'clienteNegocioId' });
+
 // Sesiones y Productos Contados
-db.SesionInventario.hasMany(db.ProductoContado, { foreignKey: 'sesionInventarioId' });
-db.ProductoContado.belongsTo(db.SesionInventario, { foreignKey: 'sesionInventarioId' });
+db.SesionInventario.hasMany(db.ProductoContado, { foreignKey: 'sesionInventarioId', as: 'productosContados' });
+db.ProductoContado.belongsTo(db.SesionInventario, { foreignKey: 'sesionInventarioId', as: 'sesion' });
 
 db.Producto.hasMany(db.Inventario, { foreignKey: 'productoId' });
 db.Inventario.belongsTo(db.Producto, { foreignKey: 'productoId' });
@@ -73,5 +81,12 @@ db.SolicitudConexion.belongsTo(db.SesionInventario, { foreignKey: 'sesionInventa
 
 db.Invitacion.hasMany(db.SolicitudConexion, { foreignKey: 'invitacionId' });
 db.SolicitudConexion.belongsTo(db.Invitacion, { foreignKey: 'invitacionId' });
+
+// Auditoría
+db.Usuario.hasMany(db.AuditoriaMovimiento, { foreignKey: 'usuarioId' });
+db.AuditoriaMovimiento.belongsTo(db.Usuario, { foreignKey: 'usuarioId' });
+
+db.ProductoGeneral.hasMany(db.AuditoriaMovimiento, { foreignKey: 'productoGeneralId' });
+db.AuditoriaMovimiento.belongsTo(db.ProductoGeneral, { foreignKey: 'productoGeneralId' });
 
 module.exports = db;

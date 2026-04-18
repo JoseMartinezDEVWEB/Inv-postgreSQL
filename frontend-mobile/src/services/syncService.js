@@ -117,6 +117,7 @@ class SyncService {
     }
 
     this.isProcessing = true
+    this.notificarListeners({ tipo: 'sync_start', direction: 'push' })
 
     try {
       // 1. Verificar salud del backend (silencioso)
@@ -193,6 +194,7 @@ class SyncService {
         // Solo loggear errores críticos del servidor (500+)
         console.error('❌ Error crítico en sincronización:', error.message)
       }
+      this.notificarListeners({ tipo: 'sync_error', error: error.message })
     } finally {
       this.isProcessing = false
     }
@@ -228,6 +230,7 @@ class SyncService {
     }
 
     this.isPulling = true
+    this.notificarListeners({ tipo: 'sync_start', direction: 'pull' })
 
     try {
       const response = await api.get('/sync/pull', {
@@ -279,9 +282,8 @@ class SyncService {
       // Manejar error 401 silenciosamente
       if (error.response?.status === 401) {
         this.last401Timestamp = Date.now()
-        // Silencioso - pausar PULL cuando hay error de autenticación
       }
-      // No loggear otros errores de pull para no saturar la consola
+      this.notificarListeners({ tipo: 'sync_error', direction: 'pull', error: error.message })
     } finally {
       this.isPulling = false
     }

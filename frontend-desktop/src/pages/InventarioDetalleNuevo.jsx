@@ -8,7 +8,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from 'react-query'
 import { sesionesApi, productosApi, reportesApi, invitacionesApi, solicitudesConexionApi, handleApiError } from '../services/api'
 import logoInfocolmados from '../img/logo_transparent.png'
-import { ArrowLeft, Search, Trash2, Clock, TrendingUp, Users, CreditCard, Briefcase, PiggyBank, DollarSign, ShoppingCart, Barcode, X, Printer, FileText, Settings, TrendingDown, Wallet, Calculator, Calendar, Download, Share2, FileSpreadsheet, FileImage, UserMinus, Menu, Smartphone, QrCode, RefreshCw, Wifi, WifiOff, PieChart, Eye, CheckCircle, XCircle, Package, Edit3 } from 'lucide-react'
+import { ArrowLeft, Search, Trash2, Clock, Pause, Play, TrendingUp, Users, CreditCard, Briefcase, PiggyBank, DollarSign, ShoppingCart, Barcode, X, Printer, FileText, Settings, TrendingDown, Wallet, Calculator, Calendar, Download, Share2, FileSpreadsheet, FileImage, UserMinus, Menu, Smartphone, QrCode, RefreshCw, Wifi, WifiOff, PieChart, Eye, CheckCircle, XCircle, Package, Edit3, UserCheck, UserX } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '../context/AuthContext'
 import { useSocket } from '../hooks/useSocket'
@@ -47,6 +47,7 @@ const highlightMatch = (text, term) => {
 }
 
 const InventarioDetalleNuevo = () => {
+  console.log('🚀 [UI] InventarioDetalleNuevo v2.1 loaded (Collaborator Management Dashboard)');
   // Obtener parámetros de la URL (ID de la sesión de inventario)
   const { id } = useParams()
   const navigate = useNavigate()
@@ -58,13 +59,86 @@ const InventarioDetalleNuevo = () => {
   const cantidadInputRef = useRef(null)
   const costoInputRef = useRef(null)
 
+  // -- COMPONENTE INTERNO PARA EL CRONÓMETRO (Optimización para evitar re-renders globales) --
+  const TimerDisplay = useMemo(() => ({ sesion, id }) => {
+    const [tiempo, setTiempo] = useState(0)
+
+    useEffect(() => {
+      if (!sesion) return
+      
+      const tick = () => {
+        const enMarcha = sesion.timerEnMarcha
+        const acumulado = Number(sesion.timerAcumuladoSegundos) || 0
+        let ultimoInicio = 0
+        
+        if (sesion.timerUltimoInicio) {
+          let fechaStr = sesion.timerUltimoInicio
+          if (fechaStr.includes(' ')) fechaStr = fechaStr.replace(' ', 'T')
+          if (!fechaStr.endsWith('Z')) fechaStr = fechaStr + 'Z'
+          
+          const fechaInicio = new Date(fechaStr)
+          if (!isNaN(fechaInicio.getTime())) ultimoInicio = fechaInicio.getTime()
+        }
+        
+        let segundos = acumulado
+        if (enMarcha && ultimoInicio > 0) {
+          const ahora = Date.now()
+          const diferencia = Math.floor((ahora - ultimoInicio) / 1000)
+          if (diferencia > 0) segundos += diferencia
+        }
+        
+        setTiempo(Math.max(0, segundos))
+      }
+      
+      tick()
+      const interval = setInterval(tick, 1000)
+      return () => clearInterval(interval)
+    }, [sesion?.timerEnMarcha, sesion?.timerUltimoInicio, sesion?.timerAcumuladoSegundos])
+
+    // Función para formatear tiempo
+    const format = (seg) => {
+      const s = Math.max(0, Math.floor(Number(seg) || 0))
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+    }
+
+    return (
+      <button
+        onClick={async (e) => {
+          e.stopPropagation();
+          try {
+            if (sesion?.timerEnMarcha) {
+              await sesionesApi.pauseTimer(id)
+              toast('⏸ Cronómetro pausado', { duration: 2000 })
+            } else {
+              await sesionesApi.resumeTimer(id)
+              toast('▶️ Cronómetro iniciado', { duration: 2000 })
+            }
+            if (typeof refetch === 'function') refetch()
+          } catch (err) {
+            console.error('Error cambiando estado del timer:', err)
+          }
+        }}
+        className="flex items-center space-x-2 bg-teal-500 hover:bg-teal-600 active:bg-teal-700 px-4 py-2 rounded text-white font-mono text-lg transition-colors cursor-pointer select-none"
+        title={sesion?.timerEnMarcha ? 'Pausar' : 'Iniciar'}
+      >
+        {sesion?.timerEnMarcha ? <Pause className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+        <span>{format(tiempo)}</span>
+      </button>
+    )
+  }, [id])
+  // ------------------------------------------------------------------------------------------
+
   // Estados para la gestión de productos y búsqueda
   const [codigoBarras, setCodigoBarras] = useState('')
+  const [isSearching, setIsSearching] = useState(false)
   const [nombreBusqueda, setNombreBusqueda] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [selectedProducto, setSelectedProducto] = useState(null)
   const [cantidad, setCantidad] = useState('')
   const [costo, setCosto] = useState('')
+
+
   // Estados para modales de salida y búsqueda
   const [showExitModal, setShowExitModal] = useState(false)
   const [showExitOptionsModal, setShowExitOptionsModal] = useState(false)
@@ -75,6 +149,7 @@ const InventarioDetalleNuevo = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [showZeroCostModal, setShowZeroCostModal] = useState(false)
+
   // Estados adicionales para productos con costo cero y actualizaciones
   const [zeroCostEdits, setZeroCostEdits] = useState({})
   const [showZeroCostProductsModal, setShowZeroCostProductsModal] = useState(false)
@@ -92,6 +167,8 @@ const InventarioDetalleNuevo = () => {
   const [colaboradoresConectados, setColaboradoresConectados] = useState([])
   const [invitaciones, setInvitaciones] = useState([])
   const [productosColaboradorPendientes, setProductosColaboradorPendientes] = useState({})
+  const [solicitudesPendientes, setSolicitudesPendientes] = useState([])
+  const [loadingSolicitudes, setLoadingSolicitudes] = useState(false)
 
   // Ordenar colaboradores para que los ACTIVOS aparezcan primero
   const colaboradoresOrdenados = useMemo(() => {
@@ -112,6 +189,7 @@ const InventarioDetalleNuevo = () => {
       return bTime - aTime;
     });
   }, [colaboradoresConectados, onlineColaboradoresDetalles]);
+
   const [showColaboradoresModal, setShowColaboradoresModal] = useState(false)
   const [showRevisarProductosModal, setShowRevisarProductosModal] = useState(false)
   const [colaboradorSeleccionado, setColaboradorSeleccionado] = useState(null)
@@ -124,17 +202,14 @@ const InventarioDetalleNuevo = () => {
   const [invSearchTerm, setInvSearchTerm] = useState('')
   const [editValues, setEditValues] = useState({})
   const [productNotFoundCode, setProductNotFoundCode] = useState('')
-  const [isSearching, setIsSearching] = useState(false)
-  // Estados para temporizador y modos de escaneo
-  const [tiempoTranscurrido, setTiempoTranscurrido] = useState(0)
-  const sesionTimerRef = useRef(null)
-  const timerIniciadoRef = useRef(false)
   const [isQuickScanMode, setIsQuickScanMode] = useState(false)
   const [quickScanProduct, setQuickScanProduct] = useState(null)
   const [multipleProductsModal, setMultipleProductsModal] = useState(false)
   const [pendingProducts, setPendingProducts] = useState([])
   const [lastScannedTime, setLastScannedTime] = useState(0)
   const [lastScannedProduct, setLastScannedProduct] = useState(null)
+
+
   // Estados para atajos de teclado
   const [shortcutsActive, setShortcutsActive] = useState(false)
   const [activeSection, setActiveSection] = useState(null) // 'financiera' | 'inventario' | null
@@ -318,10 +393,12 @@ const InventarioDetalleNuevo = () => {
     if (id) {
       cargarColaboradoresConectados()
       cargarInvitaciones()
+      cargarSolicitudesPendientes()
 
       const interval = setInterval(() => {
         cargarColaboradoresConectados()
         cargarInvitaciones()
+        cargarSolicitudesPendientes()
       }, 30000) // Aumentado de 10s a 30s para reducir solicitudes
 
       return () => clearInterval(interval)
@@ -359,22 +436,18 @@ const InventarioDetalleNuevo = () => {
       const colaboradores = response.data?.datos || []
       setColaboradoresConectados(colaboradores)
 
-      // Cargar productos offline de cada colaborador
+      // Cargar productos offline de cada colaborador en PARALELO para evitar bloqueos seriales
       const productosPorColaborador = {}
       let totalPendientes = 0
 
-      for (const colab of colaboradores) {
+      const promises = colaboradores.map(async (colab) => {
         try {
-          // Asegurar extracción correcta del ID del colaborador (inconsistencia SQLite vs backend)
           const colabId = colab.id || colab._id || (colab.colaborador && (colab.colaborador.id || colab.colaborador._id))
-
-          if (!colabId) {
-            console.error('⚠️ [SYNC] No se pudo obtener el ID del colaborador:', colab)
-            continue
-          }
+          if (!colabId) return
 
           const prodResponse = await solicitudesConexionApi.obtenerProductosOffline(colabId)
           const productosOffline = prodResponse.data?.datos || []
+          
           if (productosOffline.length > 0) {
             const productosTransformados = productosOffline
               .filter(p => !p.sincronizado)
@@ -390,6 +463,7 @@ const InventarioDetalleNuevo = () => {
                   codigoBarras: p.sku || p.codigoBarras || ''
                 }
               }))
+              
             if (productosTransformados.length > 0) {
               productosPorColaborador[colabId] = productosTransformados
               totalPendientes += productosTransformados.length
@@ -400,7 +474,9 @@ const InventarioDetalleNuevo = () => {
             console.error(`Error al cargar productos del colaborador:`, error)
           }
         }
-      }
+      })
+
+      await Promise.all(promises)
 
       setProductosColaboradorPendientes(productosPorColaborador)
 
@@ -417,6 +493,48 @@ const InventarioDetalleNuevo = () => {
         console.error('Error al cargar colaboradores:', error)
       }
       // Silenciar errores 401 (no autenticado)
+    }
+  }
+
+  const cargarSolicitudesPendientes = async () => {
+    const token = localStorage.getItem('accessToken')
+    if (!token) return
+
+    try {
+      setLoadingSolicitudes(true)
+      const response = await solicitudesConexionApi.listarPendientes()
+      setSolicitudesPendientes(response.data?.datos || [])
+    } catch (error) {
+      if (error.response?.status !== 401) {
+        console.error('Error al cargar solicitudes pendientes:', error)
+      }
+    } finally {
+      setLoadingSolicitudes(false)
+    }
+  }
+
+  const handleAceptarSolicitud = async (solicitudId) => {
+    try {
+      await solicitudesConexionApi.aceptar(solicitudId, id)
+      toast.success('Colaborador autorizado exitosamente')
+      cargarSolicitudesPendientes()
+      cargarColaboradoresConectados()
+    } catch (err) {
+      console.error('Error al aceptar solicitud:', err)
+      toast.error(err.response?.data?.mensaje || 'Error al aceptar solicitud')
+    }
+  }
+
+  const handleRechazarSolicitud = async (solicitudId) => {
+    if (!confirm('¿Estás seguro de rechazar esta solicitud?')) return
+
+    try {
+      await solicitudesConexionApi.rechazar(solicitudId)
+      toast.success('Solicitud rechazada')
+      cargarSolicitudesPendientes()
+    } catch (err) {
+      console.error('Error al rechazar solicitud:', err)
+      toast.error(err.response?.data?.mensaje || 'Error al rechazar solicitud')
     }
   }
 
@@ -496,74 +614,7 @@ const InventarioDetalleNuevo = () => {
     }
   )
 
-  // Temporizador basado en cronómetro del backend
-  useEffect(() => {
-    if (!sesion) return
-    
-    // Actualizar la ref con los datos actuales de la sesión
-    sesionTimerRef.current = sesion
-    
-    console.log('⏱️ Timer useEffect - sesion actualizada:', {
-      timerEnMarcha: sesion?.timerEnMarcha,
-      timerAcumuladoSegundos: sesion?.timerAcumuladoSegundos,
-      timerUltimoInicio: sesion?.timerUltimoInicio
-    })
-    
-    const tick = () => {
-      const s = sesionTimerRef.current
-      if (!s) return
-      
-      const acumulado = Math.max(0, Number(s.timerAcumuladoSegundos || 0))
-      const enMarcha = Boolean(s.timerEnMarcha)
-      let ultimoInicio = 0
-      
-      // Validar y parsear la fecha de inicio
-      if (s.timerUltimoInicio) {
-        // Convertir formato SQLite 'YYYY-MM-DD HH:MM:SS' a ISO UTC 'YYYY-MM-DDTHH:MM:SSZ'
-        let fechaStr = s.timerUltimoInicio
-        if (fechaStr.includes(' ')) {
-          fechaStr = fechaStr.replace(' ', 'T')
-        }
-        // Agregar 'Z' para indicar que es UTC (SQLite CURRENT_TIMESTAMP es UTC)
-        if (!fechaStr.endsWith('Z')) {
-          fechaStr = fechaStr + 'Z'
-        }
-        const fechaInicio = new Date(fechaStr)
-        if (!isNaN(fechaInicio.getTime())) {
-          ultimoInicio = fechaInicio.getTime()
-        }
-      }
-      
-      let segundos = acumulado
-      if (enMarcha && ultimoInicio > 0) {
-        const ahora = Date.now()
-        const diferencia = Math.floor((ahora - ultimoInicio) / 1000)
-        console.log('⏱️ Tick - diferencia:', diferencia, 'ultimoInicio:', ultimoInicio, 'ahora:', ahora)
-        // Solo sumar si la diferencia es positiva (evitar problemas de reloj desincronizado)
-        if (diferencia > 0) {
-          segundos += diferencia
-        }
-      }
-      
-      // Asegurar que nunca sea negativo
-      segundos = Math.max(0, segundos)
-      setTiempoTranscurrido(segundos)
-    }
-    
-    tick()
-    const interval = setInterval(tick, 1000)
-    return () => clearInterval(interval)
-  }, [sesion, sesion?.timerEnMarcha, sesion?.timerUltimoInicio, sesion?.timerAcumuladoSegundos])
 
-  // Función para formatear tiempo en HH:MM:SS
-  const formatearTiempo = (segundos) => {
-    // Asegurar que sea un número válido y no negativo
-    const segs = Math.max(0, Math.floor(Number(segundos) || 0))
-    const horas = Math.floor(segs / 3600)
-    const minutos = Math.floor((segs % 3600) / 60)
-    const segundosFinal = segs % 60
-    return `${String(horas).padStart(2, '0')}:${String(minutos).padStart(2, '0')}:${String(segundosFinal).padStart(2, '0')}`
-  }
 
   // Mutaciones para agregar productos
   const addProductMutation = useMutation(
@@ -727,7 +778,9 @@ const InventarioDetalleNuevo = () => {
 
   // Función para abrir modal de revisión de productos de un colaborador
   const handleAbrirRevisarProductos = (colaborador) => {
-    const productos = productosColaboradorPendientes[colaborador._id] || []
+    // Soporte para PostgreSQL (id numérico) y MongoDB (_id)
+    const colabKey = colaborador.id || colaborador._id
+    const productos = productosColaboradorPendientes[colabKey] || []
     setColaboradorSeleccionado(colaborador)
     setProductosParaRevisar(productos)
 
@@ -1099,6 +1152,8 @@ const InventarioDetalleNuevo = () => {
               setLastScannedProduct(productoGeneral)
               setIsQuickScanMode(false)
               setQuickScanProduct(null)
+              // Forzar un refetch para asegurar sincronía
+              refetch()
             }
           }
         } else {
@@ -1136,16 +1191,19 @@ const InventarioDetalleNuevo = () => {
       try {
         // Cargar productos generales sin filtro de búsqueda
         const generalesResponse = await productosApi.getAllGenerales({
-          limite: 20,
+          limite: 50,
           pagina: 1,
           soloActivos: true
         })
 
-        // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-        const productosGenerales = generalesResponse.data?.datos?.productos ||
-          generalesResponse.data?.productos ||
-          []
+        // Backend PostgreSQL devuelve: { datos: [...], paginacion: {...} }
+        // donde datos es el array directamente (NO datos.productos)
+        const rawDatos = generalesResponse.data?.datos
+        const productosGenerales = Array.isArray(rawDatos)
+          ? rawDatos
+          : rawDatos?.productos || generalesResponse.data?.productos || []
 
+        console.log('📦 Productos generales cargados:', productosGenerales.length)
         setSearchResults(productosGenerales)
       } catch (error) {
         console.error('Error cargando productos generales:', error)
@@ -1156,92 +1214,41 @@ const InventarioDetalleNuevo = () => {
     }
 
     loadGeneralProducts()
-  }, [showSearchModal])
+  }, [showSearchModal, nombreBusqueda])
 
   // Buscar por nombre (modal) - cuando hay 3 o más caracteres
   useEffect(() => {
     const searchByName = async () => {
-      if (!showSearchModal || nombreBusqueda.length < 3) {
-        if (showSearchModal && nombreBusqueda.length < 3 && nombreBusqueda.length > 0) {
-          // Si hay texto pero menos de 3 caracteres, mantener productos generales
-          return
-        }
-        return
-      }
+      if (!showSearchModal || nombreBusqueda.length < 3) return
 
       setIsSearching(true)
       try {
-        // Buscar en productos generales con las primeras 3 letras
-        const searchTerm = nombreBusqueda.trim().substring(0, 3)
-        console.log('🔍 Buscando por nombre (primeras 3 letras):', searchTerm)
+        // Buscar en productos generales
+        const searchTerm = nombreBusqueda.trim()
+        console.log('🔍 Buscando por nombre:', searchTerm)
 
         const generalesResponse = await productosApi.getAllGenerales({
           buscar: searchTerm,
-          limite: 20,
+          limite: 100, // Aumentar límite para búsqueda
           pagina: 1,
           soloActivos: true
         })
 
-        // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-        const productosGenerales = generalesResponse.data?.datos?.productos ||
-          generalesResponse.data?.productos ||
-          []
+        // Backend PostgreSQL devuelve: { datos: [...], paginacion: {...} }
+        const rawDatos = generalesResponse.data?.datos
+        const productosGenerales = Array.isArray(rawDatos)
+          ? rawDatos
+          : rawDatos?.productos || generalesResponse.data?.productos || []
 
-        // Filtrar productos que empiecen con las primeras 3 letras (case insensitive)
-        const productosFiltrados = productosGenerales.filter(producto => {
-          const nombreProducto = (producto.nombre || '').toLowerCase()
-          const busqueda = nombreBusqueda.trim().toLowerCase()
-          return nombreProducto.startsWith(busqueda.substring(0, 3))
-        })
-
-        // También buscar en productos del cliente para productos ya agregados
-        let productosCliente = []
-        const clienteId = obtenerClienteId(sesion)
-        if (clienteId) {
-          try {
-            const clienteResponse = await productosApi.getByCliente(clienteId, {
-              buscar: searchTerm,
-              limite: 10,
-              pagina: 1,
-              soloActivos: true
-            })
-
-            // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-            productosCliente = clienteResponse.data?.datos?.productos ||
-              clienteResponse.data?.productos ||
-              []
-
-            // Filtrar también productos del cliente
-            const productosClienteFiltrados = productosCliente.filter(producto => {
-              const nombreProducto = (producto.nombre || '').toLowerCase()
-              const busqueda = nombreBusqueda.trim().toLowerCase()
-              return nombreProducto.startsWith(busqueda.substring(0, 3))
-            })
-            productosCliente = productosClienteFiltrados
-          } catch (clienteError) {
-            // Si falla, solo usar productos generales
-            console.log('No se pudieron cargar productos del cliente:', clienteError)
-          }
-        }
-
-        // Combinar resultados, priorizando productos del cliente
-        const todosProductos = [...productosCliente, ...productosFiltrados]
-        // Eliminar duplicados por nombre o ID
-        const productosUnicos = todosProductos.filter((producto, index, self) =>
-          index === self.findIndex((p) =>
-            (p.nombre === producto.nombre) ||
-            (p.id !== undefined && p.id === producto.id) ||
-            (p._id !== undefined && p._id === producto._id)
-          )
-        )
-
-        // Asegurar que todos tengan un ID consistente para el frontend
-        const productosProcesados = productosUnicos.map(p => ({
+        // Mapear y asegurar ID consistente
+        const productosProcesados = productosGenerales.map(p => ({
           ...p,
-          _id: p.id || p._id || p.productoId // Asegurar un ID para la key de React
+          _id: p.id || p._id || p.productoId,
+          nombre: p.nombre || 'Sin nombre'
         }))
 
-        setSearchResults(productosProcesados.slice(0, 20))
+        setSearchResults(productosProcesados)
+
       } catch (error) {
         console.error('Error buscando productos:', error)
         setSearchResults([])
@@ -1252,7 +1259,7 @@ const InventarioDetalleNuevo = () => {
 
     const debounce = setTimeout(searchByName, 300)
     return () => clearTimeout(debounce)
-  }, [nombreBusqueda, showSearchModal, sesion?.clienteNegocio?.id, sesion?.clienteNegocio?._id, sesion?.clienteNegocioId])
+  }, [nombreBusqueda, showSearchModal])
 
   const handleSelectProduct = (producto) => {
     // Asegurar que tenemos un ID (SQLite id vs MongoDB _id)
@@ -2079,7 +2086,7 @@ const InventarioDetalleNuevo = () => {
 
       contenido.productos = productosContados.map(p => ({
         nombre: p.nombreProducto || 'Sin nombre',
-        unidad: p.producto?.unidad || 'unidad',
+        unidad: p.unidadProducto || 'unidad',
         cantidad: p.cantidadContada || 0,
         costo: downloadData.incluirPrecios ? (Number(p.costoProducto) || 0) : null,
         total: downloadData.incluirPrecios ? ((Number(p.cantidadContada) || 0) * (Number(p.costoProducto) || 0)) : null
@@ -2451,6 +2458,23 @@ const InventarioDetalleNuevo = () => {
     }
   }, [id, sesion?.timerEnMarcha])
 
+  // Escuchar si hay alguna actualización masiva silenciosa (backend) a este inventario
+  const { on, off } = useSocket()
+  useEffect(() => {
+    const handleUpdate = (data) => {
+      // Si el evento afecta a esta sesión, la recargamos
+      if (data && String(data.sesionId) === String(id)) {
+        refetch() // Refresca en vivo!
+        toast.success("Inventario actualizado remotamente")
+      }
+    }
+    
+    if (on && off) {
+      on('update_session_inventory', handleUpdate)
+      return () => off('update_session_inventory', handleUpdate)
+    }
+  }, [id, on, off, refetch])
+
   // Debounce para evitar llamadas excesivas a la API
   const [pendingUpdates, setPendingUpdates] = useState({})
 
@@ -2474,13 +2498,13 @@ const InventarioDetalleNuevo = () => {
     {
       onMutate: async ({ productoId, field, value }) => {
         // Cancelar refetches salientes
-        await queryClient.cancelQueries(['sesion', id])
+        await queryClient.cancelQueries(['sesion-inventario', id])
 
         // Snapshot del valor anterior
-        const previousSesion = queryClient.getQueryData(['sesion', id])
+        const previousSesion = queryClient.getQueryData(['sesion-inventario', id])
 
         // Actualización optimista
-        queryClient.setQueryData(['sesion', id], old => {
+        queryClient.setQueryData(['sesion-inventario', id], old => {
           if (!old || !old.productosContados) return old
 
           const newProductos = old.productosContados.map(p => {
@@ -2488,7 +2512,7 @@ const InventarioDetalleNuevo = () => {
             // Aquí manipulamos el raw data del backend
             const pId = p.id || p._id || p.productoId
             if (String(pId) === String(productoId)) {
-              const newP = { ...p, [field]: value }
+              const newP = { ...p, [field]: value, updatedAt: new Date().toISOString() }
               // Recalculo ROBUSTO del total
               if (field === 'costoProducto' || field === 'cantidadContada') {
                 // Parseo seguro que maneja strings vacíos como 0 y evita NaN
@@ -2530,9 +2554,9 @@ const InventarioDetalleNuevo = () => {
         // ACTUALIZAR CACHE CON RESPUESTA DEL SERVER
         // Esto asegura que si el frontend calculó mal o falta algo, el server lo corrige INMEDIATAMENTE
         if (response?.data?.datos) {
-          queryClient.setQueryData(['sesion', id], response.data.datos)
+          queryClient.setQueryData(['sesion-inventario', id], response.data.datos)
         } else {
-          queryClient.invalidateQueries(['sesion', id])
+          queryClient.invalidateQueries(['sesion-inventario', id])
         }
 
         // Quitar de pendientes
@@ -2545,7 +2569,7 @@ const InventarioDetalleNuevo = () => {
       onError: (err, newTodo, context) => {
         // Revertir a estado anterior si falla
         if (context?.previousSesion) {
-          queryClient.setQueryData(['sesion', id], context.previousSesion)
+          queryClient.setQueryData(['sesion-inventario', id], context.previousSesion)
         }
         handleApiError(err)
       }
@@ -2581,7 +2605,7 @@ const InventarioDetalleNuevo = () => {
     // dependemos de que el parent o el input tenga su estado o actualicemos cache.
     // Vamos a actualizar cache queryClient directamente sin llamar API aun.
 
-    queryClient.setQueryData(['sesion', id], old => {
+    queryClient.setQueryData(['sesion-inventario', id], old => {
       if (!old || !old.productosContados) return old
 
       const newProductos = old.productosContados.map(p => {
@@ -2590,7 +2614,7 @@ const InventarioDetalleNuevo = () => {
         if (String(pId) === String(productoId)) {
           // Asegurar que el nuevo valor sea del tipo correcto para cálculos
           const val = field === 'nombreProducto' ? processedValue : (parseFloat(processedValue) || 0)
-          const newP = { ...p, [field]: val }
+          const newP = { ...p, [field]: val, updatedAt: new Date().toISOString() }
 
           // Recalculo ROBUSTO del total
           if (field === 'costoProducto' || field === 'cantidadContada') {
@@ -2702,8 +2726,9 @@ const InventarioDetalleNuevo = () => {
     return safeNumber(value, decimals).toFixed(decimals)
   }
 
-  const productosContados = Array.isArray(sesion?.productosContados)
-    ? sesion.productosContados
+  const arraySource = sesion?.productosContados || sesion?.productos || []
+  const productosContados = Array.isArray(arraySource)
+    ? arraySource
       .filter(p => p && typeof p === 'object') // Filtrar productos inválidos
       .map(p => ({
         ...p,
@@ -2713,12 +2738,15 @@ const InventarioDetalleNuevo = () => {
         nombreProducto: p?.nombreProducto || 'Sin nombre',
         // El productoId ya viene del backend como el ID del producto contado
         productoId: p?.productoId || p?.id || p?._id || '',
-        producto: p?.producto // mantener referencia original por si se necesita mostrar
+        producto: p?.producto, // mantener referencia original por si se necesita mostrar
+        updatedAt: p?.updatedAt || new Date(0).toISOString()
       }))
-    // NO hacer reverse() porque el backend ya ordena DESC (últimos primero)
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
     : []
 
-  const valorTotal = safeNumber(sesion?.totales?.valorTotalInventario, 2)
+  const valorTotal = productosContados.reduce((sum, p) => {
+    return sum + (safeNumber(p.cantidadContada, 2) * safeNumber(p.costoProducto, 2))
+  }, 0)
   const totalLineas = productosContados.length
   const capitalContable = safeNumber(
     (calculateTotalEfectivo() + calculateTotalCuentasPorCobrar() + valorTotal + calculateTotalDeudaANegocio() + datosFinancieros.activosFijos) - calculateTotalCuentasPorPagar(),
@@ -2934,10 +2962,7 @@ const InventarioDetalleNuevo = () => {
         </div>
 
         <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2 bg-teal-500 px-4 py-2 rounded text-white font-mono text-lg">
-            <Clock className="w-5 h-5" />
-            <span>{formatearTiempo(tiempoTranscurrido)}</span>
-          </div>
+          <TimerDisplay sesion={sesion} id={id} />
           <button
             onClick={() => setShowMenuModal(true)}
             className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
@@ -3115,6 +3140,78 @@ const InventarioDetalleNuevo = () => {
                                     </button>
                                   </>
                                 )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Solicitudes Pendientes */}
+              <div className="border-t pt-4">
+                <div className="mb-4">
+                  <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-yellow-600" />
+                    Solicitudes Pendientes
+                    {solicitudesPendientes.length > 0 && (
+                      <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded-full">
+                        {solicitudesPendientes.length}
+                      </span>
+                    )}
+                  </h4>
+                </div>
+
+                {loadingSolicitudes && solicitudesPendientes.length === 0 ? (
+                  <div className="flex justify-center py-4">
+                    <RefreshCw className="w-6 h-6 animate-spin text-gray-400" />
+                  </div>
+                ) : solicitudesPendientes.length === 0 ? (
+                  <div className="px-4 py-6 text-center bg-gray-50 rounded-lg border border-dashed text-gray-400 text-sm">
+                    No hay solicitudes pendientes en este momento
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto border rounded-lg">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Colaborador</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Dispositivo</th>
+                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {solicitudesPendientes.map((solicitud) => (
+                          <tr key={solicitud.id || solicitud._id}>
+                            <td className="px-4 py-2 text-sm">
+                              <div className="font-medium text-gray-900">
+                                {solicitud.nombreColaborador || 'Desconocido'}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {solicitud.metadata?.emailSugerido || ''}
+                              </div>
+                            </td>
+                            <td className="px-4 py-2 text-sm text-gray-500">
+                              {solicitud.metadata?.dispositivoInfo?.modelo || 'Móvil'}
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  onClick={() => handleAceptarSolicitud(solicitud.id || solicitud._id)}
+                                  className="text-green-600 hover:text-green-800 p-1"
+                                  title="Aceptar Colaborador"
+                                >
+                                  <UserCheck className="w-5 h-5" />
+                                </button>
+                                <button
+                                  onClick={() => handleRechazarSolicitud(solicitud.id || solicitud._id)}
+                                  className="text-red-600 hover:text-red-800 p-1"
+                                  title="Rechazar"
+                                >
+                                  <UserX className="w-5 h-5" />
+                                </button>
                               </div>
                             </td>
                           </tr>

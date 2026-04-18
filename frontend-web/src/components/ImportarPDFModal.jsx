@@ -164,7 +164,7 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
 
       // Realizar petición
       const response = await api.post(
-        `/clientes-negocios/${cliente._id}/importar-pdf`,
+        `/clientes-negocios/${cliente.id}/importar-pdf`,
         formData,
         {
           headers: {
@@ -201,7 +201,7 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
         setResultado(response.data.datos)
         setPasoActual(3)
         queryClient.invalidateQueries('clientes')
-        queryClient.invalidateQueries(['sesiones', cliente._id])
+        queryClient.invalidateQueries(['sesiones', cliente.id])
       } else {
         throw new Error(response.data.mensaje || 'Error al procesar PDFs')
       }
@@ -246,7 +246,7 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
 
   const handleGuardarCambios = async () => {
     try {
-      const id = resultado?.sesion?._id
+      const id = resultado?.sesion?.id
       if (!id) return
       setGuardando(true)
       const resp = await api.patch(`/sesiones-inventario/${id}/completar`)
@@ -256,7 +256,7 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
           ...prev,
           sesion: resp.data?.datos?.sesion || prev?.sesion
         }))
-        queryClient.invalidateQueries(['sesiones', cliente._id])
+        queryClient.invalidateQueries(['sesiones', cliente.id])
       } else {
         throw new Error(resp.data?.mensaje || 'No se pudo guardar la sesión')
       }
@@ -635,19 +635,19 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
             <Button
               variant="primary"
               onClick={handleGuardarCambios}
-              disabled={!resultado?.sesion?._id || guardando}
+              disabled={!resultado?.sesion?.id || guardando}
             >
               {guardando ? 'Guardando...' : 'Guardar cambios'}
             </Button>
             <Button
               variant="outline"
               onClick={() => {
-                const id = resultado?.sesion?._id
+                const id = resultado?.sesion?.id
                 if (id) {
                   window.location.href = `/inventarios/${id}`
                 }
               }}
-              disabled={!resultado?.sesion?._id}
+              disabled={!resultado?.sesion?.id}
             >
               Ver sesión
             </Button>

@@ -30,6 +30,10 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.STRING,
             defaultValue: 'General'
         },
+        clienteNegocioId: {
+            type: DataTypes.INTEGER,
+            allowNull: true
+        },
         activo: {
             type: DataTypes.BOOLEAN,
             defaultValue: true

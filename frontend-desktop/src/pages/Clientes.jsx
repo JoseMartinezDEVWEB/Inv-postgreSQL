@@ -115,14 +115,14 @@ const Clientes = () => {
     if (modalType === 'create') {
       createMutation.mutate(formData)
     } else if (modalType === 'edit') {
-      updateMutation.mutate({ id: selectedCliente._id, data: formData })
+      updateMutation.mutate({ id: selectedCliente.id, data: formData })
     }
   }
 
   // Manejar eliminación
   const handleDelete = (cliente) => {
     if (window.confirm(`¿Estás seguro de eliminar a ${cliente.nombre}?`)) {
-      deleteMutation.mutate(cliente._id)
+      deleteMutation.mutate(cliente.id)
     }
   }
 

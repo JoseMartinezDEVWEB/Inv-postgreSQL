@@ -8,10 +8,11 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from 'react-query'
 import { sesionesApi, productosApi, reportesApi, invitacionesApi, solicitudesConexionApi, handleApiError } from '../services/api'
 import logoInfocolmados from '../img/logo_transparent.png'
-import { ArrowLeft, Search, Trash2, Clock, TrendingUp, Users, CreditCard, Briefcase, PiggyBank, DollarSign, ShoppingCart, Barcode, X, Printer, FileText, Settings, TrendingDown, Wallet, Calculator, Calendar, Download, Share2, FileSpreadsheet, FileImage, UserMinus, Menu, Smartphone, QrCode, RefreshCw, Wifi, WifiOff, PieChart } from 'lucide-react'
+import { ArrowLeft, Search, Trash2, Clock, Pause, Play, TrendingUp, Users, CreditCard, Briefcase, PiggyBank, DollarSign, ShoppingCart, Barcode, X, Printer, FileText, Settings, TrendingDown, Wallet, Calculator, Calendar, Download, Share2, FileSpreadsheet, FileImage, UserMinus, Menu, Smartphone, QrCode, RefreshCw, Wifi, WifiOff, PieChart } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '../context/AuthContext'
 import ProductoForm from '../components/ProductoForm'
+import { useSocket } from '../hooks/useSocket'
 
 const PRODUCTOS_POR_PAGINA = 45
 
@@ -105,7 +106,7 @@ const InventarioDetalleNuevo = () => {
   const [productNotFoundCode, setProductNotFoundCode] = useState('')
   const [isSearching, setIsSearching] = useState(false)
   // Estados para temporizador y modos de escaneo
-  const [tiempoTranscurrido, setTiempoTranscurrido] = useState(0)
+
   const sesionTimerRef = useRef(null)
   const [isQuickScanMode, setIsQuickScanMode] = useState(false)
   const [quickScanProduct, setQuickScanProduct] = useState(null)
@@ -114,6 +115,78 @@ const InventarioDetalleNuevo = () => {
   const [lastScannedTime, setLastScannedTime] = useState(0)
   const [lastScannedProduct, setLastScannedProduct] = useState(null)
   // Estado para datos de nuevos productos
+  // Componente de Temporizador Memoizado para evitar re-renders innecesarios
+  const TimerDisplay = useMemo(() => {
+    const TimerComponent = ({ sesion, id }) => {
+      const [tiempo, setTiempo] = useState(0)
+      const timerRef = useRef(null)
+
+      useEffect(() => {
+        if (!sesion) return
+        timerRef.current = sesion
+
+        const tick = () => {
+          const s = timerRef.current
+          if (!s) return
+
+          const acumulado = Math.max(0, Number(s.timerAcumuladoSegundos || 0))
+          const enMarcha = Boolean(s.timerEnMarcha)
+          let ultimoInicio = 0
+
+          if (s.timerUltimoInicio) {
+            let fechaStr = s.timerUltimoInicio
+            if (fechaStr.includes(' ')) fechaStr = fechaStr.replace(' ', 'T')
+            if (!fechaStr.endsWith('Z')) fechaStr = fechaStr + 'Z'
+            const fechaInicio = new Date(fechaStr)
+            if (!isNaN(fechaInicio.getTime())) ultimoInicio = fechaInicio.getTime()
+          }
+
+          let segundos = acumulado
+          if (enMarcha && ultimoInicio > 0) {
+            const ahora = Date.now()
+            const diferencia = Math.floor((ahora - ultimoInicio) / 1000)
+            if (diferencia > 0) segundos += diferencia
+          }
+          setTiempo(Math.max(0, segundos))
+        }
+
+        tick()
+        const interval = setInterval(tick, 1000)
+        return () => clearInterval(interval)
+      }, [sesion?.timerEnMarcha, sesion?.timerUltimoInicio, sesion?.timerAcumuladoSegundos, id])
+
+      const format = (s) => {
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+      }
+
+      return (
+        <button
+          onClick={async () => {
+            try {
+              if (sesion?.timerEnMarcha) {
+                await sesionesApi.pauseTimer(id)
+                toast('⏸ Cronómetro pausado')
+              } else {
+                await sesionesApi.resumeTimer(id)
+                toast('▶️ Cronómetro iniciado')
+              }
+              refetch()
+            } catch (err) {
+              console.error('Error timer:', err)
+            }
+          }}
+          className="flex items-center space-x-2 bg-teal-500 hover:bg-teal-600 active:bg-teal-700 px-4 py-2 rounded text-white font-mono text-lg transition-colors cursor-pointer"
+          title={sesion?.timerEnMarcha ? 'Pausar' : 'Iniciar'}
+        >
+          {sesion?.timerEnMarcha ? <Pause className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+          <span>{format(tiempo)}</span>
+        </button>
+      )
+    }
+    return TimerComponent
+  }, [id])
+
   const [newProductData, setNewProductData] = useState({
     nombre: '',
     codigoBarras: '',
@@ -319,66 +392,7 @@ const InventarioDetalleNuevo = () => {
     }
   )
 
-  // Temporizador basado en cronómetro del backend
-  useEffect(() => {
-    if (!sesion) return
 
-    // Actualizar la ref con los datos actuales de la sesión
-    sesionTimerRef.current = sesion
-
-    const tick = () => {
-      const s = sesionTimerRef.current
-      if (!s) return
-
-      const acumulado = Math.max(0, Number(s.timerAcumuladoSegundos || 0))
-      const enMarcha = Boolean(s.timerEnMarcha)
-      let ultimoInicio = 0
-
-      // Validar y parsear la fecha de inicio
-      if (s.timerUltimoInicio) {
-        // Convertir formato SQLite 'YYYY-MM-DD HH:MM:SS' a ISO UTC 'YYYY-MM-DDTHH:MM:SSZ'
-        let fechaStr = s.timerUltimoInicio
-        if (fechaStr.includes(' ')) {
-          fechaStr = fechaStr.replace(' ', 'T')
-        }
-        // Agregar 'Z' para indicar que es UTC (SQLite CURRENT_TIMESTAMP es UTC)
-        if (!fechaStr.endsWith('Z')) {
-          fechaStr = fechaStr + 'Z'
-        }
-        const fechaInicio = new Date(fechaStr)
-        if (!isNaN(fechaInicio.getTime())) {
-          ultimoInicio = fechaInicio.getTime()
-        }
-      }
-
-      let segundos = acumulado
-      if (enMarcha && ultimoInicio > 0) {
-        const ahora = Date.now()
-        const diferencia = Math.floor((ahora - ultimoInicio) / 1000)
-        // Solo sumar si la diferencia es positiva (evitar problemas de reloj desincronizado)
-        if (diferencia > 0) {
-          segundos += diferencia
-        }
-      }
-
-      // Asegurar que nunca sea negativo
-      segundos = Math.max(0, segundos)
-      setTiempoTranscurrido(segundos)
-    }
-    tick()
-    const interval = setInterval(tick, 1000)
-    return () => clearInterval(interval)
-  }, [sesion, sesion?.timerEnMarcha, sesion?.timerUltimoInicio, sesion?.timerAcumuladoSegundos])
-
-  // Función para formatear tiempo en HH:MM:SS
-  const formatearTiempo = (segundos) => {
-    // Asegurar que sea un número válido y no negativo
-    const segs = Math.max(0, Math.floor(Number(segundos) || 0))
-    const horas = Math.floor(segs / 3600)
-    const minutos = Math.floor((segs % 3600) / 60)
-    const segundosFinal = segs % 60
-    return `${String(horas).padStart(2, '0')}:${String(minutos).padStart(2, '0')}:${String(segundosFinal).padStart(2, '0')}`
-  }
 
   // Mutaciones para agregar productos
   const addProductMutation = useMutation(
@@ -535,7 +549,9 @@ const InventarioDetalleNuevo = () => {
 
   // Función para abrir modal de revisión de productos de un colaborador
   const handleAbrirRevisarProductos = (colaborador) => {
-    const productos = productosColaboradorPendientes[colaborador._id] || []
+    // Soporte para PostgreSQL (id numérico) y MongoDB (_id)
+    const colabKey = colaborador.id || colaborador._id
+    const productos = productosColaboradorPendientes[colabKey] || []
     setColaboradorSeleccionado(colaborador)
     setProductosParaRevisar(productos)
 
@@ -596,78 +612,55 @@ const InventarioDetalleNuevo = () => {
     toast.success('QR descargado exitosamente')
   }
 
-  // Función para aceptar y sincronizar productos del colaborador
+  // Función para aceptar y sincronizar productos del colaborador (REFACTORIZADA - Batch Sync)
   const handleAceptarProductos = async (productosSeleccionados) => {
-    if (!colaboradorSeleccionado) return
+    if (!colaboradorSeleccionado || !productosSeleccionados?.length) return
 
-    // Iniciar reloj si es el primer producto
-    if (productosContados.length === 0 && !sesion?.timerEnMarcha && productosSeleccionados.length > 0) {
-      try {
-        await sesionesApi.resumeTimer(id)
-        console.log('✅ Reloj iniciado al aceptar productos de colaborador')
-        await refetch()
-      } catch (error) {
-        console.error('Error al iniciar reloj:', error)
-      }
-    }
+    const toastId = toast.loading(`Sincronizando ${productosSeleccionados.length} producto(s)...`)
 
     try {
-      // Agregar cada producto a la sesión de inventario
-      for (const productoOffline of productosSeleccionados) {
-        const productoData = productoOffline.productoData
-        const cantidadEditada = cantidadesEditadas[productoOffline.temporalId] || productoData.cantidad
-
-        // Buscar si el producto ya existe en la sesión
-        const productoExistente = productosContados.find(p =>
-          p.nombreProducto?.toLowerCase().trim() === productoData.nombre?.toLowerCase().trim()
-        )
-
-        if (productoExistente) {
-          // Actualizar cantidad sumando
-          const nuevaCantidad = (productoExistente.cantidadContada || 0) + Number(cantidadEditada)
-          await sesionesApi.updateProduct(id, productoExistente.productoId, {
-            cantidadContada: nuevaCantidad,
-            costoProducto: Number(productoData.costo) || 0
-          })
-        } else {
-          // Buscar o crear el producto en ProductoCliente
-          let productoClienteId
-          try {
-            const busqueda = await productosApi.buscarPorNombre(productoData.nombre)
-            const encontrado = busqueda.data?.datos?.productos?.[0]
-            if (encontrado) {
-              productoClienteId = encontrado._id
-            }
-          } catch (error) {
-            // Si no existe, crear uno nuevo
-            const nuevoProducto = await productosApi.createForCliente(obtenerClienteId(sesion), {
-              nombre: productoData.nombre,
-              costo: Number(productoData.costo) || 0,
-              unidad: 'unidad',
-              sku: productoData.sku || ''
-            })
-            // El backend devuelve el producto directamente en datos, con campo id (no _id)
-            productoClienteId = nuevoProducto.data?.datos?.id || nuevoProducto.data?.datos?._id
+      // Construir el payload aplicando las cantidades editadas por el usuario
+      const productosConCantidadEditada = productosSeleccionados
+        .filter(p => p && p.productoData)
+        .map(productoOffline => ({
+          temporalId: productoOffline.temporalId,
+          productoData: {
+            ...productoOffline.productoData,
+            // Usar la cantidad que el usuario haya editado en el modal
+            cantidad: cantidadesEditadas[productoOffline.temporalId] ?? productoOffline.productoData.cantidad ?? 1
           }
+        }))
 
-          // Agregar a la sesión
-          if (productoClienteId) {
-            await sesionesApi.addProduct(id, {
-              productoClienteId: productoClienteId,
-              cantidadContada: Number(cantidadEditada),
-              costoProducto: Number(productoData.costo) || 0
-            })
-          }
+      // Obtener el ID de la solicitud (puede ser _id numérico o UUID)
+      const solicitudId = colaboradorSeleccionado.id || colaboradorSeleccionado._id || colaboradorSeleccionado.uuid
+
+      if (!solicitudId) {
+        toast.error('No se pudo identificar la solicitud del colaborador', { id: toastId })
+        return
+      }
+
+      // Iniciar reloj si es el primer producto y el timer no está en marcha
+      if (productosContados.length === 0 && !sesion?.timerEnMarcha) {
+        try {
+          await sesionesApi.resumeTimer(id)
+        } catch (timerErr) {
+          console.warn('No se pudo iniciar el timer:', timerErr.message)
         }
       }
 
-      // Marcar productos como sincronizados en el backend
-      const temporalIds = productosSeleccionados.map(p => p.temporalId)
-      await solicitudesConexionApi.sincronizar(colaboradorSeleccionado._id, temporalIds)
+      // ─── LLAMADA ÚNICA AL BACKEND (batch sync) ───────────────────────────────
+      const response = await solicitudesConexionApi.batchSyncProductos(solicitudId, {
+        sesionInventarioId: id,
+        productos: productosConCantidadEditada
+      })
+      // ────────────────────────────────────────────────────────────────────────
 
-      toast.success(`${productosSeleccionados.length} producto(s) sincronizado(s) exitosamente`)
+      const { count = productosConCantidadEditada.length } = response.data
 
-      // Refrescar datos
+      toast.success(`✅ ${count} producto(s) sincronizados exitosamente`, { id: toastId })
+
+      // Refrescar datos de la sesión
+      queryClient.invalidateQueries(['sesion-inventario', id])
       await refetch()
 
       // Cerrar modal y limpiar estado
@@ -676,12 +669,13 @@ const InventarioDetalleNuevo = () => {
       setProductosParaRevisar([])
       setCantidadesEditadas({})
 
-      // Recargar colaboradores para actualizar conteo
-      const response = await solicitudesConexionApi.listarConectados(id)
-      setColaboradoresConectados(response.data?.datos || [])
+      // Recargar colaboradores para actualizar estado de productos pendientes
+      await cargarColaboradoresConectados()
+
     } catch (error) {
-      console.error('Error al aceptar productos:', error)
-      toast.error('Error al sincronizar productos')
+      console.error('❌ Error en batch sync de productos:', error)
+      const mensaje = error.response?.data?.mensaje || error.message || 'Error al sincronizar productos'
+      toast.error(`Error: ${mensaje}`, { id: toastId })
     }
   }
 
@@ -886,15 +880,16 @@ const InventarioDetalleNuevo = () => {
               }])
               setCodigoBarras('')
               toast.info(`Producto agregado a lista: ${productoGeneral.nombre}`)
-            } else {
-              // Primer escaneo o producto diferente: seleccionar producto normalmente
-              console.log('📱 Primer escaneo, seleccionando producto:', productoGeneral.nombre)
-              handleSelectProduct(productoGeneral)
-              setLastScannedTime(now)
-              setLastScannedProduct(productoGeneral)
-              setIsQuickScanMode(false)
-              setQuickScanProduct(null)
-            }
+               // Primer escaneo o producto diferente: seleccionar producto normalmente
+               console.log('📱 Primer escaneo, seleccionando producto:', productoGeneral.nombre)
+               handleSelectProduct(productoGeneral)
+               setLastScannedTime(now)
+               setLastScannedProduct(productoGeneral)
+               setIsQuickScanMode(false)
+               setQuickScanProduct(null)
+               // Forzar un refetch para asegurar sincronía
+               refetch()
+             }
           }
         } else {
           // Producto no encontrado
@@ -931,16 +926,19 @@ const InventarioDetalleNuevo = () => {
       try {
         // Cargar productos generales sin filtro de búsqueda
         const generalesResponse = await productosApi.getAllGenerales({
-          limite: 20,
+          limite: 50,
           pagina: 1,
           soloActivos: true
         })
 
-        // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-        const productosGenerales = generalesResponse.data?.datos?.productos ||
-          generalesResponse.data?.productos ||
-          []
+        // Backend PostgreSQL devuelve: { datos: [...], paginacion: {...} }
+        // donde datos es el array directamente (NO datos.productos)
+        const rawDatos = generalesResponse.data?.datos
+        const productosGenerales = Array.isArray(rawDatos)
+          ? rawDatos
+          : rawDatos?.productos || generalesResponse.data?.productos || []
 
+        console.log('📦 Productos generales web cargados:', productosGenerales.length)
         setSearchResults(productosGenerales)
       } catch (error) {
         console.error('Error cargando productos generales:', error)
@@ -951,92 +949,41 @@ const InventarioDetalleNuevo = () => {
     }
 
     loadGeneralProducts()
-  }, [showSearchModal])
+  }, [showSearchModal, nombreBusqueda])
 
   // Buscar por nombre (modal) - cuando hay 3 o más caracteres
   useEffect(() => {
     const searchByName = async () => {
-      if (!showSearchModal || nombreBusqueda.length < 3) {
-        if (showSearchModal && nombreBusqueda.length < 3 && nombreBusqueda.length > 0) {
-          // Si hay texto pero menos de 3 caracteres, mantener productos generales
-          return
-        }
-        return
-      }
+      if (!showSearchModal || nombreBusqueda.length < 3) return
 
       setIsSearching(true)
       try {
-        // Buscar en productos generales con las primeras 3 letras
-        const searchTerm = nombreBusqueda.trim().substring(0, 3)
-        console.log('🔍 Buscando por nombre (primeras 3 letras):', searchTerm)
+        // Buscar en productos generales
+        const searchTerm = nombreBusqueda.trim()
+        console.log('🔍 Buscando por nombre (web):', searchTerm)
 
         const generalesResponse = await productosApi.getAllGenerales({
           buscar: searchTerm,
-          limite: 20,
+          limite: 50,
           pagina: 1,
           soloActivos: true
         })
 
-        // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-        const productosGenerales = generalesResponse.data?.datos?.productos ||
-          generalesResponse.data?.productos ||
-          []
+        // Backend PostgreSQL devuelve: { datos: [...], paginacion: {...} }
+        const rawDatos = generalesResponse.data?.datos
+        const productosGenerales = Array.isArray(rawDatos)
+          ? rawDatos
+          : rawDatos?.productos || generalesResponse.data?.productos || []
 
-        // Filtrar productos que empiecen con las primeras 3 letras (case insensitive)
-        const productosFiltrados = productosGenerales.filter(producto => {
-          const nombreProducto = (producto.nombre || '').toLowerCase()
-          const busqueda = nombreBusqueda.trim().toLowerCase()
-          return nombreProducto.startsWith(busqueda.substring(0, 3))
-        })
-
-        // También buscar en productos del cliente para productos ya agregados
-        let productosCliente = []
-        const clienteId = obtenerClienteId(sesion)
-        if (clienteId) {
-          try {
-            const clienteResponse = await productosApi.getByCliente(clienteId, {
-              buscar: searchTerm,
-              limite: 10,
-              pagina: 1,
-              soloActivos: true
-            })
-
-            // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-            productosCliente = clienteResponse.data?.datos?.productos ||
-              clienteResponse.data?.productos ||
-              []
-
-            // Filtrar también productos del cliente
-            const productosClienteFiltrados = productosCliente.filter(producto => {
-              const nombreProducto = (producto.nombre || '').toLowerCase()
-              const busqueda = nombreBusqueda.trim().toLowerCase()
-              return nombreProducto.startsWith(busqueda.substring(0, 3))
-            })
-            productosCliente = productosClienteFiltrados
-          } catch (clienteError) {
-            // Si falla, solo usar productos generales
-            console.log('No se pudieron cargar productos del cliente:', clienteError)
-          }
-        }
-
-        // Combinar resultados, priorizando productos del cliente
-        const todosProductos = [...productosCliente, ...productosFiltrados]
-        // Eliminar duplicados por nombre o ID
-        const productosUnicos = todosProductos.filter((producto, index, self) =>
-          index === self.findIndex((p) =>
-            (p.nombre === producto.nombre) ||
-            (p.id !== undefined && p.id === producto.id) ||
-            (p._id !== undefined && p._id === producto._id)
-          )
-        )
-
-        // Asegurar que todos tengan un ID consistente para el frontend
-        const productosProcesados = productosUnicos.map(p => ({
+        // Mapear y asegurar ID consistente
+        const productosProcesados = productosGenerales.map(p => ({
           ...p,
-          _id: p.id || p._id || p.productoId // Asegurar un ID para la key de React
+          _id: p.id || p._id || p.productoId,
+          nombre: p.nombre || 'Sin nombre'
         }))
 
-        setSearchResults(productosProcesados.slice(0, 20))
+        setSearchResults(productosProcesados)
+
       } catch (error) {
         console.error('Error buscando productos:', error)
         setSearchResults([])
@@ -1047,7 +994,7 @@ const InventarioDetalleNuevo = () => {
 
     const debounce = setTimeout(searchByName, 300)
     return () => clearTimeout(debounce)
-  }, [nombreBusqueda, showSearchModal, sesion?.clienteNegocio?.id, sesion?.clienteNegocio?._id, sesion?.clienteNegocioId])
+  }, [nombreBusqueda, showSearchModal])
 
   const handleSelectProduct = (producto) => {
     // Asegurar que tenemos un ID
@@ -1776,7 +1723,7 @@ const InventarioDetalleNuevo = () => {
 
       contenido.productos = productosContados.map(p => ({
         nombre: p.nombreProducto || 'Sin nombre',
-        unidad: p.producto?.unidad || 'unidad',
+        unidad: p.unidadProducto || 'unidad',
         cantidad: p.cantidadContada || 0,
         costo: downloadData.incluirPrecios ? (Number(p.costoProducto) || 0) : null,
         total: downloadData.incluirPrecios ? ((Number(p.cantidadContada) || 0) * (Number(p.costoProducto) || 0)) : null
@@ -2219,10 +2166,25 @@ const InventarioDetalleNuevo = () => {
     }
   }, [id, sesion?.timerEnMarcha])
 
+  // Escuchar actualizaciones remotas de inventario y refrescar automáticamente
+  const { on, off } = useSocket()
+  useEffect(() => {
+    const handleRemoteUpdate = (data) => {
+      if (data && String(data.sesionId) === String(id)) {
+        refetch()
+        toast.success('Inventario actualizado remotamente')
+      }
+    }
+    if (on && off) {
+      on('update_session_inventory', handleRemoteUpdate)
+      return () => off('update_session_inventory', handleRemoteUpdate)
+    }
+  }, [id, on, off, refetch])
+
   const updateProductMutation = useMutation(
     ({ productoId, field, value }) => {
       // Si es nombreProducto, también necesitamos el productoClienteId para actualizar correctamente
-      const updateData = { [field]: value }
+      const updateData = { [field]: value, updatedAt: new Date().toISOString() }
 
       // Si estamos actualizando el nombre, también necesitamos el productoClienteId
       if (field === 'nombreProducto') {
@@ -2324,9 +2286,10 @@ const InventarioDetalleNuevo = () => {
         nombreProducto: p?.nombreProducto || 'Sin nombre',
         // El productoId ya viene del backend como el ID del producto contado
         productoId: p?.productoId || p?.id || p?._id || '',
-        producto: p?.producto // mantener referencia original por si se necesita mostrar
+        producto: p?.producto, // mantener referencia original por si se necesita mostrar
+        updatedAt: p?.updatedAt || new Date(0).toISOString()
       }))
-    // NO hacer reverse() porque el backend ya ordena DESC (últimos primero)
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
     : []
 
   const valorTotal = safeNumber(sesion?.totales?.valorTotalInventario, 2)
@@ -2525,10 +2488,8 @@ const InventarioDetalleNuevo = () => {
         </div>
 
         <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2 bg-teal-500 px-4 py-2 rounded text-white font-mono text-lg">
-            <Clock className="w-5 h-5" />
-            <span>{formatearTiempo(tiempoTranscurrido)}</span>
-          </div>
+          <TimerDisplay sesion={sesion} id={id} />
+
           <button
             onClick={() => setShowMenuModal(true)}
             className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
@@ -5682,9 +5643,9 @@ const InventarioDetalleNuevo = () => {
                         <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                           <td className="border border-gray-400 px-3 py-2 text-black font-medium">{producto.nombreProducto}</td>
                           <td className="border border-gray-400 px-3 py-2 text-center text-black">{producto.unidadProducto || 'UDS'}</td>
-                          <td className="border border-gray-400 px-3 py-2 text-center text-black font-medium">{producto.cantidadContada.toFixed(2)}</td>
-                          <td className="border border-gray-400 px-3 py-2 text-center text-black font-medium">{producto.costoProducto.toFixed(2)}</td>
-                          <td className="border border-gray-400 px-3 py-2 text-center text-black font-semibold">{formatearMoneda(producto.valorTotal)}</td>
+                          <td className="border border-gray-400 px-3 py-2 text-center text-black font-medium">{Number(producto.cantidadContada || 0).toFixed(2)}</td>
+                          <td className="border border-gray-400 px-3 py-2 text-center text-black font-medium">{Number(producto.costoProducto || 0).toFixed(2)}</td>
+                          <td className="border border-gray-400 px-3 py-2 text-center text-black font-semibold">{formatearMoneda((Number(producto.cantidadContada || 0) * Number(producto.costoProducto || 0)))}</td>
                         </tr>
                       ))}
 

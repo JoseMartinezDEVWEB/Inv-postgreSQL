@@ -1,17 +1,23 @@
 const express = require('express');
 const db = require('../models');
-const { authenticateToken } = require('./authRoutes');
+const { authenticateToken, authorizeRole } = require('./authRoutes');
 
 const multer = require('multer');
 const { processFile } = require('../utils/importProcessor');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
+const { emitNotification } = require('../utils/socketHandlers');
+
+let io;
+router.setIo = (socketIoInstance) => {
+    io = socketIoInstance;
+};
 
 /**
  * Importar productos desde archivo XLSX o PDF (Usa IA)
  */
-router.post('/generales/importar', authenticateToken, upload.single('archivo'), async (req, res) => {
+router.post('/generales/importar', authenticateToken, authorizeRole(['administrador', 'contable']), upload.single('archivo'), async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ mensaje: 'No se ha subido ningún archivo' });
@@ -38,10 +44,26 @@ router.post('/generales/importar', authenticateToken, upload.single('archivo'), 
             }
 
             if (producto) {
+                const oldValues = producto.toJSON();
                 await producto.update({
                     ...p,
                     activo: true
                 });
+                
+                // Registrar auditoría de actualización por importación
+                await db.AuditoriaMovimiento.create({
+                    usuarioId: req.user.id,
+                    productoGeneralId: producto.id,
+                    tipoMovimiento: 'IMPORTACION',
+                    detalles: { 
+                        action: 'update_via_import',
+                        old: oldValues,
+                        new: producto.toJSON()
+                    },
+                    fecha: new Date(),
+                    notas: 'Producto actualizado mediante importación'
+                });
+
                 resultados.push({ ...producto.toJSON(), _importStatus: 'updated' });
             } else {
                 const nuevo = await db.ProductoGeneral.create({
@@ -50,6 +72,20 @@ router.post('/generales/importar', authenticateToken, upload.single('archivo'), 
                     creadoPorId: req.user.id,
                     tipoCreacion: 'importacion'
                 });
+
+                // Registrar auditoría de creación por importación
+                await db.AuditoriaMovimiento.create({
+                    usuarioId: req.user.id,
+                    productoGeneralId: nuevo.id,
+                    tipoMovimiento: 'IMPORTACION',
+                    detalles: { 
+                        action: 'create_via_import',
+                        data: nuevo.toJSON()
+                    },
+                    fecha: new Date(),
+                    notas: 'Producto creado mediante importación'
+                });
+
                 resultados.push({ ...nuevo.toJSON(), _importStatus: 'created' });
             }
         }
@@ -136,7 +172,7 @@ router.get('/generales/categorias', authenticateToken, async (req, res) => {
     }
 });
 
-router.post('/generales', authenticateToken, async (req, res) => {
+router.post('/generales', authenticateToken, authorizeRole(['administrador', 'contable']), async (req, res) => {
     try {
         const { nombre, descripcion, categoria, unidad, costoBase, codigoBarras, proveedor, notas } = req.body;
 
@@ -158,13 +194,30 @@ router.post('/generales', authenticateToken, async (req, res) => {
             tipoCreacion: 'usuario'
         });
 
+        // Registrar auditoría de alta manual
+        await db.AuditoriaMovimiento.create({
+            usuarioId: req.user.id,
+            productoGeneralId: producto.id,
+            tipoMovimiento: 'ALTA',
+            detalles: { action: 'manual_create', data: producto.toJSON() },
+            fecha: new Date(),
+            notas: 'Producto creado manualmente por el usuario'
+        });
+
+        // Notificar creación
+        emitNotification(io, {
+            titulo: '🆕 Nuevo Producto',
+            mensaje: `${producto.nombre} agregado al catálogo por ${req.user.nombre}`,
+            tipo: 'info'
+        });
+
         res.status(201).json(producto);
     } catch (error) {
         res.status(500).json({ mensaje: 'Error al crear producto: ' + error.message });
     }
 });
 
-router.put('/generales/:id', authenticateToken, async (req, res) => {
+router.put('/generales/:id', authenticateToken, authorizeRole(['administrador', 'contable']), async (req, res) => {
     try {
         const { id } = req.params;
         const { nombre, descripcion, categoria, unidad, costoBase, codigoBarras, proveedor, notas } = req.body;
@@ -174,7 +227,29 @@ router.put('/generales/:id', authenticateToken, async (req, res) => {
             return res.status(404).json({ mensaje: 'Producto no encontrado' });
         }
 
+        const oldValues = producto.toJSON();
         await producto.update({ nombre, descripcion, categoria, unidad, costoBase, codigoBarras, proveedor, notas });
+
+        // Registrar auditoría de modificación
+        await db.AuditoriaMovimiento.create({
+            usuarioId: req.user.id,
+            productoGeneralId: producto.id,
+            tipoMovimiento: 'MODIFICACION',
+            detalles: { 
+                action: 'manual_update', 
+                old: oldValues, 
+                new: producto.toJSON() 
+            },
+            fecha: new Date(),
+            notas: 'Producto modificado manualmente por el usuario'
+        });
+
+        // Notificar modificación
+        emitNotification(io, {
+            titulo: '✏️ Producto Modificado',
+            mensaje: `${producto.nombre} actualizado por ${req.user.nombre}`,
+            tipo: 'warning'
+        });
 
         res.json(producto);
     } catch (error) {
@@ -182,7 +257,7 @@ router.put('/generales/:id', authenticateToken, async (req, res) => {
     }
 });
 
-router.delete('/generales/:id', authenticateToken, async (req, res) => {
+router.delete('/generales/:id', authenticateToken, authorizeRole(['administrador']), async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -193,9 +268,105 @@ router.delete('/generales/:id', authenticateToken, async (req, res) => {
 
         await producto.update({ activo: false });
 
+        // Registrar auditoría de baja
+        await db.AuditoriaMovimiento.create({
+            usuarioId: req.user.id,
+            productoGeneralId: producto.id,
+            tipoMovimiento: 'BAJA',
+            detalles: { action: 'manual_delete', data: producto.toJSON() },
+            fecha: new Date(),
+            notas: 'Producto marcado como inactivo (eliminado)'
+        });
+
         res.json({ message: 'Producto eliminado correctamente' });
     } catch (error) {
         res.status(500).json({ mensaje: 'Error al eliminar producto: ' + error.message });
+    }
+});
+
+/**
+ * Productos por Cliente (Productos específicos de un negocio)
+ */
+router.get('/cliente/:clienteId', authenticateToken, async (req, res) => {
+    try {
+        const { clienteId } = req.params;
+        const { buscar = '', limite = 20, pagina = 1 } = req.query;
+        const offset = (pagina - 1) * limite;
+
+        const where = { 
+            clienteNegocioId: clienteId,
+            activo: true 
+        };
+
+        if (buscar) {
+            where.nombre = { [db.Sequelize.Op.iLike]: `%${buscar}%` };
+        }
+
+        const { count, rows } = await db.Producto.findAndCountAll({
+            where,
+            limit: parseInt(limite),
+            offset: parseInt(offset),
+            order: [['nombre', 'ASC']]
+        });
+
+        res.json({
+            datos: {
+                productos: rows,
+                paginacion: {
+                    total: count,
+                    pagina: parseInt(pagina),
+                    limite: parseInt(limite),
+                    totalPaginas: Math.ceil(count / limite)
+                }
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al obtener productos del cliente: ' + error.message });
+    }
+});
+
+router.post('/cliente/:clienteId', authenticateToken, async (req, res) => {
+    try {
+        const { clienteId } = req.params;
+        const { nombre, descripcion, costo, unidad, categoria, sku, proveedor } = req.body;
+
+        if (!nombre) {
+            return res.status(400).json({ mensaje: 'El nombre es requerido' });
+        }
+
+        // Verificar si ya existe un producto con el mismo nombre para este cliente
+        const existente = await db.Producto.findOne({
+            where: {
+                nombre,
+                clienteNegocioId: clienteId,
+                activo: true
+            }
+        });
+
+        if (existente) {
+            return res.status(200).json({ 
+                mensaje: 'Ya existe un producto con este nombre para este cliente',
+                datos: existente 
+            });
+        }
+
+        const producto = await db.Producto.create({
+            nombre,
+            descripcion,
+            costo,
+            unidad,
+            categoria,
+            sku,
+            clienteNegocioId: clienteId,
+            activo: true
+        });
+
+        res.status(201).json({
+            mensaje: 'Producto creado correctamente para el cliente',
+            datos: producto
+        });
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al crear producto para el cliente: ' + error.message });
     }
 });
 

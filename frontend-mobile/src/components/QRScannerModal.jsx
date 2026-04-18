@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Vibration,
 } from 'react-native'
-import { BarCodeScanner } from 'expo-barcode-scanner'
+import { CameraView, Camera } from 'expo-camera'
 import { Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { invitacionesApi, handleApiError } from '../services/api'
@@ -29,17 +29,19 @@ const QRScannerModal = ({ visible, onClose, onSuccess, mode = 'invitacion' }) =>
   const [hasPermission, setHasPermission] = useState(null)
   const [scanned, setScanned] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [flashOn, setFlashOn] = useState(false)
 
   useEffect(() => {
     if (visible) {
       requestCameraPermission()
       setScanned(false)
+      setFlashOn(false) // Siempre inicia con flash apagado
     }
   }, [visible])
 
   const requestCameraPermission = async () => {
     try {
-      const { status } = await BarCodeScanner.requestPermissionsAsync()
+      const { status } = await Camera.requestCameraPermissionsAsync()
       setHasPermission(status === 'granted')
 
       if (status !== 'granted') {
@@ -126,6 +128,13 @@ const QRScannerModal = ({ visible, onClose, onSuccess, mode = 'invitacion' }) =>
         return
       }
 
+
+      // === Modo invitación V2 (Soporte para auto-configuración y auto-solicitud) ===
+      if (qrData.tipo === 'invitacion_j4_v2') {
+        Vibration.vibrate([0, 100, 100, 100])
+        onSuccess(qrData)
+        return
+      }
 
       // === Modo invitación (legacy) ===
       // Validar que sea una invitación de J4
@@ -248,9 +257,13 @@ const QRScannerModal = ({ visible, onClose, onSuccess, mode = 'invitacion' }) =>
             </View>
           ) : (
             <>
-              <BarCodeScanner
-                onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+              <CameraView
+                onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+                barcodeScannerSettings={{
+                  barcodeTypes: ['qr'],
+                }}
                 style={StyleSheet.absoluteFillObject}
+                enableTorch={flashOn}
               />
 
               {/* Overlay del marco de escaneo */}
@@ -280,6 +293,18 @@ const QRScannerModal = ({ visible, onClose, onSuccess, mode = 'invitacion' }) =>
                     <Text style={styles.scanAgainText}>Escanear de nuevo</Text>
                   </TouchableOpacity>
                 </View>
+              )}
+              {/* Botón de Flash */}
+              {!isProcessing && (
+                <TouchableOpacity
+                  style={[styles.flashButton, flashOn && styles.flashButtonActive]}
+                  onPress={() => setFlashOn(prev => !prev)}
+                >
+                  <Ionicons name={flashOn ? 'flash' : 'flash-off'} size={22} color={flashOn ? '#fbbf24' : '#fff'} />
+                  <Text style={[styles.flashText, flashOn && { color: '#fbbf24' }]}>
+                    {flashOn ? 'Flash ON' : 'Flash OFF'}
+                  </Text>
+                </TouchableOpacity>
               )}
             </>
           )}
@@ -481,6 +506,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#64748b',
     fontWeight: '500',
+  },
+  // Flash toggle
+  flashButton: {
+    position: 'absolute',
+    bottom: 90,
+    left: '50%',
+    transform: [{ translateX: -70 }],
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
+    borderRadius: 25,
+    paddingVertical: 10,
+    paddingHorizontal: 22,
+    gap: 8,
+    width: 140,
+    justifyContent: 'center',
+  },
+  flashButtonActive: {
+    backgroundColor: 'rgba(251,191,36,0.15)',
+    borderColor: '#fbbf24',
+  },
+  flashText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
   },
 })
 

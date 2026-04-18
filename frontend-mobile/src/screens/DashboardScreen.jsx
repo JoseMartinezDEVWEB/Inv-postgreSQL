@@ -14,12 +14,14 @@ import { Ionicons } from '@expo/vector-icons'
 import { useAuth } from '../context/AuthContext'
 import { useLoader } from '../context/LoaderContext'
 import { useQueryClient, useQuery } from 'react-query'
+import { showMessage } from 'react-native-flash-message'
+import webSocketService from '../services/websocket'
 import { clientesApi, sesionesApi, reportesApi, handleApiResponse } from '../services/api'
 
 const { width } = Dimensions.get('window')
 
 const DashboardScreen = ({ navigation }) => {
-  const { user } = useAuth()
+  const { user, hasPermission } = useAuth()
   const { showLoader } = useLoader()
   const queryClient = useQueryClient()
   const [refreshing, setRefreshing] = React.useState(false)
@@ -30,6 +32,27 @@ const DashboardScreen = ({ navigation }) => {
     queryClient.invalidateQueries()
     setTimeout(() => setRefreshing(false), 900)
   }, [queryClient, showLoader])
+
+  // Escuchar notificaciones en tiempo real
+  React.useEffect(() => {
+    const unsubscribe = webSocketService.on('business_notification', (notif) => {
+      console.log('🔔 Notificación de negocio recibida:', notif.titulo);
+      
+      showMessage({
+        message: notif.titulo,
+        description: notif.mensaje,
+        type: notif.tipo === 'danger' ? 'danger' : notif.tipo === 'warning' ? 'warning' : 'info',
+        duration: 5000,
+        icon: notif.tipo === 'success' ? 'success' : 'info',
+      });
+      
+      // Invalidad consultas para refrescar datos si es relevante
+      queryClient.invalidateQueries('sesiones-recientes');
+      queryClient.invalidateQueries('reportes-stats');
+    });
+
+    return () => unsubscribe();
+  }, [queryClient]);
 
   // Obtener estadísticas de clientes
   const { data: totalClientes = 0 } = useQuery(
@@ -95,59 +118,74 @@ const DashboardScreen = ({ navigation }) => {
     }
   }) || []
 
-  // Tarjetas de estadísticas
-  const statCards = [
+  // Tarjetas de estadísticas Filtradas
+  const allStatCards = [
     {
+      id: 'clients',
       title: 'Total Clientes',
       value: totalClientes.toString(),
       icon: 'people',
       color: '#3b82f6',
       gradient: ['#3b82f6', '#2563eb'],
+      permission: 'clients'
     },
     {
+      id: 'active_sessions',
       title: 'Sesiones Activas',
       value: sesionesActivas.toString(),
       icon: 'time',
       color: '#f59e0b',
       gradient: ['#f59e0b', '#d97706'],
+      permission: 'inventory'
     },
     {
+      id: 'completed_sessions',
       title: 'Sesiones Completadas',
       value: sesionesCompletadas.toString(),
       icon: 'checkmark-circle',
       color: '#22c55e',
       gradient: ['#22c55e', '#16a34a'],
+      permission: 'inventory'
     },
     {
+      id: 'total_value',
       title: 'Valor Total',
       value: `$${valorTotal.toLocaleString()}`,
       icon: 'cash',
       color: '#ef4444',
       gradient: ['#ef4444', '#dc2626'],
+      permission: 'costs'
     },
   ]
 
-  // Acciones rápidas
-  const quickActions = [
+  const statCards = allStatCards.filter(card => !card.permission || hasPermission(card.permission))
+
+  // Acciones rápidas Filtradas
+  const allQuickActions = [
     {
       title: 'Nueva Sesión',
       icon: 'add-circle',
       color: '#3b82f6',
       onPress: () => navigation.navigate('Inventarios'),
+      permission: 'inventory'
     },
     {
       title: 'Ver Clientes',
       icon: 'people',
       color: '#22c55e',
       onPress: () => navigation.navigate('Clientes'),
+      permission: 'clients'
     },
     {
       title: 'Agenda',
       icon: 'calendar-outline',
       color: '#f59e0b',
       onPress: () => navigation.navigate('Agenda'),
+      permission: 'reports'
     },
   ]
+
+  const quickActions = allQuickActions.filter(action => !action.permission || hasPermission(action.permission))
 
   return (
     <ScrollView

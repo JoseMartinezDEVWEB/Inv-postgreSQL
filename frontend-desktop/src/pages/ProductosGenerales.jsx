@@ -29,6 +29,8 @@ import ImportModal from '../components/ui/ImportModal'
 import { Upload } from 'lucide-react'
 import { useSocket } from '../hooks/useSocket'
 import webSocketService from '../services/websocket'
+import { useHotkeys } from 'react-hotkeys-hook'
+import { useRef } from 'react'
 
 const ProductosGenerales = () => {
   const { user } = useAuth()
@@ -43,6 +45,18 @@ const ProductosGenerales = () => {
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage] = useState(5)
   const [isEnviandoInventario, setIsEnviandoInventario] = useState(false)
+  const searchInputRef = useRef(null)
+
+  // Hotkeys
+  useHotkeys('mod+n', (e) => {
+    e.preventDefault()
+    handleCreateProduct()
+  }, { enableOnFormTags: true })
+
+  useHotkeys('mod+f', (e) => {
+    e.preventDefault()
+    searchInputRef.current?.focus()
+  }, { enableOnFormTags: true })
 
   // Consulta de productos generales
   const { data: productosData, isLoading, error } = useQuery(
@@ -517,8 +531,9 @@ const ProductosGenerales = () => {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
               <input
+                ref={searchInputRef}
                 type="text"
-                placeholder="Buscar productos..."
+                placeholder="Buscar productos... (Ctrl+F)"
                 value={searchTerm}
                 onChange={handleSearch}
                 className="w-full pl-10 pr-4 py-3 text-lg border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent text-gray-900 placeholder-gray-500 shadow-sm"

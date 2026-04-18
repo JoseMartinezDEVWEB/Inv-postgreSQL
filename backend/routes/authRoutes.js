@@ -24,8 +24,29 @@ function authenticateToken(req, res, next) {
             return res.status(401).json({ mensaje: 'Token inválido o expirado', error: 'Token inválido o expirado' });
         }
         req.user = user;
-        next();
+        next(); // ← Bug crítico corregido: faltaba llamar a next() aquí
     });
+}
+
+/**
+ * Middleware para autorizar por roles especificos
+ */
+function authorizeRole(roles = []) {
+    return (req, res, next) => {
+        if (!req.user) {
+            return res.status(401).json({ mensaje: 'No autenticado' });
+        }
+        
+        const userRol = (req.user.rol || '').toLowerCase();
+        const allowedRoles = Array.isArray(roles) ? roles.map(r => r.toLowerCase()) : [roles.toLowerCase()];
+
+        if (!allowedRoles.includes(userRol) && userRol !== 'administrador') {
+            return res.status(403).json({ 
+                mensaje: `Permiso denegado. Se requiere uno de los siguientes roles: ${allowedRoles.join(', ')}` 
+            });
+        }
+        next();
+    };
 }
 
 /**
@@ -85,5 +106,6 @@ router.get('/mi-perfil', authenticateToken, (req, res) => {
 
 module.exports = {
     authRoutes: router,
-    authenticateToken
+    authenticateToken,
+    authorizeRole
 };

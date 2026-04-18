@@ -32,7 +32,29 @@ if (!fs.existsSync(gradlewPath)) {
   process.exit(1)
 }
 
+const acceptLicenses = () => {
+  if (!isWin) return // Solo automatizado en Windows por ahora
+  
+  const androidHome = process.env.ANDROID_HOME || path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk')
+  const paths = [
+    path.join(androidHome, 'cmdline-tools', 'latest', 'bin', 'sdkmanager.bat'),
+    path.join(androidHome, 'tools', 'bin', 'sdkmanager.bat')
+  ]
+  
+  const sdkManager = paths.find(p => fs.existsSync(p))
+  if (sdkManager) {
+    console.log('ℹ️  Aceptando licencias de Android SDK...')
+    try {
+      execSync(`echo y| "${sdkManager}" --licenses`, { stdio: 'ignore' })
+      console.log('✅ Licencias verificadas.')
+    } catch (e) {
+      console.warn('⚠️  No se pudo verificar licencias automáticamente.')
+    }
+  }
+}
+
 const execGradle = (args) => {
+  acceptLicenses()
   console.log(`\n🔧 Ejecutando: gradlew ${args.join(' ')}\n`)
   const result = spawnSync(gradlew, args, {
     cwd: androidDir,

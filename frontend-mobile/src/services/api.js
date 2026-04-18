@@ -344,22 +344,23 @@ api.interceptors.response.use(
     async (error) => {
         const originalRequest = error?.config;
 
-        // Verificar que originalRequest existe antes de acceder a sus propiedades
-        if (originalRequest) {
-            // Detectar COLD START o problemas de red en rutas remotas
-            if (!originalRequest._retry && (error.code === 'ECONNABORTED' || error.response?.status >= 500)) {
-                console.log('🔄 Detectado posible Cold Start o error de servidor. Reintentando...');
-                originalRequest._retry = true;
-
-                // Esperar 3 segundos antes de reintentar (dar tiempo a Render para despertar)
-                await new Promise(resolve => setTimeout(resolve, 3000));
-
-                return api(originalRequest);
-            }
+        // Detectar errores de red o timeout permanentes
+        const isNetworkError = !error.response || error.code === 'ECONNABORTED';
+        
+        if (isNetworkError && originalRequest && !originalRequest._retryFinal) {
+            originalRequest._retryFinal = true;
+            // Notificar al usuario con opción de reintento manual
+            showMessage({
+                message: 'Error de conexión',
+                description: 'No se pudo contactar con el servidor. Toca aquí para reintentar.',
+                type: 'warning',
+                duration: 5000,
+                onPress: () => api(originalRequest)
+            });
         }
 
         // Fallback a offline si falla lo remoto (para casos híbridos)
-        if (!error.response) {
+        if (!error?.response) {
             setOnlineStatus(false);
         }
 
@@ -369,9 +370,18 @@ api.interceptors.response.use(
 
 // Exports igual que antes...
 export const handleApiResponse = (res) => res.data?.datos || res.data;
-export const handleApiError = (err) => {
+export const handleApiError = (err, retryAction = null) => {
     const msg = err.response?.data?.detalles?.[0]?.mensaje || err.response?.data?.mensaje || err.message;
-    showMessage({ message: 'Error', description: msg, type: 'danger' });
+    
+    // Si hay una acción de reintento, añadirla al Toast
+    showMessage({ 
+        message: 'Error', 
+        description: retryAction ? `${msg} (Toca para reintentar)` : msg, 
+        type: 'danger',
+        duration: retryAction ? 6000 : 3000,
+        onPress: retryAction ? () => retryAction() : undefined
+    });
+    
     return msg;
 };
 

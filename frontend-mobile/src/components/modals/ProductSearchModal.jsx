@@ -23,7 +23,9 @@ const ProductSearchModal = ({ visible, onClose, onSelectProduct, clienteId }) =>
     {
       select: (response) => {
         // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-        return response.data?.datos?.productos || response.data?.productos || [];
+        // Backend PostgreSQL devuelve: { exito: true, datos: [...] } (el array directamente en datos)
+        const rawDatos = response.data?.datos;
+        return Array.isArray(rawDatos) ? rawDatos : (rawDatos?.productos || response.data?.productos || []);
       },
       enabled: Boolean(visible && searchTerm.length < 3),
       retry: false,
@@ -45,7 +47,9 @@ const ProductSearchModal = ({ visible, onClose, onSelectProduct, clienteId }) =>
     {
       select: (response) => {
         // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-        const productos = response.data?.datos?.productos || response.data?.productos || [];
+        // Backend PostgreSQL devuelve: { exito: true, datos: [...] }
+        const rawDatos = response.data?.datos;
+        const productos = Array.isArray(rawDatos) ? rawDatos : (rawDatos?.productos || response.data?.productos || []);
         // Filtrar productos que empiecen con las primeras 3 letras
         return productos.filter(producto => {
           const nombreProducto = (producto.nombre || '').toLowerCase();
@@ -75,7 +79,9 @@ const ProductSearchModal = ({ visible, onClose, onSelectProduct, clienteId }) =>
     {
       select: (response) => {
         // Backend SQLite devuelve: { exito: true, datos: { productos: [...], paginacion: {...} } }
-        const productos = response.data?.datos?.productos || response.data?.productos || [];
+        // Backend PostgreSQL devuelve: { exito: true, datos: [...] }
+        const rawDatos = response.data?.datos;
+        const productos = Array.isArray(rawDatos) ? rawDatos : (rawDatos?.productos || response.data?.productos || []);
         // Filtrar productos que empiecen con las primeras 3 letras
         return productos.filter(producto => {
           const nombreProducto = (producto.nombre || '').toLowerCase();

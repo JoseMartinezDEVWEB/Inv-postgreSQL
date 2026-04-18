@@ -97,6 +97,24 @@ const LoginScreen = ({ navigation }) => {
         return
       }
 
+      // Modo invitación V2 (Auto-config + Auto-fill colaborador)
+      if (data?.tipo === 'invitacion_j4_v2') {
+        if (data.url) {
+          await setRuntimeApiBaseUrl(`${data.url}/api`)
+        }
+        
+        setCodigo(data.codigo || '')
+        setShowCodigoInput(true)
+        
+        showMessage({
+          message: '¡Invitación detectada!',
+          description: 'Se ha configurado el servidor y el código de acceso automáticamente.',
+          type: 'success',
+          duration: 4000
+        })
+        return
+      }
+
       // Modo invitación (legacy)
       showAnimation('login', 1200)
       await loginAsCollaborator(data)

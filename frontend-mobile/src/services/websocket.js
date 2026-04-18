@@ -284,6 +284,12 @@ class WebSocketService {
       console.log('⚠️ [WebSocket Mobile] Uso de evento deprecated dispatch_inventory, redirigiendo a send_inventory')
       this.emitLocal('send_inventory', data)
     })
+
+    // Escuchar actualizaciones de inventario (cuando Desktop o colaborador modifica)
+    this.socket.on('update_session_inventory', (data) => {
+      console.log('🔄 [WebSocket Mobile] Inventario actualizado remotamente:', data?.sesionId)
+      this.emitLocal('update_session_inventory', data)
+    })
   }
 
   // Programar reconexión con backoff exponencial

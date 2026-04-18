@@ -772,15 +772,21 @@ export const AuthProvider = ({ children }) => {
 
     const role = state.user.rol
 
-    // Definir permisos por rol
+    // Definir permisos detallados por rol
     const permissions = {
       administrador: ['all'],
-      contable: ['all'], // Dar 'all' temporalmente para paridad con admin en mobile
-      contador: ['all'], // Dar 'all' temporalmente para paridad con admin en mobile
+      contable: ['reports', 'costs', 'inventory', 'clients', 'products'],
+      contador: ['reports', 'costs', 'inventory', 'clients', 'products'],
+      colaborador: ['inventory', 'products'],
+      colaborador_temporal: ['inventory', 'products'],
     }
 
     const userPermissions = permissions[role] || []
-    return userPermissions.includes('all') || userPermissions.includes(permission)
+
+    // 'all' da acceso a todo
+    if (userPermissions.includes('all')) return true
+
+    return userPermissions.includes(permission)
   }
 
   const value = {

@@ -119,6 +119,8 @@ const invitacionesRoutes = require('./routes/invitacionesRoutes');
 const syncRoutes = require('./routes/syncRoutes');
 
 invitacionesRoutes.setIo(io); // Inyectar socket.io para WebSockets
+productosRoutes.setIo(io);
+sesionesRoutes.setIo(io);
 
 // Registrar rutas
 app.use('/api/auth', authRoutes);
@@ -166,13 +168,13 @@ app.get('/api/mi-perfil', authenticateToken, (req, res) => {
 });
 
 // Sincronizar modelos con la base de datos PostgreSQL y arrancar el servidor
-// 'force: false' evita borrar datos existentes al reiniciar el servidor
-db.sequelize.authenticate().then(() => {
-    console.log('✅ Conexión con PostgreSQL establecida correctamente');
+// 'alter: true' actualiza las tablas existentes sin borrar datos (ideal para desarrollo fluido)
+db.sequelize.sync({ alter: true }).then(() => {
+    console.log('✅ Conexión y sincronización con PostgreSQL completadas');
     server.listen(PORT, () => {
         console.log(`🚀 Servidor de Inventario PostgreSQL + Socket.io iniciado en el puerto ${PORT}`);
     });
 }).catch(err => {
-    console.error('❌ Error fatal al conectar con PostgreSQL:', err);
+    console.error('❌ Error fatal al sincronizar o conectar con PostgreSQL:', err);
 });
 

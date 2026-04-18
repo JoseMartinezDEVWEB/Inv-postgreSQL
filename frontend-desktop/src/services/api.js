@@ -125,17 +125,85 @@ export const handleApiResponse = (response) => {
 export const handleApiError = (error) => {
   console.error('❌ Error de API:', error)
 
-  // Si hay errores de validación específicos (formato del backend Node.js)
+  let message = 'Error desconocido'
+  let type = 'error'
+
   if (error.response?.data?.mensaje) {
-    const message = error.response.data.mensaje
-    toast.error(message)
-    return message
+    message = error.response.data.mensaje
+    
+    // Traducción de errores comunes de PostgreSQL / Sequelize
+    if (message.includes('unique constraint') || message.includes('llave duplicada')) {
+      if (message.includes('codigoBarras') || message.includes('codigo_barras')) {
+        message = 'Este código de barras ya existe en el sistema.'
+      } else if (message.includes('nombre')) {
+        message = 'Ya existe un producto con este nombre.'
+      } else {
+        message = 'Este registro ya existe (violación de unicidad).'
+      }
+      type = 'warning'
+    } else if (message.includes('foreign key') || message.includes('llave foránea')) {
+      message = 'No se puede realizar la acción porque este registro está siendo usado en otra parte.'
+      type = 'error'
+    }
+  } else if (error.message) {
+    message = error.message
   }
 
-  // Error general
-  const message = error.response?.data?.mensaje || error.message || 'Error desconocido'
-  toast.error(message)
+  // Mostrar el toast según el tipo detectado o por defecto error
+  if (type === 'warning') {
+    toast(message, {
+      icon: '⚠️',
+      style: {
+        borderRadius: '10px',
+        background: '#FFFBEB',
+        color: '#92400E',
+        border: '1px solid #FDE68A'
+      },
+    })
+  } else if (type === 'info') {
+    toast(message, {
+      icon: 'ℹ️',
+      style: {
+        borderRadius: '10px',
+        background: '#EFF6FF',
+        color: '#1E40AF',
+        border: '1px solid #BFDBFE'
+      },
+    })
+  } else {
+    toast.error(message)
+  }
+
   return message
+}
+
+/**
+ * Función helper para notificaciones de éxito personalizadas
+ */
+export const notifySuccess = (message) => {
+  toast.success(message, {
+    style: {
+      borderRadius: '10px',
+      background: '#ECFDF5',
+      color: '#065F46',
+      border: '1px solid #A7F3D0'
+    },
+  })
+}
+
+/**
+ * Función helper para notificaciones de información
+ */
+export const notifyInfo = (message) => {
+  toast(message, {
+    icon: 'ℹ️',
+    style: {
+      borderRadius: '10px',
+      background: '#EFF6FF',
+      color: '#1E40AF',
+      border: '1px solid #BFDBFE'
+    },
+  })
 }
 
 // Endpoints de la API
@@ -166,7 +234,7 @@ export const sesionesApi = {
   addProduct: (sesionId, productData) => api.post(`/sesiones-inventario/${sesionId}/productos`, productData),
   removeProduct: (sesionId, productId) => api.delete(`/sesiones-inventario/${sesionId}/productos/${productId}`),
   updateProduct: (sesionId, productId, productData) => api.put(`/sesiones-inventario/${sesionId}/productos/${productId}`, productData),
-  updateFinancial: (sesionId, financialData) => api.put(`/sesiones-inventario/${sesionId}/financieros`, financialData),
+  updateFinancial: (sesionId, financialData) => api.put(`/sesiones-inventario/${sesionId}/financieros`, { datosFinancieros: financialData }),
   complete: (sesionId) => api.patch(`/sesiones-inventario/${sesionId}/completar`),
   cancel: (sesionId) => api.patch(`/sesiones-inventario/${sesionId}/cancelar`),
   pauseTimer: (sesionId) => api.patch(`/sesiones-inventario/${sesionId}/timer/pause`),
@@ -182,7 +250,6 @@ export const productosApi = {
   getAllGenerales: (params = {}) => api.get('/productos/generales', { params }),
   getGeneralById: (id) => api.get(`/productos/generales/${id}`),
   createGeneral: (productoData) => api.post('/productos/generales', productoData),
-  updateGeneral: (id, productoData) => api.put(`/productos/generales/${id}`, productoData),
   updateGeneral: (id, productoData) => api.put(`/productos/generales/${id}`, productoData),
   deleteGeneral: (id) => api.delete(`/productos/generales/${id}`),
   deleteAllGenerales: () => api.delete('/productos/generales/eliminar-todos'),

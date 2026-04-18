@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useQuery } from 'react-query'
 import { productosApi, handleApiResponse } from '../services/api'
 import Button from './ui/Button'
-import { Package, DollarSign, Tag, User, Hash, Scan } from 'lucide-react'
+import { Package, DollarSign, Tag, User, Hash, Scan, Save } from 'lucide-react'
+import { useHotkeys } from 'react-hotkeys-hook'
 
 const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
   const [formData, setFormData] = useState({
@@ -29,8 +30,18 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
   const [errors, setErrors] = useState({})
   const [isScanning, setIsScanning] = useState(false)
   const [scanningField, setScanningField] = useState(null) // 'contenedor' o 'unidad'
-  const codigoBarrasRef = useRef(null)
   const codigoBarrasUnidadRef = useRef(null)
+  const codigoBarrasRef = useRef(null)
+  const formRef = useRef(null)
+
+  // Hotkey para guardar (Ctrl+S)
+  useHotkeys('mod+s', (e) => {
+    e.preventDefault()
+    // Disparar el submit del formulario
+    if (formRef.current) {
+      formRef.current.requestSubmit()
+    }
+  }, { enableOnFormTags: true })
 
   // Unidades disponibles
   const unidades = [
@@ -259,7 +270,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Nombre del producto */}
         <div className="md:col-span-2">
@@ -649,23 +660,25 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
         >
           Cancelar
         </Button>
-        <Button
-          type="submit"
-          disabled={isLoading}
-          className="flex items-center space-x-2"
-        >
-          {isLoading ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              <span>Guardando...</span>
-            </>
-          ) : (
-            <>
-              <Package className="w-4 h-4" />
-              <span>{producto ? 'Actualizar' : 'Crear'} Producto</span>
-            </>
-          )}
-        </Button>
+          <Button
+            type="submit"
+            disabled={isLoading}
+            className="flex items-center space-x-2"
+            title="Guardar cambios (Ctrl+S)"
+          >
+            {isLoading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Guardando...</span>
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                <span>{producto ? 'Actualizar' : 'Crear'} Producto</span>
+                <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded ml-1">Ctrl+S</span>
+              </>
+            )}
+          </Button>
       </div>
     </form>
   )

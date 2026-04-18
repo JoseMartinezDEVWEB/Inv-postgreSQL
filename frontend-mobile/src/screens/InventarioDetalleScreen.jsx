@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react'
 import {
   View,
   Text,
@@ -34,6 +34,7 @@ import { useAuth } from '../context/AuthContext'
 import localDb from '../services/localDb'
 import syncService from '../services/syncService'
 import { config } from '../config/env'
+import webSocketService from '../services/websocket'
 
 // Importar modales
 import DistribucionModal from '../components/modals/DistribucionModal'
@@ -49,6 +50,32 @@ import ProductosGeneralesModal from '../components/modals/ProductosGeneralesModa
 import BarcodeProductModal from '../components/modals/BarcodeProductModal'
 
 const { width, height } = Dimensions.get('window')
+
+// Componente de ítem de producto memoizado para optimizar scroll
+const ProductItem = memo(({ item, onPress, onDelete }) => (
+  <TouchableOpacity
+    style={styles.productoItem}
+    onPress={() => onPress(item)}
+  >
+    <View style={styles.productoInfo}>
+      <Text style={styles.productoNombre}>{item.nombreProducto || item.producto?.nombre}</Text>
+      <Text style={styles.productoSku}>SKU: {item.skuProducto || item.producto?.sku || 'Sin SKU'}</Text>
+      <View style={styles.productoStats}>
+        <Text style={styles.productoCantidad}>Cant: {item.cantidadContada}</Text>
+        <Text style={styles.productoCosto}>${item.costoProducto?.toLocaleString()}</Text>
+        <Text style={styles.productoTotal}>
+          Total: ${(item.valorTotal || (item.cantidadContada * item.costoProducto)).toLocaleString()}
+        </Text>
+      </View>
+    </View>
+    <TouchableOpacity
+      style={styles.deleteButton}
+      onPress={() => onDelete(item)}
+    >
+      <Ionicons name="trash" size={20} color="#ef4444" />
+    </TouchableOpacity>
+  </TouchableOpacity>
+));
 
 const InventarioDetalleScreen = ({ route, navigation }) => {
   const { sesionId } = route.params || {}
@@ -119,11 +146,81 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
   const [hasPermission, setHasPermission] = useState(null)
   const [isQuickScanMode, setIsQuickScanMode] = useState(false)
 
-  // Estados de temporizador
-  const [tiempoTranscurrido, setTiempoTranscurrido] = useState(0)
-  const sesionTimerRef = useRef(null)
+  // Estados de temporizador  // Componente de Temporizador Memoizado para evitar re-renders innecesarios en Mobile
+  const TimerDisplay = useMemo(() => {
+    const TimerComponent = ({ sesionData, sesionId }) => {
+      const [tiempo, setTiempo] = useState(0)
+      const timerRef = useRef()
 
-  // Estados para nuevos productos
+      useEffect(() => {
+        if (!sesionData) return
+        timerRef.current = sesionData
+
+        const tick = () => {
+          const s = timerRef.current
+          if (!s) return
+
+          const acumulado = Math.max(0, Number(s.timerAcumuladoSegundos || 0))
+          const enMarcha = Boolean(s.timerEnMarcha)
+          let ultimoInicio = 0
+
+          if (s.timerUltimoInicio) {
+            let fechaStr = s.timerUltimoInicio
+            if (fechaStr.includes(' ')) fechaStr = fechaStr.replace(' ', 'T')
+            if (!fechaStr.endsWith('Z')) fechaStr = fechaStr + 'Z'
+            const fechaInicio = new Date(fechaStr)
+            if (!isNaN(fechaInicio.getTime())) ultimoInicio = fechaInicio.getTime()
+          }
+
+          let segundos = acumulado
+          if (enMarcha && ultimoInicio > 0) {
+            const ahora = Date.now()
+            const diferencia = Math.floor((ahora - ultimoInicio) / 1000)
+            if (diferencia > 0) segundos += diferencia
+          }
+          setTiempo(Math.max(0, segundos))
+        }
+
+        tick()
+        const interval = setInterval(tick, 1000)
+        return () => clearInterval(interval)
+      }, [sesionData?.timerEnMarcha, sesionData?.timerUltimoInicio, sesionData?.timerAcumuladoSegundos])
+
+      const format = (s) => {
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+      }
+
+      return (
+        <TouchableOpacity
+          onPress={async () => {
+            try {
+              if (sesionData?.timerEnMarcha) {
+                await sesionesApi.pauseTimer(sesionId)
+                showMessage({ message: '⏸ Cronómetro pausado', type: 'info' })
+              } else {
+                await sesionesApi.resumeTimer(sesionId)
+                showMessage({ message: '▶️ Cronómetro iniciado', type: 'success' })
+              }
+              queryClient.invalidateQueries(['sesion', sesionId])
+            } catch (err) {
+              console.error('Error timer mobile:', err)
+            }
+          }}
+          style={[styles.timerContainer, sesionData?.timerEnMarcha ? styles.timerContainerActive : null]}
+        >
+          <Ionicons 
+            name={sesionData?.timerEnMarcha ? "pause" : "time"} 
+            size={16} 
+            color="#ffffff" 
+          />
+          <Text style={styles.timerText}>{format(tiempo)}</Text>
+        </TouchableOpacity>
+      )
+    }
+    return memo(TimerComponent)
+  }, [sesionId])
+
   const [newProductData, setNewProductData] = useState({
     nombre: '',
     sku: '',
@@ -217,6 +314,17 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
       },
     }
   )
+
+  // Escuchar actualizaciones remotas de inventario y refrescar automáticamente
+  useEffect(() => {
+    const handleRemoteUpdate = (data) => {
+      if (data && String(data.sesionId) === String(sesionId)) {
+        refetch()
+      }
+    }
+    webSocketService.on('update_session_inventory', handleRemoteUpdate)
+    return () => webSocketService.off('update_session_inventory', handleRemoteUpdate)
+  }, [sesionId, refetch])
 
   const loadLocalProducts = useCallback(async () => {
     if (!sesionId) return
@@ -339,7 +447,8 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
       const productosPorColaborador = {}
       for (const colab of colaboradores) {
         try {
-          const prodResponse = await solicitudesConexionApi.obtenerProductosOffline(colab._id)
+          const colabId = colab.id || colab._id
+          const prodResponse = await solicitudesConexionApi.obtenerProductosOffline(colabId)
           const productosOffline = prodResponse.data?.datos || []
           if (productosOffline.length > 0) {
             // Transformar productos del backend a estructura esperada
@@ -358,7 +467,7 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
                 }
               }))
             if (productosTransformados.length > 0) {
-              productosPorColaborador[colab._id] = productosTransformados
+              productosPorColaborador[colabId] = productosTransformados
             }
           }
         } catch (e) {
@@ -655,56 +764,7 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
     }
   }, [sesionData])
 
-  // Temporizador basado en timer del backend
-  useEffect(() => {
-    if (!sesionData) return
-    
-    // Actualizar la ref con los datos actuales de la sesión
-    sesionTimerRef.current = sesionData
-    
-    const tick = () => {
-      const s = sesionTimerRef.current
-      if (!s) return
-      
-      const acumulado = Math.max(0, Number(s.timerAcumuladoSegundos || 0))
-      const enMarcha = Boolean(s.timerEnMarcha)
-      let ultimoInicio = 0
-      
-      // Validar y parsear la fecha de inicio
-      if (s.timerUltimoInicio) {
-        // Convertir formato SQLite 'YYYY-MM-DD HH:MM:SS' a ISO UTC 'YYYY-MM-DDTHH:MM:SSZ'
-        let fechaStr = s.timerUltimoInicio
-        if (fechaStr.includes(' ')) {
-          fechaStr = fechaStr.replace(' ', 'T')
-        }
-        // Agregar 'Z' para indicar que es UTC (SQLite CURRENT_TIMESTAMP es UTC)
-        if (!fechaStr.endsWith('Z')) {
-          fechaStr = fechaStr + 'Z'
-        }
-        const fechaInicio = new Date(fechaStr)
-        if (!isNaN(fechaInicio.getTime())) {
-          ultimoInicio = fechaInicio.getTime()
-        }
-      }
-      
-      let segundos = acumulado
-      if (enMarcha && ultimoInicio > 0) {
-        const ahora = Date.now()
-        const diferencia = Math.floor((ahora - ultimoInicio) / 1000)
-        // Solo sumar si la diferencia es positiva (evitar problemas de reloj desincronizado)
-        if (diferencia > 0) {
-          segundos += diferencia
-        }
-      }
-      
-      // Asegurar que nunca sea negativo
-      segundos = Math.max(0, segundos)
-      setTiempoTranscurrido(segundos)
-    }
-    tick()
-    const interval = setInterval(tick, 1000)
-    return () => clearInterval(interval)
-  }, [sesionData, sesionData?.timerEnMarcha, sesionData?.timerUltimoInicio, sesionData?.timerAcumuladoSegundos])
+
 
   // Pausar cronómetro al desmontar
   useEffect(() => {
@@ -717,15 +777,7 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
     }
   }, [sesionId, sesionData?.timerEnMarcha])
 
-  // Formatear tiempo
-  const formatTime = (seconds) => {
-    // Asegurar que sea un número válido y no negativo
-    const secs = Math.max(0, Math.floor(Number(seconds) || 0))
-    const hrs = Math.floor(secs / 3600)
-    const mins = Math.floor((secs % 3600) / 60)
-    const segundosFinal = secs % 60
-    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${segundosFinal.toString().padStart(2, '0')}`
-  }
+
 
   // Manejar escaneo de código de barras
   const handleBarCodeScanned = async ({ data }) => {
@@ -1210,35 +1262,24 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
     }
   }
 
-  // Renderizar producto en lista
-  const renderProductoItem = ({ item }) => (
-    <TouchableOpacity
-      style={styles.productoItem}
-      onPress={() => {
-        setSelectedProducto(item.producto)
-        setCantidad(item.cantidadContada.toString())
-        setCosto(item.costoProducto.toString())
-      }}
-    >
-      <View style={styles.productoInfo}>
-        <Text style={styles.productoNombre}>{item.nombreProducto || item.producto?.nombre}</Text>
-        <Text style={styles.productoSku}>SKU: {item.skuProducto || item.producto?.sku || 'Sin SKU'}</Text>
-        <View style={styles.productoStats}>
-          <Text style={styles.productoCantidad}>Cant: {item.cantidadContada}</Text>
-          <Text style={styles.productoCosto}>${item.costoProducto?.toLocaleString()}</Text>
-          <Text style={styles.productoTotal}>
-            Total: ${(item.valorTotal || (item.cantidadContada * item.costoProducto)).toLocaleString()}
-          </Text>
-        </View>
-      </View>
-      <TouchableOpacity
-        style={styles.deleteButton}
-        onPress={() => openDeleteConfirm(item)}
-      >
-        <Ionicons name="trash" size={20} color="#ef4444" />
-      </TouchableOpacity>
-    </TouchableOpacity>
-  )
+  // Renderizar producto en lista - Usando useCallback y componente memoizado
+  const handleItemPress = useCallback((item) => {
+    setSelectedProducto(item.producto)
+    setCantidad(item.cantidadContada.toString())
+    setCosto(item.costoProducto.toString())
+  }, []);
+
+  const handleItemDelete = useCallback((item) => {
+    openDeleteConfirm(item);
+  }, []);
+
+  const renderProductoItem = useCallback(({ item }) => (
+    <ProductItem 
+      item={item} 
+      onPress={handleItemPress} 
+      onDelete={handleItemDelete} 
+    />
+  ), [handleItemPress, handleItemDelete]);
 
   // Eliminado return condicional de carga para no romper el orden de hooks.
 
@@ -1316,8 +1357,9 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
   // Ordenar por fecha desc (más reciente arriba)
   // Backend suele venir ordenado, pero al mezclar necesitamos reordenar
   const productosOrdenados = mergedProducts.sort((a, b) => {
-    const dateA = new Date(a.fecha || a.createdAt || 0)
-    const dateB = new Date(b.fecha || b.createdAt || 0)
+    // Priorizar updatedAt (edición), luego fecha/createdAt (creación)
+    const dateA = new Date(a.updatedAt || a.fecha || a.createdAt || 0)
+    const dateB = new Date(b.updatedAt || b.fecha || b.createdAt || 0)
     return dateB - dateA
   })
 
@@ -1639,10 +1681,8 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
               <Text style={styles.statusText}>{isConnected ? 'ON' : 'OFF'}</Text>
             </View>
 
-            <View style={styles.timerContainer}>
-              <Ionicons name="time" size={16} color="#ffffff" />
-              <Text style={styles.timerText}>{formatTime(tiempoTranscurrido)}</Text>
-            </View>
+            <TimerDisplay sesionData={sesionData} sesionId={sesionId} />
+
             <TouchableOpacity
               style={styles.menuButton}
               onPress={() => setShowMenuModal(true)}
@@ -1828,6 +1868,11 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
         showsVerticalScrollIndicator={false}
         refreshing={isFetching}
         onRefresh={() => { showLoader(800); refetch(); }}
+        // Props de optimización
+        initialNumToRender={15}
+        windowSize={11}
+        maxToRenderPerBatch={10}
+        removeClippedSubviews={true}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="cube-outline" size={64} color="#cbd5e1" />

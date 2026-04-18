@@ -131,7 +131,7 @@ const ClientesScreen = ({ navigation }) => {
 
   // Obtener contexto de autenticación para business_id
   const { user } = useAuth();
-  const businessId = user?.contablePrincipalId || user?._id || user?.id;
+  const businessId = user?.contablePrincipalId || user?.id;
 
   /**
    * Query principal - Usa SQLite local como fuente de verdad
@@ -181,7 +181,7 @@ const ClientesScreen = ({ navigation }) => {
   const createMutation = useMutation(
     async (clienteData) => {
       // Paso 1: Guardar localmente PRIMERO (Optimistic UI)
-      const clienteLocal = await localDb.crearClienteLocal(clienteData, businessId, user?._id || user?.id);
+      const clienteLocal = await localDb.crearClienteLocal(clienteData, businessId, user?.id);
 
       // Paso 2: Disparar sincronización en segundo plano (no esperar)
       if (netInfo.isConnected) {
@@ -299,7 +299,7 @@ const ClientesScreen = ({ navigation }) => {
 
   const handleSaveCliente = (clienteData) => {
     if (selectedCliente) {
-      updateMutation.mutate({ id: selectedCliente._id, data: clienteData });
+      updateMutation.mutate({ id: selectedCliente.id, data: clienteData });
     } else {
       createMutation.mutate(clienteData);
     }
@@ -311,7 +311,7 @@ const ClientesScreen = ({ navigation }) => {
       `¿Estás seguro de eliminar a ${cliente.nombre}?`,
       [
         { text: 'Cancelar', style: 'cancel' },
-        { text: 'Eliminar', style: 'destructive', onPress: () => deleteMutation.mutate(cliente._id) },
+        { text: 'Eliminar', style: 'destructive', onPress: () => deleteMutation.mutate(cliente.id) },
       ]
     );
   };
@@ -361,7 +361,7 @@ const ClientesScreen = ({ navigation }) => {
               onView={handleViewCliente}
             />
           )}
-          keyExtractor={(item, index) => item._id || item.id_uuid || item.id || `cliente-${index}`}
+          keyExtractor={(item, index) => item.id || item._id || item.id_uuid || `cliente-${index}`}
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
           onRefresh={refetch}

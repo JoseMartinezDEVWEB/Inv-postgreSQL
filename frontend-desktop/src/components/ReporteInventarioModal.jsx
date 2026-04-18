@@ -135,8 +135,15 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
         return new Date(fecha).toLocaleDateString('es-DO', { year: 'numeric', month: '2-digit', day: '2-digit' })
     }
 
-    const productosContados = sesion?.productos || sesion?.productosContados || []
-    const valorTotal = sesion?.totales?.valorTotalInventario || productosContados.reduce((sum, p) => sum + (p.valorTotal || (p.cantidadContada * (p.costoProducto || 0))), 0) || 0
+    const arraySource = sesion?.productosContados || sesion?.productos || []
+    const productosContados = Array.isArray(arraySource) ? arraySource : []
+    
+    // Cálculo robusto del valor total recorriendo todos los productos
+    const valorTotal = productosContados.reduce((sum, p) => {
+        const cant = parseFloat(p.cantidadContada) || 0
+        const cost = parseFloat(p.costoProducto) || 0
+        return sum + (cant * cost)
+    }, 0)
 
     const getTotalPaginasProductos = () => {
         if (productosContados.length === 0) return 0
@@ -578,9 +585,9 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
                                             {getProductosPaginados().map((p, i) => (
                                                 <tr key={i} className="border-b border-gray-100">
                                                     <td className="py-2 px-2 text-gray-800">{p.nombreProducto || p.nombre}</td>
-                                                    <td className="py-2 px-2 text-center font-medium bg-gray-50">{Number(p.cantidadContada).toFixed(2)}</td>
-                                                    <td className="py-2 px-2 text-right">{Number(p.costoProducto).toFixed(2)}</td>
-                                                    <td className="py-2 px-2 text-right font-bold">{formatearMoneda(p.valorTotal || (p.cantidadContada * (p.costoProducto || 0)))}</td>
+                                                    <td className="py-2 px-2 text-center font-medium bg-gray-50">{Number(p.cantidadContada || 0).toFixed(2)}</td>
+                                                    <td className="py-2 px-2 text-right">{Number(p.costoProducto || 0).toFixed(2)}</td>
+                                                    <td className="py-2 px-2 text-right font-bold">{formatearMoneda((Number(p.cantidadContada || 0) * Number(p.costoProducto || 0)))}</td>
                                                 </tr>
                                             ))}
                                             {Array.from({ length: Math.max(0, PRODUCTOS_POR_PAGINA - getProductosPaginados().length) }).map((_, i) => (
@@ -598,8 +605,8 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
                                                         </div>
                                                         <div className="text-right text-sm">
                                                             <div>Líneas {(currentReportPage * PRODUCTOS_POR_PAGINA) + 1} a {(currentReportPage * PRODUCTOS_POR_PAGINA) + getProductosPaginados().length}</div>
-                                                            <div className="font-bold">Total Página: {formatearMoneda(getProductosPaginados().reduce((sum, p) => sum + (p.valorTotal || (p.cantidadContada * (p.costoProducto || 0))), 0))}</div>
-                                                            <div className="font-bold">Total Reporte: {formatearMoneda(valorTotal)}</div>
+                                                            <div className="font-bold">Total Página: {formatearMoneda(getProductosPaginados().reduce((sum, p) => sum + ((Number(p.cantidadContada || 0) * Number(p.costoProducto || 0))), 0))}</div>
+                                                            <div className="font-bold text-teal-700">Total Reporte: {formatearMoneda(valorTotal)}</div>
                                                         </div>
                                                     </div>
                                                     <div className="text-right text-xs text-gray-400 mt-2">Pág. {currentReportPage + 1} de {getTotalPaginasProductos()}</div>

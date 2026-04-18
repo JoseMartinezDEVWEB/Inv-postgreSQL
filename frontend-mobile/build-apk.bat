@@ -54,6 +54,19 @@ echo [PASO 1/5] Limpieza profunda (Deep Clean)...
 call :do_clean
 
 echo [PASO 1.5/5] Verificando entorno Android...
+:: --- Aceptar Licencias ---
+set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+set "SDK_MANAGER="
+if exist "%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat" (
+    set "SDK_MANAGER=%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat"
+) else if exist "%ANDROID_HOME%\tools\bin\sdkmanager.bat" (
+    set "SDK_MANAGER=%ANDROID_HOME%\tools\bin\sdkmanager.bat"
+)
+if defined SDK_MANAGER (
+    echo [INFO] Aceptando licencias de Android SDK...
+    (echo y&echo y&echo y&echo y&echo y&echo y&echo y) | "!SDK_MANAGER!" --licenses >nul 2>&1
+)
+
 if not exist "%BASE_DIR%android\local.properties" (
     echo [WARN] No se encontro local.properties
     echo [INFO] Intentando crear archivo automaticamente...

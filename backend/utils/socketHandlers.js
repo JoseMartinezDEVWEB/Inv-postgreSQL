@@ -251,4 +251,20 @@ const setupSockets = (io) => {
 
 const getColaboradoresActivos = () => colaboradoresActivos;
 
-module.exports = { setupSockets, getColaboradoresActivos };
+/**
+ * Emitir una notificación de negocio a todos los clientes conectados
+ */
+const emitNotification = (io, { titulo, mensaje, tipo = 'info', metadata = {} }) => {
+    if (!io) return;
+    
+    traceSocket(`📢 Emitiendo notificación global: ${titulo} - ${mensaje}`);
+    io.emit('business_notification', {
+        titulo,
+        mensaje,
+        tipo, // 'info', 'success', 'warning', 'danger'
+        metadata,
+        timestamp: new Date()
+    });
+};
+
+module.exports = { setupSockets, getColaboradoresActivos, emitNotification };

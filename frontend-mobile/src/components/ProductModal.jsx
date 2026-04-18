@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Modal, TextInput, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform, Switch, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { BarCodeScanner } from 'expo-barcode-scanner';
+import { CameraView, Camera } from 'expo-camera';
 import { Picker } from '@react-native-picker/picker';
 
 const ProductModal = ({ visible, onClose, onSave, product }) => {
@@ -9,6 +9,7 @@ const ProductModal = ({ visible, onClose, onSave, product }) => {
   const [showScanner, setShowScanner] = useState(false);
   const [scanningField, setScanningField] = useState(null); // 'contenedor' o 'unidad'
   const [hasPermission, setHasPermission] = useState(null);
+  const [flashOn, setFlashOn] = useState(false);
 
   useEffect(() => {
     if (product) {
@@ -126,7 +127,7 @@ const ProductModal = ({ visible, onClose, onSave, product }) => {
   };
 
   const requestCameraPermission = async () => {
-    const { status } = await BarCodeScanner.requestPermissionsAsync();
+    const { status } = await Camera.requestCameraPermissionsAsync();
     setHasPermission(status === 'granted');
     return status === 'granted';
   };
@@ -135,6 +136,7 @@ const ProductModal = ({ visible, onClose, onSave, product }) => {
     const granted = await requestCameraPermission();
     if (granted) {
       setScanningField(field);
+      setFlashOn(false); // Siempre inicia con flash apagado
       setShowScanner(true);
     } else {
       Alert.alert('Permiso Denegado', 'Necesitamos permiso para acceder a la cámara para escanear códigos de barras.');
@@ -159,17 +161,28 @@ const ProductModal = ({ visible, onClose, onSave, product }) => {
     return (
       <Modal visible={showScanner} animationType="slide">
         <View style={styles.scannerContainer}>
-          <BarCodeScanner
-            onBarCodeScanned={handleBarCodeScanned}
-            style={StyleSheet.absoluteFillObject}
+          <CameraView
+            onBarcodeScanned={handleBarCodeScanned}
+            style={styles.absoluteFill}
+            enableTorch={flashOn}
           />
           <View style={styles.scannerOverlay}>
             <Text style={styles.scannerText}>
               Escanee el código de barras {scanningField === 'contenedor' ? 'del contenedor' : 'de la unidad interna'}
             </Text>
+            {/* Botón de Flash */}
+            <TouchableOpacity
+              style={[styles.flashButton, flashOn && styles.flashButtonActive]}
+              onPress={() => setFlashOn(prev => !prev)}
+            >
+              <Ionicons name={flashOn ? 'flash' : 'flash-off'} size={26} color={flashOn ? '#fbbf24' : '#fff'} />
+              <Text style={[styles.flashButtonText, flashOn && { color: '#fbbf24' }]}>
+                {flashOn ? 'Flash ON' : 'Flash OFF'}
+              </Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.cancelScanButton}
-              onPress={() => { setShowScanner(false); setScanningField(null); }}
+              onPress={() => { setShowScanner(false); setScanningField(null); setFlashOn(false); }}
             >
               <Ionicons name="close-circle" size={40} color="#fff" />
               <Text style={styles.cancelScanText}>Cancelar</Text>
@@ -491,8 +504,12 @@ const styles = StyleSheet.create({
   infoBox: { backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#fde68a', borderRadius: 8, padding: 12, flexDirection: 'row', alignItems: 'flex-start', marginTop: 10 },
   infoText: { flex: 1, fontSize: 13, color: '#92400e', marginLeft: 8 },
   scannerContainer: { flex: 1, backgroundColor: '#000' },
+  absoluteFill: { ...require('react-native').StyleSheet.absoluteFillObject },
   scannerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
   scannerText: { fontSize: 18, color: '#fff', fontWeight: 'bold', textAlign: 'center', marginBottom: 20, paddingHorizontal: 30 },
+  flashButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', borderWidth: 1, borderColor: '#94a3b8', borderRadius: 25, paddingVertical: 10, paddingHorizontal: 20, marginBottom: 16, gap: 8 },
+  flashButtonActive: { backgroundColor: 'rgba(251,191,36,0.15)', borderColor: '#fbbf24' },
+  flashButtonText: { color: '#fff', fontWeight: '600', fontSize: 15 },
   cancelScanButton: { backgroundColor: '#ef4444', paddingVertical: 15, paddingHorizontal: 30, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 10 },
   cancelScanText: { fontSize: 16, color: '#fff', fontWeight: 'bold' },
   modalFooter: { flexDirection: 'row', justifyContent: 'flex-end', borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 15, marginTop: 10 },

@@ -48,7 +48,7 @@ const ImportarPDFModal = ({ visible, onClose, cliente, onVerSesion }) => {
 
   const handleGuardarCambios = async () => {
     try {
-      const id = resultado?.sesion?._id;
+      const id = resultado?.sesion?.id;
       if (!id) return;
       setGuardando(true);
       const resp = await api.patch(`/sesiones-inventario/${id}/completar`);
@@ -162,7 +162,7 @@ const ImportarPDFModal = ({ visible, onClose, cliente, onVerSesion }) => {
 
       // Petición usando instancia api (agrega token y baseURL automáticamente)
       const response = await api.post(
-        `/clientes-negocios/${cliente._id}/importar-pdf`,
+        `/clientes-negocios/${cliente.id}/importar-pdf`,
         formData,
         {
           headers: {
@@ -547,23 +547,23 @@ const ImportarPDFModal = ({ visible, onClose, cliente, onVerSesion }) => {
             {pasoActual === 3 && (
               <>
                 <TouchableOpacity
-                  style={[styles.button, styles.importButton, (!resultado?.sesion?._id || guardando) && styles.disabledButton]}
+                  style={[styles.button, styles.importButton, (!resultado?.sesion?.id || guardando) && styles.disabledButton]}
                   onPress={handleGuardarCambios}
-                  disabled={!resultado?.sesion?._id || guardando}
+                  disabled={!resultado?.sesion?.id || guardando}
                 >
                   <Text style={styles.importButtonText}>{guardando ? 'Guardando...' : 'Guardar cambios'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.button, styles.cancelButton]}
                   onPress={() => {
-                    const id = resultado?.sesion?._id;
+                    const id = resultado?.sesion?.id;
                     if (id && typeof onVerSesion === 'function') {
                       onVerSesion(id, resultado?.sesion);
                     } else {
                       showMessage({ message: resultado?.sesion?.numeroSesion ? `Sesión ${resultado.sesion.numeroSesion}` : 'Sesión no disponible', type: 'info' });
                     }
                   }}
-                  disabled={!resultado?.sesion?._id}
+                  disabled={!resultado?.sesion?.id}
                 >
                   <Text style={styles.cancelButtonText}>Ver sesión</Text>
                 </TouchableOpacity>
