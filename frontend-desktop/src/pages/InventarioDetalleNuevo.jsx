@@ -620,39 +620,31 @@ const InventarioDetalleNuevo = () => {
   const addProductMutation = useMutation(
     async (data) => {
       // Verificar si es el primer producto ANTES de agregarlo
-      const esElPrimerProducto = productosContados.length === 0 && !sesion?.timerEnMarcha
+      const esElPrimerProducto = (productosContados?.length || 0) === 0 && !sesion?.timerEnMarcha
       
-      console.log('🔍 Verificando primer producto:', {
-        productosContadosLength: productosContados.length,
-        timerEnMarcha: sesion?.timerEnMarcha,
-        esElPrimerProducto
-      })
-
       // Agregar el producto
       const resultado = await sesionesApi.addProduct(id, data)
 
       // Iniciar reloj inmediatamente si es el primer producto
       if (esElPrimerProducto) {
         try {
-          console.log('⏱️ Iniciando timer...')
-          const timerResponse = await sesionesApi.resumeTimer(id)
-          console.log('✅ Respuesta resumeTimer:', timerResponse?.data)
-          console.log('✅ Reloj iniciado con el primer producto')
+          await sesionesApi.resumeTimer(id)
         } catch (error) {
           console.error('Error al iniciar reloj:', error)
         }
       }
 
-      await refetch()
       return resultado
     },
     {
-      onSuccess: async () => {
-        // Invalidar queries y refrescar datos
-        queryClient.invalidateQueries(['sesion-inventario', id])
-        await refetch()
-        queryClient.refetchQueries(['sesion-inventario', id])
-        toast.success('Producto agregado')
+      onMutate: async (newProductInput) => {
+        // Cancelar refetches salientes
+        await queryClient.cancelQueries(['sesion-inventario', id]);
+        
+        // Obtener historial de snapshot
+        const previousSession = queryClient.getQueryData(['sesion-inventario', id]);
+        
+        // Limpiar inputs rápido para el feedback visual
         setSelectedProducto(null)
         setCantidad('')
         setCosto('')
@@ -661,14 +653,50 @@ const InventarioDetalleNuevo = () => {
         setSearchResults([])
         setIsQuickScanMode(false)
         setQuickScanProduct(null)
-        setLastScannedTime(0)
-        setLastScannedProduct(null)
+        setLastScannedTime(Date.now())
+        setLastScannedProduct(newProductInput)
         searchInputRef.current?.focus()
+        
+        // Añadir el producto optimísticamente
+        if (previousSession) {
+          queryClient.setQueryData(['sesion-inventario', id], old => {
+            const tempId = `temp-${Date.now()}`;
+            const productoSimulado = {
+              id: tempId,
+              _id: tempId,
+              productoClienteId: newProductInput.productoClienteId,
+              nombreProducto: selectedProducto?.nombre || 'Agregando...',
+              unidadProducto: selectedProducto?.unidad || 'unidad',
+              costoProducto: selectedProducto?.costo || 0,
+              skuProducto: selectedProducto?.sku || '',
+              cantidadContada: newProductInput.cantidadContada,
+              valorTotal: (newProductInput.cantidadContada || 0) * (selectedProducto?.costo || 0),
+              notas: '',
+              agregadoPorId: user?.id,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            
+            return {
+              ...old,
+              productosContados: [productoSimulado, ...(old.productosContados || [])]
+            };
+          });
+        }
+        
+        return { previousSession };
       },
-      onError: (error) => {
+      onSuccess: async () => {
+        toast.success('Producto agregado')
+        // El refetch completo o el evento socket terminará de acomodar la tabla
+      },
+      onError: (error, newProductInput, context) => {
         console.error('❌ Error agregando producto:', error)
-        console.error('❌ Detalles del error:', error.response?.data)
-        console.error('❌ Datos enviados:', error.config?.data)
+        
+        // Restaurar estado anterior
+        if (context?.previousSession) {
+          queryClient.setQueryData(['sesion-inventario', id], context.previousSession);
+        }
 
         // Mensaje de error más específico
         if (error.response?.status === 400) {
@@ -679,6 +707,10 @@ const InventarioDetalleNuevo = () => {
         } else {
           handleApiError(error)
         }
+      },
+      onSettled: () => {
+        // En background sync
+        queryClient.invalidateQueries(['sesion-inventario', id]);
       }
     }
   )
@@ -1328,25 +1360,30 @@ const InventarioDetalleNuevo = () => {
       console.log('🎯 Nueva cantidad total:', nuevaCantidad)
 
       try {
-        // Actualizar la cantidad del producto existente
-        // Usar id o productoId (el backend ahora incluye ambos)
         const productoIdToUpdate = productoExistente.productoId || productoExistente.id || productoExistente._id
-        if (!productoIdToUpdate) {
-          throw new Error('No se pudo obtener el ID del producto contado')
-        }
+        if (!productoIdToUpdate) throw new Error('No se pudo obtener el ID del producto contado')
 
-        console.log('🔄 Actualizando producto con ID:', productoIdToUpdate)
-        await sesionesApi.updateProduct(id, productoIdToUpdate, {
-          cantidadContada: nuevaCantidad,
-          costoProducto: costoFinal // También actualizar el costo si es diferente
-        })
+        // OPTIMISTIC UI: Actualizar caché inmediatamente
+        queryClient.setQueryData(['sesion-inventario', id], old => {
+          if (!old) return old;
+          const newData = { ...old };
+          newData.productosContados = [...(newData.productosContados || [])];
+          const idx = newData.productosContados.findIndex(p => p.id === productoExistente.id);
+          if (idx !== -1) {
+            newData.productosContados[idx] = { 
+              ...newData.productosContados[idx], 
+              cantidadContada: nuevaCantidad, 
+              costoProducto: costoFinal,
+              valorTotal: nuevaCantidad * costoFinal,
+              updatedAt: new Date().toISOString()
+            };
+          }
+          return newData;
+        });
 
-        console.log('🔄 Refrescando datos de la sesión...')
-
-        // Refrescar datos de la sesión inmediatamente
-        await refetch()
-
-        // Limpiar formulario
+        // Limpiar formulario instantáneamente
+        const oldNombre = productoExistente.nombreProducto;
+        const oldUnidad = selectedProducto.unidad;
         setSelectedProducto(null)
         setCantidad('')
         setCosto('')
@@ -1357,15 +1394,20 @@ const InventarioDetalleNuevo = () => {
         setQuickScanProduct(null)
         setLastScannedTime(0)
         setLastScannedProduct(null)
-
-        toast.success(`Cantidad actualizada: ${productoExistente.nombreProducto} (${nuevaCantidad} ${selectedProducto.unidad || 'unidades'})`)
-
-        // Enfocar el input de búsqueda
         searchInputRef.current?.focus()
+        toast.success(`Cantidad actualizada: ${oldNombre} (${nuevaCantidad} ${oldUnidad || 'unidades'})`)
+
+        // Disparar red en background
+        sesionesApi.updateProduct(id, productoIdToUpdate, {
+          cantidadContada: nuevaCantidad,
+          costoProducto: costoFinal
+        }).then(() => refetch()).catch(error => {
+          queryClient.invalidateQueries(['sesion-inventario', id]);
+          handleApiError(error);
+        });
 
       } catch (error) {
         console.error('❌ Error actualizando cantidad del producto:', error)
-        console.error('❌ Detalles del error:', error.response?.data)
         handleApiError(error)
       }
 
@@ -1409,66 +1451,70 @@ const InventarioDetalleNuevo = () => {
     if (selectedProducto.costoBase !== undefined) {
       try {
         console.log('🔄 Creando producto cliente para cliente:', clienteIdNumero)
-        console.log('📦 Datos del producto:', {
-          nombre: selectedProducto.nombre,
-          costo: costoFinal,
-          unidad: selectedProducto.unidad
-        })
+
+        // OPTIMISTIC PRE-CREATE: Inyectar simulación antes de bloquear con la API
+        queryClient.setQueryData(['sesion-inventario', id], old => {
+          if(!old) return old;
+          const tempId = `temp-${Date.now()}`;
+          return {
+            ...old,
+            productosContados: [{
+              id: tempId,
+              _id: tempId,
+              productoClienteId: tempId,
+              nombreProducto: selectedProducto?.nombre || 'Agregando...',
+              unidadProducto: selectedProducto?.unidad || 'unidad',
+              costoProducto: costoFinal,
+              skuProducto: selectedProducto?.codigoBarras || selectedProducto?.sku || '',
+              cantidadContada: cantidadNueva,
+              valorTotal: cantidadNueva * costoFinal,
+              notas: '',
+              agregadoPorId: user?.id,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }, ...(old.productosContados || [])]
+          };
+        });
+
+        // Limpiar UI visualmente de inmediato
+        setSelectedProducto(null)
+        setCantidad('')
+        setCosto('')
+        setCodigoBarras('')
+        setNombreBusqueda('')
+        setSearchResults([])
+        searchInputRef.current?.focus()
+        toast.success(`Agregando...`)
+
+        // En background
+        const currentSelected = selectedProducto;
+        const currentParams = { clienteIdNumero, id, cantidadNueva, costoFinal };
 
         // Intentar crear producto en ProductoCliente
-        const nuevoProductoCliente = await productosApi.createForCliente(clienteIdNumero, {
-          nombre: selectedProducto.nombre,
-          descripcion: selectedProducto.descripcion,
-          costo: costoFinal,
-          unidad: selectedProducto.unidad,
-          categoria: selectedProducto.categoria,
-          proveedor: selectedProducto.proveedor,
-          sku: selectedProducto.codigoBarras || ''
+        const nuevoProductoCliente = await productosApi.createForCliente(currentParams.clienteIdNumero, {
+          nombre: currentSelected.nombre,
+          descripcion: currentSelected.descripcion,
+          costo: currentParams.costoFinal,
+          unidad: currentSelected.unidad,
+          categoria: currentSelected.categoria,
+          proveedor: currentSelected.proveedor,
+          sku: currentSelected.codigoBarras || currentSelected.sku || ''
         })
 
-        console.log('✅ Respuesta crear producto cliente:', nuevoProductoCliente.data)
-
-        // Backend SQLite devuelve: { exito: true, datos: producto }
         const productoClienteCreado = nuevoProductoCliente.data?.datos || nuevoProductoCliente.data?.producto || nuevoProductoCliente.data
-
-        // Backend SQLite usa 'id' no '_id', asegurar compatibilidad
         const productoClienteId = productoClienteCreado?.id || productoClienteCreado?._id
+        if (!productoClienteId) throw new Error('No se pudo obtener el ID del producto creado')
 
-        console.log('🔍 ID del producto creado:', productoClienteId)
-
-        if (!productoClienteId) {
-          console.error('❌ Estructura de respuesta:', nuevoProductoCliente.data)
-          throw new Error('No se pudo obtener el ID del producto creado')
-        }
-
-        // Convertir a número entero para el backend SQLite
         const productoIdNumero = parseInt(productoClienteId, 10)
-
-        if (isNaN(productoIdNumero) || productoIdNumero <= 0) {
-          throw new Error(`ID de producto inválido: ${productoClienteId}`)
-        }
-
-        console.log('✅ Agregando producto a sesión con ID:', productoIdNumero)
-
+        
         // Ahora agregar a la sesión con el ID del ProductoCliente
         addProductMutation.mutate({
           productoClienteId: productoIdNumero,
-          cantidadContada: cantidadNueva
+          cantidadContada: currentParams.cantidadNueva
         })
       } catch (error) {
-        console.error('❌ Error completo:', error)
-        console.error('❌ Response data:', error.response?.data)
-        console.error('❌ Response status:', error.response?.status)
-
-        // Si el producto ya existe, el backend debería devolver el producto existente
-        // o podemos simplemente mostrar un error más amigable
-        if (error.response?.status === 400 && error.response?.data?.mensaje?.includes('Ya existe')) {
-          toast.error('Este producto ya fue agregado a este cliente. Intenta buscarlo por nombre.')
-        } else {
-          const mensajeError = error.response?.data?.mensaje || error.message || 'Error al crear producto'
-          toast.error(`Error: ${mensajeError}`)
-          handleApiError(error)
-        }
+        queryClient.invalidateQueries(['sesion-inventario', id])
+        handleApiError(error)
       }
     } else {
       // El producto ya es de ProductoCliente
@@ -2462,10 +2508,39 @@ const InventarioDetalleNuevo = () => {
   const { on, off } = useSocket()
   useEffect(() => {
     const handleUpdate = (data) => {
-      // Si el evento afecta a esta sesión, la recargamos
+      // Si el evento afecta a esta sesión, actualizamos el caché
       if (data && String(data.sesionId) === String(id)) {
-        refetch() // Refresca en vivo!
-        toast.success("Inventario actualizado remotamente")
+        if (data.action && data.producto) {
+          queryClient.setQueryData(['sesion-inventario', id], (oldData) => {
+            if (!oldData) return oldData;
+            
+            const newData = { ...oldData };
+            newData.productosContados = newData.productosContados ? [...newData.productosContados] : [];
+            
+            if (data.action === 'add') {
+              // Comprobar que no exista (para evitar duplicados por latencia)
+              const exists = newData.productosContados.some(p => p.id === data.producto.id);
+              if (!exists) {
+                // Remove temporary products if any match
+                newData.productosContados = newData.productosContados.filter(p => !String(p.id).startsWith('temp-'));
+                newData.productosContados.unshift(data.producto);
+              }
+            } else if (data.action === 'update') {
+              const idx = newData.productosContados.findIndex(p => p.id === data.producto.id);
+              if (idx !== -1) {
+                newData.productosContados[idx] = { ...newData.productosContados[idx], ...data.producto };
+              }
+            } else if (data.action === 'delete') {
+              newData.productosContados = newData.productosContados.filter(p => p.id !== data.productoId);
+            }
+            
+            return newData;
+          });
+          // Not refetching to save bandwidth, unless needed
+        } else {
+          // Fallback para eventos viejos sin payload
+          refetch();
+        }
       }
     }
     
@@ -2473,7 +2548,7 @@ const InventarioDetalleNuevo = () => {
       on('update_session_inventory', handleUpdate)
       return () => off('update_session_inventory', handleUpdate)
     }
-  }, [id, on, off, refetch])
+  }, [id, on, off, refetch, queryClient])
 
   // Debounce para evitar llamadas excesivas a la API
   const [pendingUpdates, setPendingUpdates] = useState({})

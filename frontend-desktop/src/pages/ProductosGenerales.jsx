@@ -58,6 +58,26 @@ const ProductosGenerales = () => {
     searchInputRef.current?.focus()
   }, { enableOnFormTags: true })
 
+  // Efecto global para sincronizar con colaboradores en tiempo real
+  useEffect(() => {
+    const handleProductoGeneralCreado = (payload) => {
+      console.log('🔄 Catálogo global notificado de nuevo producto genérico', payload)
+      queryClient.invalidateQueries('productos-generales')
+      queryClient.invalidateQueries('estadisticas-productos-generales')
+      queryClient.invalidateQueries('categorias-productos')
+    }
+
+    if (webSocketService) {
+      webSocketService.on('producto_general_creado', handleProductoGeneralCreado)
+    }
+
+    return () => {
+      if (webSocketService) {
+        webSocketService.off('producto_general_creado', handleProductoGeneralCreado)
+      }
+    }
+  }, [queryClient])
+
   // Consulta de productos generales
   const { data: productosData, isLoading, error } = useQuery(
     ['productos-generales', currentPage, itemsPerPage, searchTerm, selectedCategory],

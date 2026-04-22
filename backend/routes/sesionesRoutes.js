@@ -352,7 +352,12 @@ router.post('/:id/productos', authenticateToken, async (req, res) => {
             agregadoPorId: req.user.id
         });
 
-        if (io) io.emit('update_session_inventory', { sesionId: id, timestamp: Date.now() });
+        if (io) io.emit('update_session_inventory', { 
+            sesionId: id, 
+            timestamp: Date.now(),
+            action: 'add',
+            producto: productoContado
+        });
         res.status(201).json(productoContado);
     } catch (error) {
         res.status(500).json({ mensaje: 'Error al agregar producto a la sesión: ' + error.message });
@@ -382,7 +387,12 @@ router.put('/:id/productos/:productId', authenticateToken, async (req, res) => {
             notas: notas !== undefined ? notas : producto.notas
         });
 
-        if (io) io.emit('update_session_inventory', { sesionId: id, timestamp: Date.now() });
+        if (io) io.emit('update_session_inventory', { 
+            sesionId: id, 
+            timestamp: Date.now(),
+            action: 'update',
+            producto: producto 
+        });
         res.json(producto);
     } catch (error) {
         res.status(500).json({ mensaje: 'Error al actualizar producto en la sesión: ' + error.message });
@@ -401,7 +411,12 @@ router.delete('/:id/productos/:productId', authenticateToken, async (req, res) =
             return res.status(404).json({ mensaje: 'Producto no encontrado en esta sesión' });
         }
 
-        if (io) io.emit('update_session_inventory', { sesionId: id, timestamp: Date.now() });
+        if (io) io.emit('update_session_inventory', { 
+            sesionId: id, 
+            timestamp: Date.now(),
+            action: 'delete',
+            productoId: productId
+        });
         res.json({ message: 'Producto eliminado de la sesión' });
     } catch (error) {
         res.status(500).json({ mensaje: 'Error al eliminar producto de la sesión: ' + error.message });

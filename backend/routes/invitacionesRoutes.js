@@ -489,9 +489,6 @@ router.post('/:id/productos-offline', async (req, res) => {
         const solicitud = await db.SolicitudConexion.findByPk(req.params.id);
         if (!solicitud) return res.status(404).json({ mensaje: 'No encontrada' });
 
-        const metadata = solicitud.metadata || {};
-        const existentes = metadata.productosOffline || [];
-
         const nuevoProducto = {
             id: req.body.temporalId || req.body.id || Date.now().toString(),
             nombre: req.body.nombre,
@@ -504,6 +501,117 @@ router.post('/:id/productos-offline', async (req, res) => {
             timestamp: new Date()
         };
 
+        // Si la solicitud está conectada y tiene sesionInventarioId, PROCESAR AUTOMÁTICAMENTE
+        if (solicitud.estado === 'aceptada' && solicitud.sesionInventarioId) {
+            try {
+                await db.sequelize.transaction(async (t) => {
+                    const finalCantidad = Number(nuevoProducto.cantidad) || 1;
+                    const finalCosto = Number(nuevoProducto.costo) || 0;
+                    const nombre = nuevoProducto.nombre.trim();
+                    const sku = nuevoProducto.codigoBarras || '';
+
+                    // A. Producto General
+                    let productoGeneral = await db.ProductoGeneral.findOne({
+                        where: { nombre },
+                        transaction: t
+                    });
+
+                    if (!productoGeneral && sku) {
+                        productoGeneral = await db.ProductoGeneral.findOne({
+                            where: { codigoBarras: sku },
+                            transaction: t
+                        });
+                    }
+
+                    if (!productoGeneral) {
+                        productoGeneral = await db.ProductoGeneral.create({
+                            nombre,
+                            costoBase: finalCosto,
+                            codigoBarras: sku,
+                            unidad: nuevoProducto.unidad || 'unidad',
+                            categoria: nuevoProducto.categoria || 'General',
+                            descripcion: 'Autosync desde colaborador',
+                            activo: true,
+                            tipoCreacion: 'colaborador'
+                        }, { transaction: t });
+
+                        // Emitir creación al catálogo global si se creó
+                        if (io) {
+                            io.emit('producto_general_creado', { producto: productoGeneral.toJSON() });
+                        }
+                    }
+
+                    // B. Producto Cliente
+                    let productoCliente = await db.Producto.findOne({
+                        where: { nombre },
+                        transaction: t
+                    });
+
+                    if (!productoCliente && sku) {
+                        productoCliente = await db.Producto.findOne({
+                            where: { sku },
+                            transaction: t
+                        });
+                    }
+
+                    if (!productoCliente) {
+                        productoCliente = await db.Producto.create({
+                            nombre,
+                            costo: finalCosto,
+                            sku,
+                            unidad: nuevoProducto.unidad || 'unidad',
+                            activo: true
+                        }, { transaction: t });
+                    }
+
+                    // C. Producto Contado
+                    const [productoContado, created] = await db.ProductoContado.findOrCreate({
+                        where: {
+                            sesionInventarioId: solicitud.sesionInventarioId,
+                            nombreProducto: nombre
+                        },
+                        defaults: {
+                            sesionInventarioId: solicitud.sesionInventarioId,
+                            productoClienteId: productoCliente.id,
+                            cantidadContada: finalCantidad,
+                            costoProducto: finalCosto,
+                            nombreProducto: nombre,
+                            skuProducto: sku,
+                            valorTotal: finalCantidad * finalCosto,
+                            agregadoPorId: solicitud.colaboradorId || solicitud.adminId
+                        },
+                        transaction: t
+                    });
+
+                    if (!created) {
+                        const nuevaCantidad = Number(productoContado.cantidadContada) + finalCantidad;
+                        await productoContado.update({
+                            cantidadContada: nuevaCantidad,
+                            costoProducto: finalCosto, // Actualiza el costo al del escaneo, o se puede promediar si el usuario lo prefiere
+                            valorTotal: nuevaCantidad * finalCosto
+                        }, { transaction: t });
+                    }
+                });
+
+                // Notificar a la sesión para que todos los usuarios en la sala refresque su UI
+                if (io) {
+                    io.emit('update_session_inventory', { sesionId: solicitud.sesionInventarioId, timestamp: Date.now() });
+                }
+
+                // Producto exitosamente inyectado de forma real, marcar como sincronizado
+                nuevoProducto.sincronizado = true;
+
+                // Devolver éxito directo, omitimos guardado offline pesado si fue síncrono.
+                return res.json({ ok: true, datos: nuevoProducto, procesadoDirectamente: true });
+            } catch (errAuto) {
+                console.error('⚠️ Error auto-procesando producto, cayendo a modo offline:', errAuto);
+            }
+        }
+
+        // --- FALLBACK MODO OFFLINE ---
+        // Si no está asignada a sesión o falló la inyección, lo guardamos en la cola offline para revisión manual
+        const metadata = solicitud.metadata || {};
+        const existentes = metadata.productosOffline || [];
         const nuevaLista = [...existentes, nuevoProducto];
 
         await solicitud.update({
@@ -513,7 +621,7 @@ router.post('/:id/productos-offline', async (req, res) => {
             }
         });
 
-        res.json({ ok: true, datos: nuevoProducto });
+        res.json({ ok: true, datos: nuevoProducto, procesadoDirectamente: false });
     } catch (error) {
         res.status(500).json({ mensaje: error.message });
     }
@@ -622,6 +730,10 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
                             activo: true,
                             tipoCreacion: 'colaborador'
                         }, { transaction: t });
+
+                        if (io) {
+                            io.emit('producto_general_creado', { producto: productoGeneral.toJSON() });
+                        }
                     }
 
                     // B. Buscar/Crear en Producto

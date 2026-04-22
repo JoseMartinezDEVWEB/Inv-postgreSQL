@@ -211,6 +211,10 @@ router.post('/generales', authenticateToken, authorizeRole(['administrador', 'co
             tipo: 'info'
         });
 
+        if (io) {
+            io.emit('producto_general_creado', { producto: producto.toJSON() });
+        }
+
         res.status(201).json(producto);
     } catch (error) {
         res.status(500).json({ mensaje: 'Error al crear producto: ' + error.message });
