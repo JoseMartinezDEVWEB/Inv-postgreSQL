@@ -48,12 +48,12 @@ const processExcel = (buffer) => {
     const data = xlsx.utils.sheet_to_json(sheet);
 
     return data.map(item => {
-        const nombre = getFieldValue(item, ['Producto', 'Nombre', 'Articulo', 'Descripcion', 'Item', 'nombre', 'producto']);
-        const costo = getFieldValue(item, ['Costo', 'Precio', 'Valor', 'Precio Unitario', 'Unitario', 'costo', 'precio']);
-        const cantidad = getFieldValue(item, ['Cantidad', 'Existencia', 'Stock', 'Cant', 'Conteo', 'cantidad', 'existencia']);
-        const unidad = getFieldValue(item, ['Unidad', 'Medida', 'Presentacion', 'U/M', 'unidad', 'medida']);
-        const codigo = getFieldValue(item, ['Codigo', 'SKU', 'Barras', 'Barcode', 'ID', 'codigo', 'sku']);
-        const categoria = getFieldValue(item, ['Categoria', 'Departamento', 'Grupo', 'Seccion', 'categoria']);
+        const nombre = getFieldValue(item, ['Producto', 'Nombre', 'Articulo', 'Descripcion', 'Item', 'nombre', 'producto', 'descripción', 'descrip', 'artículo']);
+        const costo = getFieldValue(item, ['Costo', 'Precio', 'Valor', 'Precio Unitario', 'Unitario', 'costo', 'precio', 'pr_venta', 'pr venta', 'venta', 'cost']);
+        const cantidad = getFieldValue(item, ['Cantidad', 'Existencia', 'Stock', 'Cant', 'Conteo', 'cantidad', 'existencia', 'inv', 'inventario', 'saldo', 'qty']);
+        const unidad = getFieldValue(item, ['Unidad', 'Medida', 'Presentacion', 'U/M', 'unidad', 'medida', 'und', 'unid', 'um']);
+        const codigo = getFieldValue(item, ['Codigo', 'SKU', 'Barras', 'Barcode', 'ID', 'codigo', 'sku', 'cod', 'código', 'cod.']);
+        const categoria = getFieldValue(item, ['Categoria', 'Departamento', 'Grupo', 'Seccion', 'categoria', 'familia', 'línea', 'linea', 'rubro']);
 
         return {
             nombre: nombre || '',

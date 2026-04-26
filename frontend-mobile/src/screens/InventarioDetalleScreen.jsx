@@ -19,7 +19,7 @@ import {
   Switch, // Import Switch
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
-import { BarCodeScanner } from 'expo-barcode-scanner'
+import { CameraView, Camera } from 'expo-camera'
 import { useQuery, useMutation, useQueryClient } from 'react-query'
 import api, { sesionesApi, productosApi, invitacionesApi, solicitudesConexionApi, handleApiError } from '../services/api'
 import { showMessage } from 'react-native-flash-message'
@@ -721,11 +721,11 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
 
   // Solicitar permisos de cámara
   useEffect(() => {
-    const getBarCodeScannerPermissions = async () => {
-      const { status } = await BarCodeScanner.requestPermissionsAsync()
+    const getCameraPermissions = async () => {
+      const { status } = await Camera.requestCameraPermissionsAsync()
       setHasPermission(status === 'granted')
     }
-    getBarCodeScannerPermissions()
+    getCameraPermissions()
   }, [])
 
   // Inicializar datos financieros cuando se cargan los datos de la sesión
@@ -1899,8 +1899,11 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
             <Text>Sin acceso a la cámara</Text>
           )}
           {hasPermission && (
-            <BarCodeScanner
-              onBarCodeScanned={handleBarCodeScanned}
+            <CameraView
+              onBarcodeScanned={handleBarCodeScanned}
+              barcodeScannerSettings={{
+                barcodeTypes: ['qr', 'ean13', 'ean8', 'code128', 'code39', 'upc_a', 'upc_e'],
+              }}
               style={StyleSheet.absoluteFillObject}
             />
           )}

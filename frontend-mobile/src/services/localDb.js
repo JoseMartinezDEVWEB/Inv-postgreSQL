@@ -1190,12 +1190,12 @@ const localDb = {
     guardarProductoColaborador: async (item, solicitudId) => {
         try {
             const database = await getDatabase();
-            const timestamp = new Date().toISOString();
+            const timestamp = item.timestamp || new Date().toISOString();
 
             await database.runAsync(
                 `INSERT OR REPLACE INTO productos_colaborador 
                 (temporalId, solicitudId, nombre, sku, codigoBarras, cantidad, costo, timestamp, sincronizado) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     item.temporalId || `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                     solicitudId,
@@ -1204,7 +1204,8 @@ const localDb = {
                     item.codigoBarras || '',
                     item.cantidad || 1,
                     item.costo || 0,
-                    timestamp
+                    timestamp,
+                    item.sincronizado ? 1 : 0
                 ]
             );
             return true;

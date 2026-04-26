@@ -306,6 +306,46 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     }
   }, [solicitudId])
 
+  // Lógica de agrupación visual para cumplir con el requerimiento de "sumar cantidades" y "mover al principio"
+  const productosVisuales = useMemo(() => {
+    const grupos = {};
+    
+    // Solo procesamos si hay productos
+    if (!productos || productos.length === 0) return [];
+
+    productos.forEach(p => {
+      // Clave única por nombre y código de barras/sku (normalizada)
+      const nombreNorm = (p.nombre || '').toLowerCase().trim();
+      const codigoNorm = (p.codigoBarras || p.sku || '').trim();
+      const key = `${nombreNorm}-${codigoNorm}`;
+      
+      if (!grupos[key]) {
+        grupos[key] = { 
+          ...p, 
+          cantidad: 0, 
+          _ids: [], 
+          maxTimestamp: p.timestamp 
+        };
+      }
+      
+      grupos[key].cantidad += Number(p.cantidad) || 0;
+      grupos[key]._ids.push(p.temporalId);
+      
+      // Mantener el timestamp más reciente para el ordenamiento
+      if (new Date(p.timestamp) > new Date(grupos[key].maxTimestamp)) {
+        grupos[key].maxTimestamp = p.timestamp;
+        grupos[key].timestamp = p.timestamp; // Actualizar también el campo que usa la UI
+        // También actualizamos otros datos del registro más reciente (como el costo)
+        grupos[key].costo = p.costo;
+      }
+    });
+
+    // Convertir a array y ordenar por el timestamp más reciente (DESC)
+    return Object.values(grupos).sort((a, b) => 
+      new Date(b.maxTimestamp).getTime() - new Date(a.maxTimestamp).getTime()
+    );
+  }, [productos]);
+
   const cargarProductosOffline = async () => {
     try {
       let lista = await localDb.obtenerProductosColaborador(solicitudId)
@@ -544,13 +584,25 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
   }
 
   const handleEliminar = async (item) => {
-    Alert.alert('Eliminar', '¿Quitar este producto de tu lista?', [
+    const esGrupo = item._ids && item._ids.length > 1;
+    const mensaje = esGrupo 
+      ? `¿Quitar todas las unidades (${item.cantidad}) de "${item.nombre}"?`
+      : '¿Quitar este producto de tu lista?';
+
+    Alert.alert('Eliminar', mensaje, [
       { text: 'Cancelar', style: 'cancel' },
       {
         text: 'Eliminar',
         style: 'destructive',
         onPress: async () => {
-          await localDb.eliminarProductoColaborador(item.temporalId)
+          if (item._ids) {
+            // Eliminar todos los registros que componen el grupo
+            for (const id of item._ids) {
+              await localDb.eliminarProductoColaborador(id)
+            }
+          } else {
+            await localDb.eliminarProductoColaborador(item.temporalId)
+          }
           cargarProductosOffline()
         },
       },
@@ -1169,10 +1221,10 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
 
       <View style={styles.content}>
         <FlatList
-          data={productos}
-          keyExtractor={(item, index) => item.temporalId || `producto-${index}-${Date.now()}`}
+          data={productosVisuales}
+          keyExtractor={(item, index) => item.temporalId || `grupo-${index}`}
           renderItem={renderProductoItem}
-          extraData={productos}
+          extraData={productosVisuales}
           contentContainerStyle={
             productos.length === 0 ? styles.emptyContainer : styles.listContent
           }

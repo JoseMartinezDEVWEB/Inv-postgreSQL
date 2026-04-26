@@ -3,6 +3,10 @@ const db = require('../models');
 const { authenticateToken } = require('./authRoutes');
 
 const router = express.Router();
+let io;
+router.setIo = (socketIoInstance) => {
+    io = socketIoInstance;
+};
 
 /**
  * Endpoint para recibir datos desde la app móvil
@@ -83,6 +87,36 @@ router.post('/sincronizar', authenticateToken, async (req, res) => {
                 }
 
                 if (!dbProd) {
+                    // ✅ NUEVO: También buscar/crear en ProductoGeneral para alimentar el catálogo global
+                    let productoGeneral = await db.ProductoGeneral.findOne({
+                        where: { nombre: pr.nombre.trim() },
+                        transaction: t
+                    });
+
+                    if (!productoGeneral && pr.codigoBarras) {
+                        productoGeneral = await db.ProductoGeneral.findOne({
+                            where: { codigoBarras: pr.codigoBarras },
+                            transaction: t
+                        });
+                    }
+
+                    if (!productoGeneral) {
+                        productoGeneral = await db.ProductoGeneral.create({
+                            nombre: pr.nombre.trim(),
+                            costoBase: pr.costo || 0,
+                            codigoBarras: pr.codigoBarras || pr.sku || '',
+                            unidad: pr.unidad || 'unidad',
+                            categoria: pr.categoria || 'General',
+                            descripcion: 'Sincronizado desde dispositivo móvil',
+                            activo: true,
+                            tipoCreacion: 'mobile_sync'
+                        }, { transaction: t });
+
+                        if (io) {
+                            io.emit('producto_general_creado', { producto: productoGeneral.toJSON() });
+                        }
+                    }
+
                     dbProd = await db.Producto.create({
                         nombre: pr.nombre,
                         descripcion: pr.descripcion || '',

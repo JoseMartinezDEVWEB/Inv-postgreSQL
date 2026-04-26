@@ -121,6 +121,7 @@ const syncRoutes = require('./routes/syncRoutes');
 invitacionesRoutes.setIo(io); // Inyectar socket.io para WebSockets
 productosRoutes.setIo(io);
 sesionesRoutes.setIo(io);
+syncRoutes.setIo(io);
 
 // Registrar rutas
 app.use('/api/auth', authRoutes);

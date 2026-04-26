@@ -90,8 +90,17 @@ router.post('/generales/importar', authenticateToken, authorizeRole(['administra
             }
         }
 
+        const creados = resultados.filter(r => r._importStatus === 'created').length;
+        const actualizados = resultados.filter(r => r._importStatus === 'updated').length;
+
         res.json({
-            mensaje: `Importación completada: ${resultados.length} productos procesados`,
+            exito: true,
+            mensaje: `Importación completada: ${creados} nuevos, ${actualizados} actualizados.`,
+            resumen: {
+                totalProcesados: productosProcesados.length,
+                creados,
+                actualizados
+            },
             productos: resultados
         });
 
@@ -354,6 +363,35 @@ router.post('/cliente/:clienteId', authenticateToken, async (req, res) => {
             });
         }
 
+        // ✅ NUEVO: También buscar/crear en ProductoGeneral para alimentar el catálogo global
+        let productoGeneral = await db.ProductoGeneral.findOne({
+            where: { nombre: nombre.trim() }
+        });
+
+        if (!productoGeneral && sku) {
+            productoGeneral = await db.ProductoGeneral.findOne({
+                where: { codigoBarras: sku }
+            });
+        }
+
+        if (!productoGeneral) {
+            productoGeneral = await db.ProductoGeneral.create({
+                nombre: nombre.trim(),
+                costoBase: costo || 0,
+                codigoBarras: sku || '',
+                unidad: unidad || 'unidad',
+                categoria: categoria || 'General',
+                descripcion: `Creado manualmente para cliente ID: ${clienteId}`,
+                activo: true,
+                tipoCreacion: 'manual_client_creation',
+                creadoPorId: req.user.id
+            });
+
+            if (io) {
+                io.emit('producto_general_creado', { producto: productoGeneral.toJSON() });
+            }
+        }
+
         const producto = await db.Producto.create({
             nombre,
             descripcion,
@@ -366,7 +404,7 @@ router.post('/cliente/:clienteId', authenticateToken, async (req, res) => {
         });
 
         res.status(201).json({
-            mensaje: 'Producto creado correctamente para el cliente',
+            mensaje: 'Producto creado correctamente para el cliente y agregado al catálogo general',
             datos: producto
         });
     } catch (error) {

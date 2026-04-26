@@ -338,8 +338,39 @@ router.post('/:id/productos', authenticateToken, async (req, res) => {
             return res.status(404).json({ mensaje: 'Producto base no encontrado' });
         }
 
-        // Crear registro en ProductoContado
-        const productoContado = await db.ProductoContado.create({
+        // ✅ NUEVO: Buscar si el producto ya existe en la sesión para SUMARLO (Idempotencia)
+        let productoContado = await db.ProductoContado.findOne({
+            where: {
+                sesionInventarioId: id,
+                [db.Sequelize.Op.or]: [
+                    { productoClienteId: productoClienteId },
+                    { nombreProducto: productoBase.nombre }
+                ]
+            }
+        });
+
+        if (productoContado) {
+            // Si ya existe, sumar cantidades y actualizar costo
+            const nuevaCantidad = (Number(productoContado.cantidadContada) || 0) + (Number(cantidadContada) || 0);
+            await productoContado.update({
+                cantidadContada: nuevaCantidad,
+                costoProducto: productoBase.costo,
+                valorTotal: nuevaCantidad * (productoBase.costo || 0),
+                notas: notas ? `${productoContado.notas}\n${notas}`.trim() : productoContado.notas,
+                updatedAt: new Date() // Forzar actualización de fecha para que suba en la lista
+            });
+
+            if (io) io.emit('update_session_inventory', { 
+                sesionId: id, 
+                timestamp: Date.now(),
+                action: 'update',
+                producto: productoContado
+            });
+            return res.status(200).json(productoContado);
+        }
+
+        // Si no existe, crear nuevo registro
+        productoContado = await db.ProductoContado.create({
             sesionInventarioId: id,
             productoClienteId,
             nombreProducto: productoBase.nombre,

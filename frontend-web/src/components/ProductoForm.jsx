@@ -259,11 +259,11 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <form onSubmit={handleSubmit} className="space-y-4 text-sm">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Nombre del producto */}
         <div className="md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             <Package className="w-4 h-4 inline mr-1" />
             Nombre del Producto *
           </label>
@@ -272,7 +272,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
             name="nombre"
             value={formData.nombre}
             onChange={handleInputChange}
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+            className={`w-full px-3 py-1.5 text-sm border rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
               errors.nombre ? 'border-red-300' : 'border-gray-300'
             }`}
             placeholder="Ej: Arroz Blanco"
@@ -285,15 +285,15 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
         {/* Descripción */}
         <div className="md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             Descripción
           </label>
           <textarea
             name="descripcion"
             value={formData.descripcion}
             onChange={handleInputChange}
-            rows={3}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            rows={2}
+            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             placeholder="Descripción detallada del producto"
             maxLength={500}
           />
@@ -304,7 +304,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
         {/* Categoría */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             <Tag className="w-4 h-4 inline mr-1" />
             Categoría *
           </label>
@@ -312,7 +312,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
             name="categoria"
             value={formData.categoria}
             onChange={handleInputChange}
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+            className={`w-full px-3 py-1.5 text-sm border rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
               errors.categoria ? 'border-red-300' : 'border-gray-300'
             }`}
           >
@@ -329,14 +329,14 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
         {/* Unidad */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             Unidad de Medida *
           </label>
           <select
             name="unidad"
             value={formData.unidad}
             onChange={handleInputChange}
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+            className={`w-full px-3 py-1.5 text-sm border rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
               errors.unidad ? 'border-red-300' : 'border-gray-300'
             }`}
           >
@@ -353,7 +353,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
         {/* Costo Base */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             <DollarSign className="w-4 h-4 inline mr-1" />
             Costo Base *
           </label>
@@ -364,7 +364,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
             onChange={handleCostoBaseChange}
             min="0"
             step="0.01"
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+            className={`w-full px-3 py-1.5 text-sm border rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
               errors.costoBase ? 'border-red-300' : 'border-gray-300'
             }`}
             placeholder="0.00"
@@ -376,7 +376,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
         {/* Proveedor */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             <User className="w-4 h-4 inline mr-1" />
             Proveedor
           </label>
@@ -385,7 +385,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
             name="proveedor"
             value={formData.proveedor}
             onChange={handleInputChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             placeholder="Nombre del proveedor"
             maxLength={200}
           />
@@ -393,7 +393,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
         {/* Código de Barras */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             <Hash className="w-4 h-4 inline mr-1" />
             Código de Barras
           </label>
@@ -405,7 +405,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
               value={formData.codigoBarras}
               onChange={handleInputChange}
               onKeyPress={(e) => handleCodigoBarrasKeyPress(e, 'contenedor')}
-              className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+              className={`flex-1 px-3 py-1.5 text-sm border rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
                 errors.codigoBarras ? 'border-red-300' : 'border-gray-300'
               } ${isScanning && scanningField === 'contenedor' ? 'ring-2 ring-blue-500' : ''}`}
               placeholder="1234567890123"
@@ -414,7 +414,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
             <button
               type="button"
               onClick={() => handleActivarEscaneo('contenedor')}
-              className={`px-4 py-2 border rounded-lg flex items-center gap-2 transition-colors ${
+              className={`px-3 py-1.5 text-sm border rounded-md flex items-center gap-1 transition-colors ${
                 isScanning && scanningField === 'contenedor'
                   ? 'bg-blue-500 text-white border-blue-500'
                   : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
@@ -436,21 +436,21 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
         </div>
 
         {/* ==== SECCIÓN: TIPO DE CONTENEDOR ==== */}
-        <div className="md:col-span-2 mt-4">
-          <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
-            <h3 className="text-sm font-semibold text-blue-800 mb-3">Tipo de Contenedor</h3>
+        <div className="md:col-span-2 mt-2">
+          <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-md">
+            <h3 className="text-sm font-semibold text-blue-800 mb-2">Tipo de Contenedor</h3>
             
             {/* Tipo de Contenedor */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
                   Tipo de Contenedor *
                 </label>
                 <select
                   name="tipoContenedor"
                   value={formData.tipoContenedor}
                   onChange={handleInputChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 >
                   {tiposContenedor.map((tipo) => (
                     <option key={tipo.value} value={tipo.value}>
@@ -463,14 +463,14 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
               {/* Tipo de Peso - Solo para sacos */}
               {formData.tipoContenedor === 'saco' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
                     Tipo de Peso *
                   </label>
                   <select
                     name="tipoPeso"
                     value={formData.tipoPeso}
                     onChange={handleInputChange}
-                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+                    className={`w-full px-3 py-1.5 text-sm border rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
                       errors.tipoPeso ? 'border-red-300' : 'border-gray-300'
                     }`}
                   >
@@ -488,7 +488,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
             </div>
 
             {/* Checkbox: ¿Tiene unidades internas? */}
-            <div className="mt-4">
+            <div className="mt-3">
               <label className="flex items-center space-x-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -507,13 +507,13 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
             {/* Campos de Unidades Internas - Solo si está marcado */}
             {formData.tieneUnidadesInternas && (
-              <div className="mt-4 pl-6 border-l-2 border-gray-300">
-                <h4 className="text-sm font-semibold text-gray-700 mb-3">Información de Unidades Internas</h4>
+              <div className="mt-3 pl-4 border-l-2 border-gray-300">
+                <h4 className="text-xs font-semibold text-gray-700 mb-2">Información de Unidades Internas</h4>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {/* Cantidad de unidades */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
                       Cantidad de Unidades *
                     </label>
                     <input
@@ -521,7 +521,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
                       value={formData.unidadesInternas.cantidad}
                       onChange={(e) => handleUnidadesInternasChange('cantidad', parseInt(e.target.value) || 0)}
                       min="1"
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+                      className={`w-full px-3 py-1.5 text-sm border rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
                         errors.unidadesCantidad ? 'border-red-300' : 'border-gray-300'
                       }`}
                       placeholder="12"
@@ -533,7 +533,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
                   {/* Código de barras de unidad */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
                       Código de Barras (Unidad) *
                     </label>
                     <div className="flex gap-2">
@@ -543,7 +543,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
                         value={formData.unidadesInternas.codigoBarras}
                         onChange={(e) => handleUnidadesInternasChange('codigoBarras', e.target.value)}
                         onKeyPress={(e) => handleCodigoBarrasKeyPress(e, 'unidad')}
-                        className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+                        className={`flex-1 px-3 py-1.5 text-sm border rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
                           errors.unidadesCodigoBarras ? 'border-red-300' : 'border-gray-300'
                         } ${isScanning && scanningField === 'unidad' ? 'ring-2 ring-blue-500' : ''}`}
                         placeholder="7501234567890"
@@ -552,7 +552,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
                       <button
                         type="button"
                         onClick={() => handleActivarEscaneo('unidad')}
-                        className={`px-3 py-2 border rounded-lg flex items-center gap-1 transition-colors text-sm ${
+                        className={`px-3 py-1.5 border rounded-md flex items-center gap-1 transition-colors text-sm ${
                           isScanning && scanningField === 'unidad'
                             ? 'bg-blue-500 text-white border-blue-500'
                             : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
@@ -574,14 +574,14 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
                   {/* Nombre de unidad (opcional) */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
                       Nombre de Unidad (Opcional)
                     </label>
                     <input
                       type="text"
                       value={formData.unidadesInternas.nombre}
                       onChange={(e) => handleUnidadesInternasChange('nombre', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                      className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                       placeholder="Ej: Botella Coca-Cola 12oz"
                       maxLength={200}
                     />
@@ -592,14 +592,14 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
                   {/* Costo por unidad (calculado automáticamente) */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
                       Costo por Unidad (Calculado)
                     </label>
                     <input
                       type="text"
                       value={`$${formData.unidadesInternas.costoPorUnidad.toFixed(2)}`}
                       readOnly
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-700 cursor-not-allowed"
+                      className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-gray-100 text-gray-700 cursor-not-allowed"
                       placeholder="$0.00"
                     />
                     <p className="mt-1 text-xs text-gray-500">
@@ -608,7 +608,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
                   </div>
                 </div>
 
-                <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded p-3">
+                <div className="mt-2 bg-yellow-50 border border-yellow-200 rounded-md p-2">
                   <p className="text-xs text-yellow-800">
                     <strong>Nota:</strong> Al crear este producto, se generará automáticamente un producto secundario 
                     con el código de barras de la unidad interna y el costo por unidad calculado.
@@ -621,15 +621,15 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
 
         {/* Notas */}
         <div className="md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             Notas Adicionales
           </label>
           <textarea
             name="notas"
             value={formData.notas}
             onChange={handleInputChange}
-            rows={2}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            rows={1}
+            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             placeholder="Información adicional sobre el producto"
             maxLength={1000}
           />
@@ -640,7 +640,7 @@ const ProductoForm = ({ producto, onSubmit, onCancel, isLoading = false }) => {
       </div>
 
       {/* Botones */}
-      <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
+      <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
         <Button
           type="button"
           variant="secondary"

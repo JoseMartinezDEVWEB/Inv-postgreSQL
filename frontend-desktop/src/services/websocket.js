@@ -172,6 +172,15 @@ class WebSocketService {
       this.emitLocal('sync_finished_ok', data)
     })
 
+    // ✅ FIX #1: Propagar actualizaciones de sesión en tiempo real
+    // Este evento llega del backend cuando el móvil agrega/actualiza productos.
+    // SIN este handler, el evento llega al socket real pero nunca alcanza los
+    // listeners registrados con webSocketService.on('update_session_inventory', ...)
+    this.socket.on('update_session_inventory', (data) => {
+      console.log('🔄 [WebSocket Desktop] update_session_inventory recibido:', data)
+      this.emitLocal('update_session_inventory', data)
+    })
+
     this.socket.on('error', (error) => {
       console.error('❌ Error WebSocket:', error)
     })

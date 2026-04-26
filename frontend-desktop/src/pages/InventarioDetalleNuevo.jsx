@@ -14,6 +14,7 @@ import { useAuth } from '../context/AuthContext'
 import { useSocket } from '../hooks/useSocket'
 import ProductoForm from '../components/ProductoForm'
 import ReporteInventarioModal from '../components/ReporteInventarioModal'
+import SearchProductModal from '../components/SearchProductModal'
 
 const PRODUCTOS_POR_PAGINA = 45
 
@@ -132,8 +133,6 @@ const InventarioDetalleNuevo = () => {
   // Estados para la gestión de productos y búsqueda
   const [codigoBarras, setCodigoBarras] = useState('')
   const [isSearching, setIsSearching] = useState(false)
-  const [nombreBusqueda, setNombreBusqueda] = useState('')
-  const [searchResults, setSearchResults] = useState([])
   const [selectedProducto, setSelectedProducto] = useState(null)
   const [cantidad, setCantidad] = useState('')
   const [costo, setCosto] = useState('')
@@ -259,7 +258,7 @@ const InventarioDetalleNuevo = () => {
       'Escape': () => {
         if (selectedProducto) {
           setSelectedProducto(null)
-          setNombreBusqueda('')
+          
           setCantidad('')
           setCosto('')
           toast.success('Producto quitado')
@@ -649,8 +648,8 @@ const InventarioDetalleNuevo = () => {
         setCantidad('')
         setCosto('')
         setCodigoBarras('')
-        setNombreBusqueda('')
-        setSearchResults([])
+        
+        
         setIsQuickScanMode(false)
         setQuickScanProduct(null)
         setLastScannedTime(Date.now())
@@ -898,10 +897,19 @@ const InventarioDetalleNuevo = () => {
     toast.success('QR descargado exitosamente')
   }
 
+  // ✅ FIX #3: Estado para prevenir doble-click en el botón Sincronizar
+  const [isSyncing, setIsSyncing] = useState(false)
+
   // Función para aceptar y sincronizar productos del colaborador (REFACTORIZADA - Batch Sync)
   const handleAceptarProductos = async (productosSeleccionados) => {
     if (!colaboradorSeleccionado || !productosSeleccionados?.length) return
+    // Prevenir doble ejecución (double-click, retry)
+    if (isSyncing) {
+      toast.error('Ya hay una sincronización en progreso, espera...')
+      return
+    }
 
+    setIsSyncing(true)
     const toastId = toast.loading(`Sincronizando ${productosSeleccionados.length} producto(s)...`)
 
     try {
@@ -939,29 +947,30 @@ const InventarioDetalleNuevo = () => {
         }
       }
 
-      // ─── LLAMADA ÚNICA AL BACKEND (batch sync) ───────────────────────────────
+      // ─── LLAMADA ÚNICA AL BACKEND (batch sync) ───────────────────────────────────────
       const response = await solicitudesConexionApi.batchSyncProductos(solicitudId, {
         sesionInventarioId: id,
         productos: productosConCantidadEditada
       })
-      // ────────────────────────────────────────────────────────────────────────
+      // ──────────────────────────────────────────────────────────────────────
 
       const { count = productosConCantidadEditada.length } = response.data
 
       toast.success(`✅ ${count} producto(s) sincronizados exitosamente`, { id: toastId })
 
-      // Refrescar datos de la sesión
-      queryClient.invalidateQueries(['sesion-inventario', id])
-      await refetch()
-
-      // Cerrar modal y limpiar estado
+      // Cerrar modal y limpiar estado ANTES del refetch para mejor UX
       setShowRevisarProductosModal(false)
       setColaboradorSeleccionado(null)
       setProductosParaRevisar([])
       setCantidadesEditadas({})
 
+      // Refrescar datos de la sesión (el socket event también dispara esto,
+      // pero hacemos refetch explícito como fallback de seguridad)
+      await queryClient.invalidateQueries(['sesion-inventario', id])
+      refetch()
+
       // Recargar colaboradores para actualizar estado de productos pendientes
-      await cargarColaboradoresConectados()
+      cargarColaboradoresConectados()
 
     } catch (error) {
       console.error('❌ Error en batch sync de productos:', error)
@@ -1211,87 +1220,8 @@ const InventarioDetalleNuevo = () => {
     return () => clearTimeout(debounce)
   }, [codigoBarras, lastScannedProduct, lastScannedTime, pendingProducts])
 
-  // Cargar productos generales cuando se abre el modal (sin búsqueda o con menos de 3 caracteres)
-  useEffect(() => {
-    const loadGeneralProducts = async () => {
-      if (!showSearchModal) return
-
-      // Si hay búsqueda con 3 o más caracteres, no cargar productos generales aquí
-      if (nombreBusqueda.length >= 3) return
-
-      setIsSearching(true)
-      try {
-        // Cargar productos generales sin filtro de búsqueda
-        const generalesResponse = await productosApi.getAllGenerales({
-          limite: 50,
-          pagina: 1,
-          soloActivos: true
-        })
-
-        // Backend PostgreSQL devuelve: { datos: [...], paginacion: {...} }
-        // donde datos es el array directamente (NO datos.productos)
-        const rawDatos = generalesResponse.data?.datos
-        const productosGenerales = Array.isArray(rawDatos)
-          ? rawDatos
-          : rawDatos?.productos || generalesResponse.data?.productos || []
-
-        console.log('📦 Productos generales cargados:', productosGenerales.length)
-        setSearchResults(productosGenerales)
-      } catch (error) {
-        console.error('Error cargando productos generales:', error)
-        setSearchResults([])
-      } finally {
-        setIsSearching(false)
-      }
-    }
-
-    loadGeneralProducts()
-  }, [showSearchModal, nombreBusqueda])
-
-  // Buscar por nombre (modal) - cuando hay 3 o más caracteres
-  useEffect(() => {
-    const searchByName = async () => {
-      if (!showSearchModal || nombreBusqueda.length < 3) return
-
-      setIsSearching(true)
-      try {
-        // Buscar en productos generales
-        const searchTerm = nombreBusqueda.trim()
-        console.log('🔍 Buscando por nombre:', searchTerm)
-
-        const generalesResponse = await productosApi.getAllGenerales({
-          buscar: searchTerm,
-          limite: 100, // Aumentar límite para búsqueda
-          pagina: 1,
-          soloActivos: true
-        })
-
-        // Backend PostgreSQL devuelve: { datos: [...], paginacion: {...} }
-        const rawDatos = generalesResponse.data?.datos
-        const productosGenerales = Array.isArray(rawDatos)
-          ? rawDatos
-          : rawDatos?.productos || generalesResponse.data?.productos || []
-
-        // Mapear y asegurar ID consistente
-        const productosProcesados = productosGenerales.map(p => ({
-          ...p,
-          _id: p.id || p._id || p.productoId,
-          nombre: p.nombre || 'Sin nombre'
-        }))
-
-        setSearchResults(productosProcesados)
-
-      } catch (error) {
-        console.error('Error buscando productos:', error)
-        setSearchResults([])
-      } finally {
-        setIsSearching(false)
-      }
-    }
-
-    const debounce = setTimeout(searchByName, 300)
-    return () => clearTimeout(debounce)
-  }, [nombreBusqueda, showSearchModal])
+  // El estado y la lógica de búsqueda por nombre ahora se manejan dentro de SearchProductModal
+  // para mejorar el rendimiento, evitar parpadeos y permitir navegación por teclado.
 
   const handleSelectProduct = (producto) => {
     // Asegurar que tenemos un ID (SQLite id vs MongoDB _id)
@@ -1311,8 +1241,8 @@ const InventarioDetalleNuevo = () => {
     const costoProducto = producto.costoBase !== undefined ? producto.costoBase : producto.costo
     setCosto(costoProducto?.toString() || '')
     setCodigoBarras('')
-    setNombreBusqueda('')
-    setSearchResults([])
+    
+    
     setShowSearchModal(false)
     setTimeout(() => cantidadInputRef.current?.focus(), 100)
   }
@@ -1321,13 +1251,13 @@ const InventarioDetalleNuevo = () => {
     // Si hay un producto seleccionado, limpiarlo primero
     if (selectedProducto) {
       setSelectedProducto(null)
-      setNombreBusqueda('')
+      
       setCantidad('')
       setCosto('')
     }
     setShowSearchModal(true)
-    setNombreBusqueda('')
-    setSearchResults([])
+    
+    
   }
 
   const handleAddProduct = async () => {
@@ -1370,12 +1300,13 @@ const InventarioDetalleNuevo = () => {
           newData.productosContados = [...(newData.productosContados || [])];
           const idx = newData.productosContados.findIndex(p => p.id === productoExistente.id);
           if (idx !== -1) {
+            // Actualizar y mover al principio (el sort por updatedAt lo hará, pero forzamos el campo)
             newData.productosContados[idx] = { 
               ...newData.productosContados[idx], 
               cantidadContada: nuevaCantidad, 
               costoProducto: costoFinal,
               valorTotal: nuevaCantidad * costoFinal,
-              updatedAt: new Date().toISOString()
+              updatedAt: new Date().toISOString() // Mover al principio
             };
           }
           return newData;
@@ -1388,8 +1319,8 @@ const InventarioDetalleNuevo = () => {
         setCantidad('')
         setCosto('')
         setCodigoBarras('')
-        setNombreBusqueda('')
-        setSearchResults([])
+        
+        
         setIsQuickScanMode(false)
         setQuickScanProduct(null)
         setLastScannedTime(0)
@@ -1481,8 +1412,8 @@ const InventarioDetalleNuevo = () => {
         setCantidad('')
         setCosto('')
         setCodigoBarras('')
-        setNombreBusqueda('')
-        setSearchResults([])
+        
+        
         searchInputRef.current?.focus()
         toast.success(`Agregando...`)
 
@@ -2504,46 +2435,59 @@ const InventarioDetalleNuevo = () => {
     }
   }, [id, sesion?.timerEnMarcha])
 
-  // Escuchar si hay alguna actualización masiva silenciosa (backend) a este inventario
+  // ✅ FIX #4: Socket handler mejorado para manejar todos los tipos de eventos
+  // - action='add'/'update'/'delete': actualización quirurgica del caché (bajo latencia)
+  // - action='batch' o sin action: refetch completo de la sesión (datos frescos garantizados)
   const { on, off } = useSocket()
   useEffect(() => {
     const handleUpdate = (data) => {
-      // Si el evento afecta a esta sesión, actualizamos el caché
-      if (data && String(data.sesionId) === String(id)) {
-        if (data.action && data.producto) {
-          queryClient.setQueryData(['sesion-inventario', id], (oldData) => {
-            if (!oldData) return oldData;
-            
-            const newData = { ...oldData };
-            newData.productosContados = newData.productosContados ? [...newData.productosContados] : [];
-            
-            if (data.action === 'add') {
-              // Comprobar que no exista (para evitar duplicados por latencia)
-              const exists = newData.productosContados.some(p => p.id === data.producto.id);
-              if (!exists) {
-                // Remove temporary products if any match
-                newData.productosContados = newData.productosContados.filter(p => !String(p.id).startsWith('temp-'));
-                newData.productosContados.unshift(data.producto);
-              }
-            } else if (data.action === 'update') {
-              const idx = newData.productosContados.findIndex(p => p.id === data.producto.id);
-              if (idx !== -1) {
-                newData.productosContados[idx] = { ...newData.productosContados[idx], ...data.producto };
-              }
-            } else if (data.action === 'delete') {
-              newData.productosContados = newData.productosContados.filter(p => p.id !== data.productoId);
-            }
-            
-            return newData;
-          });
-          // Not refetching to save bandwidth, unless needed
-        } else {
-          // Fallback para eventos viejos sin payload
-          refetch();
-        }
+      if (!data || String(data.sesionId) !== String(id)) return
+
+      console.log('🔄 [Socket] update_session_inventory recibido:', data)
+
+      if (data.action === 'add' && data.producto) {
+        // Actualización quirurgica para agregar un producto
+        queryClient.setQueryData(['sesion-inventario', id], (oldData) => {
+          if (!oldData) return oldData
+          const exists = (oldData.productosContados || []).some(p => p.id === data.producto.id)
+          if (exists) return oldData
+          return {
+            ...oldData,
+            productosContados: [
+              data.producto,
+              ...(oldData.productosContados || []).filter(p => !String(p.id).startsWith('temp-'))
+            ]
+          }
+        })
+      } else if (data.action === 'update' && data.producto) {
+        // Actualización quirurgica para modificar un producto
+        queryClient.setQueryData(['sesion-inventario', id], (oldData) => {
+          if (!oldData) return oldData
+          return {
+            ...oldData,
+            productosContados: (oldData.productosContados || []).map(p =>
+              p.id === data.producto.id ? { ...p, ...data.producto } : p
+            )
+          }
+        })
+      } else if (data.action === 'delete' && data.productoId) {
+        // Actualización quirurgica para eliminar un producto
+        queryClient.setQueryData(['sesion-inventario', id], (oldData) => {
+          if (!oldData) return oldData
+          return {
+            ...oldData,
+            productosContados: (oldData.productosContados || []).filter(p => p.id !== data.productoId)
+          }
+        })
+      } else {
+        // action='batch', sin action, o cualquier otro: refetch completo
+        // Esto garantiza datos frescos y consistentes desde el backend
+        console.log('🔄 [Socket] Refetch completo de sesión por evento batch/genérico')
+        queryClient.invalidateQueries(['sesion-inventario', id])
+        refetch()
       }
     }
-    
+
     if (on && off) {
       on('update_session_inventory', handleUpdate)
       return () => off('update_session_inventory', handleUpdate)
@@ -3580,16 +3524,29 @@ const InventarioDetalleNuevo = () => {
                   <div className="flex items-center space-x-3">
                     <button
                       onClick={() => handleRechazarProductos(productosParaRevisar)}
-                      className="px-6 py-2.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-all font-medium"
+                      disabled={isSyncing}
+                      className="px-6 py-2.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Rechazar Todos
                     </button>
                     <button
                       onClick={() => handleAceptarProductos(productosParaRevisar)}
-                      className="px-6 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 transition-all font-medium shadow-md"
+                      disabled={isSyncing}
+                      className="px-6 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 transition-all font-medium shadow-md disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                     >
-                      Aceptar y Sincronizar
+                      {isSyncing ? (
+                        <>
+                          <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                          Sincronizando...
+                        </>
+                      ) : (
+                        'Aceptar y Sincronizar'
+                      )}
                     </button>
+
                   </div>
                 </div>
               </div>
@@ -3871,7 +3828,7 @@ const InventarioDetalleNuevo = () => {
                       if (e.key === 'Escape' && selectedProducto) {
                         e.preventDefault()
                         setSelectedProducto(null)
-                        setNombreBusqueda('')
+                        
                         setCantidad('')
                         setCosto('')
                         toast.success('Producto quitado')
@@ -4203,146 +4160,27 @@ const InventarioDetalleNuevo = () => {
         </div>
       </div>
 
-      {/* Search Modal */}
-      {showSearchModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold text-gray-800">Buscar Producto por Nombre</h3>
-              <button
-                onClick={() => setShowSearchModal(false)}
-                className="text-gray-500 hover:text-gray-700 transition-colors"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            {/* Input de búsqueda */}
-            <div className="mb-4">
-              <input
-                type="text"
-                value={nombreBusqueda}
-                onChange={(e) => setNombreBusqueda(e.target.value)}
-                placeholder="Escribe el nombre del producto..."
-                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-lg text-gray-900 bg-white"
-                autoFocus
-              />
-            </div>
-
-            {/* Lista de resultados */}
-            <div className="border border-gray-300 rounded-lg overflow-hidden" style={{ maxHeight: '400px', overflowY: 'auto' }}>
-              {isSearching ? (
-                <div className="p-8 text-center text-gray-500">
-                  <div className="loading-spinner w-8 h-8 mx-auto mb-2"></div>
-                  <p>Buscando productos...</p>
-                </div>
-              ) : searchResults.length === 0 ? (
-                <div className="p-8 text-center text-gray-500">
-                  <Search className="w-12 h-12 mx-auto mb-2 text-gray-300" />
-                  <p>
-                    {nombreBusqueda.length === 0
-                      ? 'Listado de productos generales'
-                      : nombreBusqueda.length < 3
-                        ? 'Escribe al menos 3 caracteres para buscar'
-                        : 'No se encontraron productos'}
-                  </p>
-                </div>
-              ) : (
-                <div className="divide-y divide-gray-200">
-                  {/* Mostrar mensaje según el tipo de búsqueda */}
-                  {nombreBusqueda.length === 0 ? (
-                    <div className="px-4 py-2 bg-blue-50 text-blue-800 text-sm font-medium">
-                      📦 Productos Generales ({searchResults.length})
-                    </div>
-                  ) : nombreBusqueda.length < 3 ? (
-                    <div className="px-4 py-2 bg-yellow-50 text-yellow-800 text-sm">
-                      Escribe al menos 3 caracteres para filtrar los productos
-                    </div>
-                  ) : (
-                    <div className="px-4 py-2 bg-green-50 text-green-800 text-sm font-medium">
-                      🔍 Resultados de búsqueda: "{nombreBusqueda}" ({searchResults.length})
-                    </div>
-                  )}
-
-                  {/* Opción para crear producto si no tiene código de barras */}
-                  {nombreBusqueda.length > 0 && (
-                    <div className="px-4 py-2 bg-yellow-50 text-yellow-800 text-sm">
-                      ¿No encuentra el producto? Puedes crearlo ahora.
-                      <button
-                        onClick={() => {
-                          setShowSearchModal(false)
-                          setShowAddProductModal(true)
-                          setNewProductData({ nombre: nombreBusqueda, codigoBarras: '', sku: '', categoria: '', unidad: 'unidad', costo: '', descripcion: '', proveedor: '' })
-                        }}
-                        className="ml-2 px-2 py-1 bg-yellow-600 hover:bg-yellow-700 text-white rounded"
-                      >
-                        Crear producto
-                      </button>
-                    </div>
-                  )}
-
-                  {searchResults.map((producto) => (
-                    <button
-                      key={producto._id || producto.id}
-                      onClick={() => handleSelectProduct(producto)}
-                      className="w-full px-4 py-3 text-left hover:bg-blue-50 transition-colors flex items-center justify-between"
-                    >
-                      <div className="flex-1">
-                        <div className="font-semibold text-gray-900">
-                          {nombreBusqueda.length >= 3
-                            ? highlightMatch(producto.nombre, nombreBusqueda)
-                            : producto.nombre}
-                        </div>
-                        <div className="text-sm text-gray-600">
-                          {producto.categoria || 'Sin categoría'} • {producto.unidad || 'unidad'}
-                          {producto.codigoBarras && ` • Código: ${producto.codigoBarras}`}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-bold text-blue-600">
-                          ${safeToFixed(producto.costo || producto.costoBase || 0, 2)}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {producto.sku || producto.codigoBarras || 'Sin SKU'}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="mt-4 flex justify-between">
-              <button
-                onClick={() => {
-                  setShowSearchModal(false)
-                  setShowAddProductModal(true)
-                  setNewProductData({
-                    nombre: nombreBusqueda || '',
-                    codigoBarras: '',
-                    sku: '',
-                    categoria: '',
-                    unidad: 'unidad',
-                    costo: '',
-                    descripcion: '',
-                    proveedor: ''
-                  })
-                }}
-                className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-medium transition-colors flex items-center space-x-2"
-              >
-                <span>+</span>
-                <span>Crear Producto</span>
-              </button>
-              <button
-                onClick={() => setShowSearchModal(false)}
-                className="px-6 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded font-medium transition-colors"
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Search Modal - Componente refactorizado para evitar parpadeo y añadir navegación */}
+      <SearchProductModal
+        isOpen={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+        onSelect={handleSelectProduct}
+        clienteId={obtenerClienteId(sesion)}
+        onOpenCreate={(term) => {
+          setShowSearchModal(false)
+          setShowAddProductModal(true)
+          setNewProductData({ 
+            nombre: term || '', 
+            codigoBarras: '', 
+            sku: '', 
+            categoria: '', 
+            unidad: 'unidad', 
+            costo: '', 
+            descripcion: '', 
+            proveedor: '' 
+          })
+        }}
+      />
 
       {/* Modal de Confirmación - Salir sin Guardar */}
       {showExitModal && (

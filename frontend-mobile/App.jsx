@@ -11,6 +11,7 @@ import { ApiProvider } from './src/context/ApiContext'; // <-- 1. IMPORTAR
 import { gestureHandlerRootHOC } from 'react-native-gesture-handler';
 import FlashMessage from 'react-native-flash-message';
 import { QueryClient, QueryClientProvider } from 'react-query';
+import { useKeepAwake } from 'expo-keep-awake';
 import LoaderPortal from './src/components/LoaderPortal';
 import { initializeOfflineMode } from './src/services/api';
 
@@ -127,6 +128,7 @@ function AppContent() {
 }
 
 export default gestureHandlerRootHOC(function App() {
+  useKeepAwake();
   const [dbInitialized, setDbInitialized] = React.useState(false);
   const appState = React.useRef(AppState.currentState);
 

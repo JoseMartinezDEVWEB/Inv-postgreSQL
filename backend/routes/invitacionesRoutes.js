@@ -489,17 +489,29 @@ router.post('/:id/productos-offline', async (req, res) => {
         const solicitud = await db.SolicitudConexion.findByPk(req.params.id);
         if (!solicitud) return res.status(404).json({ mensaje: 'No encontrada' });
 
+        // Extraer datos soportando ambos formatos (directo o dentro de productoData)
+        const data = req.body.productoData || req.body;
+        
         const nuevoProducto = {
-            id: req.body.temporalId || req.body.id || Date.now().toString(),
-            nombre: req.body.nombre,
-            cantidad: req.body.cantidad,
-            costo: req.body.costo,
-            unidad: req.body.unidad,
-            categoria: req.body.categoria,
-            codigoBarras: req.body.codigoBarras,
+            id: data.temporalId || data.id || Date.now().toString(),
+            nombre: data.nombre,
+            cantidad: data.cantidad,
+            costo: data.costo,
+            unidad: data.unidad,
+            categoria: data.categoria,
+            codigoBarras: data.codigoBarras || data.sku,
             sincronizado: false,
             timestamp: new Date()
         };
+
+        const metadata = solicitud.metadata || {};
+        const procesados = metadata.procesados || [];
+
+        // Validación anti-duplicados por UUID (temporalId)
+        if (procesados.includes(nuevoProducto.id)) {
+            nuevoProducto.sincronizado = true;
+            return res.json({ ok: true, datos: nuevoProducto, procesadoDirectamente: true, duplicado: true });
+        }
 
         // Si la solicitud está conectada y tiene sesionInventarioId, PROCESAR AUTOMÁTICAMENTE
         if (solicitud.estado === 'aceptada' && solicitud.sesionInventarioId) {
@@ -584,18 +596,32 @@ router.post('/:id/productos-offline', async (req, res) => {
                     });
 
                     if (!created) {
+                        // ✅ SUMAR es el comportamiento requerido: 
+                        // El producto pasa al primer lugar al actualizarse (Sequelize actualiza updatedAt)
                         const nuevaCantidad = Number(productoContado.cantidadContada) + finalCantidad;
                         await productoContado.update({
                             cantidadContada: nuevaCantidad,
-                            costoProducto: finalCosto, // Actualiza el costo al del escaneo, o se puede promediar si el usuario lo prefiere
-                            valorTotal: nuevaCantidad * finalCosto
+                            costoProducto: finalCosto,
+                            valorTotal: nuevaCantidad * finalCosto,
+                            agregadoPorId: solicitud.colaboradorId || solicitud.adminId
                         }, { transaction: t });
                     }
+
+                    // Registrar UUID como procesado para evitar futuros duplicados
+                    procesados.push(nuevoProducto.id);
+                    await solicitud.update({
+                        metadata: { ...metadata, procesados }
+                    }, { transaction: t });
                 });
 
-                // Notificar a la sesión para que todos los usuarios en la sala refresque su UI
+                // ✅ FIX #2A: Emitir evento enriquecido para que el frontend haga refetch limpio
+                // (sin action/producto el frontend ya hace refetch automático - es el camino seguro)
                 if (io) {
-                    io.emit('update_session_inventory', { sesionId: solicitud.sesionInventarioId, timestamp: Date.now() });
+                    io.emit('update_session_inventory', {
+                        sesionId: solicitud.sesionInventarioId,
+                        timestamp: Date.now(),
+                        action: 'batch'
+                    });
                 }
 
                 // Producto exitosamente inyectado de forma real, marcar como sincronizado
@@ -610,14 +636,16 @@ router.post('/:id/productos-offline', async (req, res) => {
 
         // --- FALLBACK MODO OFFLINE ---
         // Si no está asignada a sesión o falló la inyección, lo guardamos en la cola offline para revisión manual
-        const metadata = solicitud.metadata || {};
+        // Registrar UUID como procesado también aquí
+        procesados.push(nuevoProducto.id);
         const existentes = metadata.productosOffline || [];
         const nuevaLista = [...existentes, nuevoProducto];
 
         await solicitud.update({
             metadata: {
                 ...metadata,
-                productosOffline: nuevaLista
+                productosOffline: nuevaLista,
+                procesados
             }
         });
 
@@ -697,10 +725,19 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
             const temporalIdsExitosos = [];
 
             // 3. Procesar cada producto
+            const metadata = solicitud.metadata || {};
+            const procesados = metadata.procesados || [];
+
             for (const item of productos) {
                 try {
                     const { temporalId, productoData } = item;
                     if (!productoData) continue;
+
+                    // Validación anti-duplicados por UUID (temporalId)
+                    if (procesados.includes(temporalId)) {
+                        temporalIdsExitosos.push(temporalId);
+                        continue;
+                    }
 
                     const { nombre, cantidad, costo, unidad, categoria, sku, codigoBarras } = productoData;
                     const finalCantidad = Number(cantidad) || 1;
@@ -779,6 +816,10 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
                     });
 
                     if (!created) {
+                        // ✅ FIX #2B: SUMAR cantidades es el comportamiento correcto para
+                        // conteos parciales. La idempotencia se garantiza por `procesados[]`:
+                        // si el mismo temporalId ya fue procesado, el bloque de arriba
+                        // hace `continue` y nunca llega aquí, por lo que NO hay doble suma.
                         const nuevaCantidad = Number(productoContado.cantidadContada) + finalCantidad;
                         await productoContado.update({
                             cantidadContada: nuevaCantidad,
@@ -787,6 +828,8 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
                         }, { transaction: t });
                     }
 
+                    // Registrar UUID como procesado para evitar futuros duplicados
+                    procesados.push(temporalId);
                     temporalIdsExitosos.push(temporalId);
                 } catch (prodError) {
                     console.error(`⚠️ Error al sincronizar producto individual:`, prodError.message);
@@ -794,7 +837,6 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
             }
 
             // 4. Marcar en la solicitud como sincronizados
-            const metadata = solicitud.metadata || {};
             const existentes = metadata.productosOffline || [];
             const actualizados = existentes.map(prod => {
                 const pId = prod.id || prod.temporalId;
@@ -805,7 +847,7 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
             });
 
             await solicitud.update({
-                metadata: { ...metadata, productosOffline: actualizados }
+                metadata: { ...metadata, productosOffline: actualizados, procesados }
             }, { transaction: t });
 
             // 5. Auditoría
@@ -826,12 +868,20 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
                 exito: true,
                 mensaje: `Sincronizados ${temporalIdsExitosos.length} de ${productos.length} productos`,
                 procesados: temporalIdsExitosos.length,
+                count: temporalIdsExitosos.length,
                 sesionInventarioId
             };
         });
 
+        // ✅ FIX #2B: Emitir evento enriquecido al completar el batch
+        // El frontend recibirá esto y hará refetch automático de la sesión
         if (io && resultado.exito && resultado.sesionInventarioId) {
-            io.emit('update_session_inventory', { sesionId: resultado.sesionInventarioId, timestamp: Date.now() });
+            io.emit('update_session_inventory', {
+                sesionId: resultado.sesionInventarioId,
+                timestamp: Date.now(),
+                action: 'batch',
+                count: resultado.count
+            });
         }
         res.json(resultado);
     } catch (error) {
