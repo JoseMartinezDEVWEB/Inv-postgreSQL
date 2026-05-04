@@ -26,6 +26,16 @@ const DashboardScreen = ({ navigation }) => {
   const queryClient = useQueryClient()
   const [refreshing, setRefreshing] = React.useState(false)
 
+  // CORRECCIÓN 2: Redirigir colaboradores a Inventarios (no tienen datos en Dashboard)
+  React.useEffect(() => {
+    const isColaborador =
+      user?.rol === 'colaborador' ||
+      user?.tipo === 'colaborador_temporal'
+    if (isColaborador) {
+      navigation.reset({ index: 0, routes: [{ name: 'Inventarios' }] })
+    }
+  }, [user, navigation])
+
   const onRefresh = React.useCallback(() => {
     setRefreshing(true)
     showLoader(800)
@@ -54,35 +64,48 @@ const DashboardScreen = ({ navigation }) => {
     return () => unsubscribe();
   }, [queryClient]);
 
-  // Obtener estadísticas de clientes
+  // CORRECCIÓN 5: Queries con try/catch para evitar pantalla incompleta si el backend no responde
   const { data: totalClientes = 0 } = useQuery(
     'clientes-stats',
     async () => {
-      const response = await clientesApi.getAll({ limite: 1, pagina: 1 })
-      const datos = handleApiResponse(response)
-      return datos.paginacion?.total || datos.paginacion?.totalRegistros || 0
+      try {
+        const response = await clientesApi.getAll({ limite: 1, pagina: 1 })
+        const datos = handleApiResponse(response)
+        return datos.paginacion?.total || datos.paginacion?.totalRegistros || 0
+      } catch (e) {
+        console.warn('No se pudo cargar clientes:', e.message)
+        return 0
+      }
     },
-    { retry: 1 }
+    { retry: 1, staleTime: 5 * 60 * 1000 }
   )
 
-  // Obtener sesiones
   const { data: sesionesData } = useQuery(
     'sesiones-recientes',
     async () => {
-      const response = await sesionesApi.getAll({ limite: 50, pagina: 1 })
-      return handleApiResponse(response)
+      try {
+        const response = await sesionesApi.getAll({ limite: 50, pagina: 1 })
+        return handleApiResponse(response)
+      } catch (e) {
+        console.warn('No se pudo cargar sesiones:', e.message)
+        return null
+      }
     },
-    { retry: 1 }
+    { retry: 1, staleTime: 5 * 60 * 1000 }
   )
 
-  // Obtener estadísticas de reportes
   const { data: reportesData } = useQuery(
     'reportes-stats',
     async () => {
-      const response = await reportesApi.getStats()
-      return handleApiResponse(response)
+      try {
+        const response = await reportesApi.getStats()
+        return handleApiResponse(response)
+      } catch (e) {
+        console.warn('No se pudo cargar reportes:', e.message)
+        return null
+      }
     },
-    { retry: 1 }
+    { retry: 1, staleTime: 5 * 60 * 1000 }
   )
 
   // Calcular estadísticas
@@ -186,6 +209,23 @@ const DashboardScreen = ({ navigation }) => {
   ]
 
   const quickActions = allQuickActions.filter(action => !action.permission || hasPermission(action.permission))
+
+  // CORRECCIÓN 2: Fallback UI cuando no hay tarjetas ni acciones (ej. colaborador sin redirección aún)
+  if (statCards.length === 0 && quickActions.length === 0) {
+    return (
+      <View style={styles.emptyContainer}>
+        <Ionicons name="cube-outline" size={64} color="#9ca3af" />
+        <Text style={styles.emptyText}>Bienvenido, {user?.nombre || 'Usuario'}</Text>
+        <Text style={styles.emptySubtext}>Ve a Inventarios para comenzar</Text>
+        <TouchableOpacity
+          style={styles.emptyButton}
+          onPress={() => navigation.navigate('Inventarios')}
+        >
+          <Text style={styles.emptyButtonText}>Ir a Inventarios</Text>
+        </TouchableOpacity>
+      </View>
+    )
+  }
 
   return (
     <ScrollView
@@ -465,6 +505,39 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#94a3b8',
     textAlign: 'center',
+  },
+  // Estilos para fallback UI (sin tarjetas ni acciones)
+  emptyContainer: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+  },
+  emptyText: {
+    marginTop: 16,
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1e293b',
+    textAlign: 'center',
+  },
+  emptySubtext: {
+    marginTop: 8,
+    fontSize: 15,
+    color: '#64748b',
+    textAlign: 'center',
+  },
+  emptyButton: {
+    marginTop: 24,
+    backgroundColor: '#3b82f6',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+  },
+  emptyButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 })
 

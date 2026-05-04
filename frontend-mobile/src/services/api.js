@@ -243,8 +243,19 @@ api.interceptors.request.use(
         const isRemoteRoute = ROUTES_PREFER_REMOTE.some(r => requestConfig.url.includes(r));
 
         if (!isRemoteRoute && FORCE_STANDALONE) {
-            requestConfig.adapter = mockLocalResponse;
-            return requestConfig;
+            // CORRECCIÓN 6: Si el token es real (admin/contable autenticados remotamente),
+            // usar la API en lugar del adaptador local para no crashear por datos vacíos.
+            let currentToken = null;
+            try {
+                currentToken = await storage.getItem('auth_token');
+            } catch (_) {}
+
+            const hasRealToken = currentToken && !currentToken.startsWith('local-token-');
+            if (!hasRealToken) {
+                requestConfig.adapter = mockLocalResponse;
+                return requestConfig;
+            }
+            // Si hay token real, caer al flujo remoto (inyectar token más abajo)
         }
 
         // Siempre inyectar token si existe (para rutas remotas)

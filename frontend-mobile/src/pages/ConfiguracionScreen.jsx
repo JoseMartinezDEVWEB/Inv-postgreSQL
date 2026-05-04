@@ -1,19 +1,28 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, Keyboard } from 'react-native';
-import { useApi } from '../context/ApiContext';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  Keyboard,
+  ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { checkBackendConnectivity, resolveApiBaseUrl } from '../config/env';
+import { setRuntimeApiBaseUrl } from '../services/api';
 
 const ConfiguracionScreen = ({ navigation }) => {
-  const { apiUrl, updateApiUrl, isUrlDefault } = useApi();
-  
-  // Extraer solo la IP y el puerto de la URL completa
+  // Extraer solo la IP:PUERTO de la URL actual
   const extractIpAndPort = (url) => {
     if (!url) return '';
     const match = url.match(/https?:\/\/([^/]+)/);
     return match ? match[1] : url;
   };
 
-  const [ip, setIp] = useState(extractIpAndPort(apiUrl));
+  const [ipBackend, setIpBackend] = useState(extractIpAndPort(resolveApiBaseUrl()));
+  const [guardando, setGuardando] = useState(false);
 
   const normalizeHostPort = (value) => {
     if (!value) return '';
@@ -24,24 +33,38 @@ const ConfiguracionScreen = ({ navigation }) => {
       .replace(/\/+$/g, '');
   };
 
-  const handleSave = async () => {
+  // CORRECCIÓN 11: Validar conectividad antes de guardar la IP
+  const guardarConfiguracion = async () => {
     Keyboard.dismiss();
-    if (!ip || ip.trim() === '') {
-      Alert.alert('Error', 'La dirección IP no puede estar vacía.');
+
+    if (!ipBackend || ipBackend.trim() === '') {
+      Alert.alert('Error', 'Ingresa la IP del servidor Node.js+PostgreSQL');
       return;
     }
 
-    // Reconstruir la URL completa con /api al final
-    const hostPort = normalizeHostPort(ip);
-    const newApiUrl = `http://${hostPort}/api`;
-    
-    const success = await updateApiUrl(newApiUrl);
-    if (success) {
-      Alert.alert('Éxito', 'La dirección del servidor ha sido actualizada.', [
+    const cleanIp = normalizeHostPort(ipBackend);
+    const newApiUrl = `http://${cleanIp}/api`;
+
+    setGuardando(true);
+    try {
+      const { connected } = await checkBackendConnectivity(5000, newApiUrl);
+
+      if (!connected) {
+        Alert.alert(
+          'Sin conexión',
+          `No hay respuesta en ${newApiUrl}\n\nVerifica:\n• El backend Node.js+PostgreSQL está corriendo\n• El puerto 4501 está abierto\n• El dispositivo está en la misma red WiFi`
+        );
+        return;
+      }
+
+      await setRuntimeApiBaseUrl(newApiUrl);
+      Alert.alert('✅ Conectado', `Backend PostgreSQL en ${newApiUrl}`, [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
-    } else {
-      Alert.alert('Error', 'No se pudo guardar la configuración. Inténtalo de nuevo.');
+    } catch (e) {
+      Alert.alert('Error', e.message || 'No se pudo guardar la configuración');
+    } finally {
+      setGuardando(false);
     }
   };
 
@@ -49,27 +72,33 @@ const ConfiguracionScreen = ({ navigation }) => {
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
         <Text style={styles.title}>Configuración del Servidor</Text>
-        <Text style={styles.label}>Dirección IP y Puerto del Servidor</Text>
+
+        <Text style={styles.label}>IP y Puerto del Servidor Node.js+PostgreSQL</Text>
         <TextInput
           style={styles.input}
-          value={ip}
-          onChangeText={setIp}
-          placeholder="Ej: 192.168.1.50:4000"
+          value={ipBackend}
+          onChangeText={setIpBackend}
+          placeholder="Ej: 192.168.1.50:4501"
           autoCapitalize="none"
           keyboardType="url"
           autoCorrect={false}
+          editable={!guardando}
         />
         <Text style={styles.info}>
-          Aquí debes ingresar la dirección IP que aparece en la consola del servidor de escritorio.
+          Ingresa la dirección IP que aparece en la consola del backend PostgreSQL.{'\n'}
+          Asegúrate de que ambos dispositivos estén en la misma red WiFi.
         </Text>
-        {isUrlDefault && (
-          <Text style={styles.warning}>
-            Estás usando la dirección por defecto. Es probable que necesites cambiarla.
-          </Text>
-        )}
 
-        <TouchableOpacity style={styles.button} onPress={handleSave}>
-          <Text style={styles.buttonText}>Guardar y Reconectar</Text>
+        <TouchableOpacity
+          style={[styles.button, guardando && styles.buttonDisabled]}
+          onPress={guardarConfiguracion}
+          disabled={guardando}
+        >
+          {guardando ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Verificar y Guardar</Text>
+          )}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -109,18 +138,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginBottom: 20,
-  },
-  warning: {
-    fontSize: 13,
-    color: '#d9534f',
-    marginBottom: 20,
-    fontWeight: 'bold',
+    lineHeight: 18,
   },
   button: {
     backgroundColor: '#0275d8',
     padding: 15,
     borderRadius: 8,
     alignItems: 'center',
+    minHeight: 50,
+    justifyContent: 'center',
+  },
+  buttonDisabled: {
+    backgroundColor: '#7ab3e0',
   },
   buttonText: {
     color: '#fff',

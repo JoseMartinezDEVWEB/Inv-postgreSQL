@@ -1,22 +1,19 @@
 /**
  * Configuracion de entorno para la aplicacion movil
- * MODO HIBRIDO: Funciona con internet (backend) y sin internet (SQLite local)
+ * MODO HIBRIDO: Funciona con backend local (PostgreSQL) y sin internet (SQLite local)
+ * NOTA: El backend en Render (appj4-hlqj.onrender.com) está DEPRECADO y eliminado.
  */
 
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 // =============================================
-// CONFIGURACION DEL BACKEND
+// CONFIGURACION DEL BACKEND LOCAL
 // =============================================
-// URL del backend en la nube (Render) - Backend principal
-const CLOUD_API_URL = 'https://appj4-hlqj.onrender.com/api';
-
-// Si quieres usar un backend LOCAL en vez de la nube, configura aqui:
-// (Dejar en null para usar la nube o detectar automaticamente)
-const CUSTOM_BACKEND_IP = null;  // Ejemplo: '192.168.1.100'
-// Puerto estándar para el backend PostgreSQL
-// Puerto estándar para el backend PostgreSQL
+// Si quieres apuntar a una IP manual (sin auto-detección):
+// Ejemplo: '192.168.1.100'
+const CUSTOM_BACKEND_IP = null;
+// Puerto estándar del backend Node.js+PostgreSQL
 const CUSTOM_BACKEND_PORT = '4501';
 // =============================================
 
@@ -42,62 +39,48 @@ const buildLocalBackendUrl = (ip, port = '4501') => {
   return `http://${cleanIp}:${port}/api`;
 };
 
-// Funcion para resolver la URL de la API
+// Funcion para resolver la URL de la API (solo red local, sin Render)
 export const resolveApiBaseUrl = () => {
-  const extra = Constants.expoConfig?.extra ?? {};
-  const endpoints = extra.API_ENDPOINTS ?? {};
-  const deviceType = detectDeviceType();
-  const isProduction = isProductionBuild();
-
-  console.log('🔧 Configuracion de API:');
-  console.log('   Dispositivo:', deviceType);
-  console.log('   Produccion:', isProduction);
-
-  // 1. Prioridad: IP Personalizada manual
+  // 1. Prioridad: IP Personalizada manual configurada por el usuario
   if (CUSTOM_BACKEND_IP) {
     const customUrl = buildLocalBackendUrl(CUSTOM_BACKEND_IP, CUSTOM_BACKEND_PORT);
     console.log('   Usando backend personalizado:', customUrl);
     return customUrl;
   }
 
-  // 2. Producción: Usar nube
-  if (isProduction) {
-    console.log('✅ Modo PRODUCCION - Backend en la nube');
-    return CLOUD_API_URL;
-  }
-
-  // 3. Desarrollo: Detectar entorno
-  // Intenta usar la IP de la máquina de desarrollo (LAN) si está disponible en Constants
+  // 2. Auto-detección de IP LAN vía Expo (desarrollo)
   const debuggerHost = Constants.expoConfig?.hostUri;
   const lanIp = debuggerHost ? debuggerHost.split(':')[0] : null;
 
   if (lanIp && lanIp !== 'localhost' && lanIp !== '127.0.0.1') {
     const lanUrl = `http://${lanIp}:${CUSTOM_BACKEND_PORT}/api`;
-    console.log('💻 Modo DESARROLLO (LAN) - Detectado:', lanUrl);
+    console.log('   Auto-detectado LAN:', lanUrl);
     return lanUrl;
   }
 
-  // Fallback a endpoints configurados o nube
-  const devUrl = endpoints.lan ||
-    endpoints.emulator ||
-    endpoints.local ||
-    CLOUD_API_URL;
-
-  console.log('💻 Modo DESARROLLO - URL:', devUrl);
-  return devUrl;
+  // 3. Fallback: localhost (el usuario deberá configurar la IP manualmente
+  //    desde ConfiguracionScreen si el auto-detect falla)
+  const fallbackUrl = `http://localhost:${CUSTOM_BACKEND_PORT}/api`;
+  console.log('   Fallback a localhost (configurar IP manualmente):', fallbackUrl);
+  return fallbackUrl;
 };
 
-// Funcion para resolver URL de WebSocket
+// Funcion para resolver URL de WebSocket (ws:// para red local, sin SSL)
 export const resolveWebSocketUrl = () => {
   const apiUrl = resolveApiBaseUrl();
-  const wsUrl = apiUrl.replace('/api', '');
-  console.log('✅ WebSocket URL:', wsUrl);
+  // Usar ws:// en red local (no wss:// que requiere certificado SSL)
+  const wsUrl = apiUrl
+    .replace('https://', 'wss://')
+    .replace('http://', 'ws://')
+    .replace('/api', '');
+  console.log('\u2705 WebSocket URL (red local):', wsUrl);
   return wsUrl;
 };
 
 // Verificar conectividad con el backend
-export const checkBackendConnectivity = async (timeout = 5000) => {
-  const apiUrl = resolveApiBaseUrl();
+// apiUrlOverride: URL a verificar (opcional). Si no se provee, usa la URL actual.
+export const checkBackendConnectivity = async (timeout = 5000, apiUrlOverride = null) => {
+  const apiUrl = apiUrlOverride || resolveApiBaseUrl();
 
   try {
     console.log('🔍 Verificando conectividad con:', `${apiUrl}/salud`);
@@ -140,7 +123,6 @@ export const isOnline = () => _isOnline;
 export const getConfigInfo = () => ({
   apiUrl: resolveApiBaseUrl(),
   wsUrl: resolveWebSocketUrl(),
-  cloudUrl: CLOUD_API_URL,
   customBackendIP: CUSTOM_BACKEND_IP,
   isProduction: isProductionBuild(),
   deviceType: detectDeviceType(),
@@ -152,7 +134,7 @@ export const config = {
   // URLs
   apiUrl: resolveApiBaseUrl(),
   wsUrl: resolveWebSocketUrl(),
-  cloudApiUrl: CLOUD_API_URL,
+  // cloudApiUrl eliminado — el backend Render/MongoDB está deprecado
 
   // Estado
   isOffline: false,

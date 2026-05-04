@@ -522,7 +522,16 @@ export const AuthProvider = ({ children }) => {
   const lastAuthErrorTime = React.useRef(0)
 
   useEffect(() => {
-    const handleWsAuthError = async ({ message }) => {
+    const handleWsAuthError = async ({ message, code }) => {
+      // CORRECCIÓN 9: Solo hacer logout si el SERVIDOR rechazó el token explícitamente.
+      // Cortes de WiFi o red local inestable NO deben cerrar la sesión.
+      const AUTH_ERROR_CODES = [4001, 4003, 4401]
+      if (!code || !AUTH_ERROR_CODES.includes(code)) {
+        // Error transitorio de red local — mantener sesión, el WS reconectará
+        console.log('🌐 [AuthContext] Corte de WebSocket por red local, manteniendo sesión...')
+        return
+      }
+
       // Evitar múltiples ejecuciones simultáneas
       const now = Date.now()
       if (isHandlingAuthError.current || (now - lastAuthErrorTime.current) < 10000) {
@@ -533,7 +542,7 @@ export const AuthProvider = ({ children }) => {
       isHandlingAuthError.current = true
       lastAuthErrorTime.current = now
 
-      console.error('🔐 Error de autenticación en WebSocket:', message)
+      console.error('🔐 Token rechazado por el servidor PostgreSQL (código:', code, ')')
 
       try {
         // Verificar si hay un refresh token disponible
@@ -543,7 +552,6 @@ export const AuthProvider = ({ children }) => {
         // Si el refresh token es local o no existe, hacer logout silencioso
         if (!refresh || refresh.startsWith('local-refresh-')) {
           console.log('🔐 No hay refresh token válido para renovar sesión')
-          // Para usuarios locales, simplemente desconectar WebSocket sin hacer logout
           webSocketService.disconnect(false)
           isHandlingAuthError.current = false
           return
@@ -551,7 +559,7 @@ export const AuthProvider = ({ children }) => {
 
         if (refresh && state.token) {
           // Intentar refrescar el token una vez
-          console.log('🔄 Intentando refrescar token después de error WS...')
+          console.log('🔄 Intentando refrescar token después de rechazo del servidor...')
           try {
             const response = await axios.post(`${config.apiUrl}/auth/refresh`, {
               refreshToken: refresh,
@@ -561,15 +569,13 @@ export const AuthProvider = ({ children }) => {
             const newRefreshToken = response.data.datos?.refreshToken
 
             if (newAccessToken) {
-              console.log('✅ Token refrescado después de error WS')
+              console.log('✅ Token refrescado después de rechazo del servidor')
 
-              // Guardar nuevos tokens
               await Promise.all([
                 setInternetCredentials('auth_token', 'token', newAccessToken),
                 setInternetCredentials('refresh_token', 'refresh', newRefreshToken || refresh),
               ])
 
-              // Actualizar estado
               dispatch({
                 type: AUTH_ACTIONS.LOGIN_SUCCESS,
                 payload: {
@@ -579,10 +585,8 @@ export const AuthProvider = ({ children }) => {
                 },
               })
 
-              // Resetear el bloqueo de autenticación del WebSocket
               webSocketService.resetAuthBlock()
 
-              // Esperar un momento antes de reconectar para asegurar que el estado se actualizó
               setTimeout(() => {
                 webSocketService.connect(newAccessToken)
                 isHandlingAuthError.current = false
@@ -591,11 +595,11 @@ export const AuthProvider = ({ children }) => {
               return
             }
           } catch (error) {
-            console.error('❌ No se pudo refrescar token después de error WS:', error.message)
+            console.error('❌ No se pudo refrescar token:', error.message)
           }
         }
 
-        // Si no se pudo refrescar o no hay refresh token, hacer logout
+        // Si no se pudo refrescar, hacer logout con mensaje
         showMessage({
           message: 'Sesión expirada',
           description: message || 'Por favor, inicia sesión nuevamente',
@@ -604,7 +608,6 @@ export const AuthProvider = ({ children }) => {
         })
         logout()
       } finally {
-        // Resetear el flag después de un tiempo para permitir futuros intentos
         setTimeout(() => {
           isHandlingAuthError.current = false
         }, 15000)

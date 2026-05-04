@@ -157,13 +157,28 @@ class WebSocketService {
       this.emitLocal('connected', { socketId: this.socket.id })
     })
 
-    this.socket.on('disconnect', (reason) => {
+    this.socket.on('disconnect', (reason, details) => {
       console.log(`❌ [WebSocket Mobile] WebSocket desconectado: ${reason}`)
       this.isConnected = false
       this.isConnecting = false
       this.emitLocal('disconnected', { reason })
       
-      // Solo reconectar si no fue desconexión manual
+      // CORRECCIÓN 8: Solo emitir auth_error si el servidor rechazó el token explícitamente
+      const AUTH_ERROR_CODES = [4001, 4003, 4401]
+      const closeCode = details?.context?.closeCode || details?.code
+      if (closeCode && AUTH_ERROR_CODES.includes(closeCode)) {
+        const timeSinceLastEmit = Date.now() - (this._lastAuthErrorEmit || 0)
+        if (timeSinceLastEmit > 10000) {
+          this._lastAuthErrorEmit = Date.now()
+          this.emitLocal('auth_error', {
+            message: 'Token rechazado por el servidor',
+            code: closeCode,
+          })
+        }
+        return // No reconectar — el token es inválido
+      }
+      
+      // Solo reconectar si no fue desconexión manual o error de auth
       if (reason !== 'io client disconnect') {
         this.scheduleReconnect()
       }
@@ -176,40 +191,15 @@ class WebSocketService {
     })
 
     this.socket.on('connect_error', (error) => {
-      console.error('⚠️ Error de conexión WebSocket:', error.message || error)
+      console.warn('⚠️ [WebSocket] Error de conexión (red local):', error.message || error)
       this.isConnected = false
       this.isConnecting = false
-      const message = this.extractErrorMessage(error)
-      this.lastErrorMessage = message
 
-      // Si es error de autenticación, no reintentar y bloquear
-      if (this.isAuthError(message)) {
-        this.authErrorCount++
-        this.lastAuthErrorTime = Date.now()
-        
-        console.error(`❌ Error de autenticación (${this.authErrorCount}), no se reintentará`)
-        
-        // Si hay más de 2 errores de auth consecutivos, bloquear reconexiones
-        if (this.authErrorCount >= 2) {
-          this.isAuthBlocked = true
-          console.error('🚫 Múltiples errores de autenticación, bloqueando reconexiones por 30 segundos')
-        }
-        
-        // Solo emitir el evento auth_error una vez cada 10 segundos
-        const timeSinceLastEmit = Date.now() - (this._lastAuthErrorEmit || 0)
-        if (timeSinceLastEmit > 10000) {
-          this._lastAuthErrorEmit = Date.now()
-          this.emitLocal('auth_error', { message: message || 'Token inválido o expirado' })
-        }
-        
-        this.disconnect(false)
-        return
-      }
-
-      // Resetear contador de errores de auth si no es error de auth
-      this.authErrorCount = 0
-
-      // Programar reconexión con backoff exponencial
+      // CORRECCIÓN 8: En red local, connect_error NO significa token inválido.
+      // Puede ser el backend reiniciando, WiFi inestable, o el servicio aún no listo.
+      // Solo emitimos auth_error cuando el SERVIDOR lo indica explícitamente
+      // (vía event.code en onclose, no mediante mensajes de error de conexión).
+      // Simplemente programar reconexion:
       this.scheduleReconnect()
     })
 
@@ -464,21 +454,13 @@ class WebSocketService {
     return 'Error desconocido'
   }
 
-  // Verificar si es error de autenticación
-  isAuthError(message) {
-    if (!message) return false
-    const normalized = message.toLowerCase()
-    return (
-      normalized.includes('token') ||
-      normalized.includes('autenticación') ||
-      normalized.includes('autenticacion') ||
-      normalized.includes('auth') ||
-      normalized.includes('invalid') ||
-      normalized.includes('inválido') ||
-      normalized.includes('expired') ||
-      normalized.includes('expirado') ||
-      normalized.includes('unauthorized')
-    )
+  // CORRECCIÓN 8: isAuthError solo detecta rechazos explícitos del servidor.
+  // NO se dispara por strings genéricos como 'token', 'auth', 'invalid' en el mensaje
+  // porque en red local esos strings pueden aparecer en errores de conexión transitorios.
+  isAuthError(code) {
+    // Solo códigos de error explícitos del backend PostgreSQL
+    const AUTH_ERROR_CODES = [4001, 4003, 4401]
+    return AUTH_ERROR_CODES.includes(code)
   }
 }
 

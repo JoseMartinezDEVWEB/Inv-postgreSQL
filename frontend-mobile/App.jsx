@@ -69,19 +69,20 @@ function RootNavigator() {
       {isAuthenticated ? (
         <>
           <Stack.Screen name="MainApp" component={DrawerNavigator} />
-          {/* También disponible aquí para evitar cierres durante transiciones de rol */}
+          {/* CORRECCIÓN 4: SesionColaborador SOLO en el stack de autenticados.
+              loginAsCollaborator() sube isAuthenticated=true antes de navegar,
+              por lo que el stack cambia al autenticado y el screen debe estar aquí. */}
           <Stack.Screen name="SesionColaborador" component={SesionColaboradorScreen} />
         </>
       ) : (
         <>
           <Stack.Screen name="Login" component={LoginScreen} />
           <Stack.Screen name="EsperaAutorizacion" component={EsperaAutorizacionScreen} />
-          <Stack.Screen name="SesionColaborador" component={SesionColaboradorScreen} />
-          {/* 3. AÑADIR PANTALLA AL STACK */}
-          <Stack.Screen 
-            name="Configuracion" 
-            component={ConfiguracionScreen} 
-            options={{ headerShown: true, title: 'Configuración del Servidor' }} 
+          {/* SesionColaborador eliminado de aquí — vive solo en el stack autenticado */}
+          <Stack.Screen
+            name="Configuracion"
+            component={ConfiguracionScreen}
+            options={{ headerShown: true, title: 'Configuración del Servidor' }}
           />
         </>
       )}

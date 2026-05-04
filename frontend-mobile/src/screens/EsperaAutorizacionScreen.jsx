@@ -5,10 +5,12 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { solicitudesConexionApi } from '../services/api'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useNavigation } from '@react-navigation/native'
+import { useAuth } from '../context/AuthContext'
 
 const EsperaAutorizacionScreen = ({ route }) => {
   const navigation = useNavigation()
   const { solicitudId: propSolicitudId } = route.params || {}
+  const { loginAsCollaborator } = useAuth()
 
   const [solicitudId, setSolicitudId] = useState(propSolicitudId ? String(propSolicitudId) : null)
   const [estado, setEstado] = useState('pendiente')
@@ -65,26 +67,34 @@ const EsperaAutorizacionScreen = ({ route }) => {
       setEstadoConexion(datos.estadoConexion)
       setSesionInventario(datos.sesionInventario)
 
-      // Si fue aceptada, navegar a sesión de inventario
+      // Si fue aceptada: llamar loginAsCollaborator() ANTES de navegar
       if (datos.estado === 'aceptada') {
         // DETENER POLLING INMEDIATAMENTE
         setEstado('aceptada')
-        
+
+        // CORRECCIÓN 3: Autenticar al colaborador antes de cambiar de pantalla
+        const onContinuar = async () => {
+          const result = await loginAsCollaborator({
+            sessionToken: datos.sessionToken || datos.token,
+            rol: 'colaborador',
+            contable: datos.contable,
+            invitacionId: solicitudId,
+          })
+
+          if (result.success) {
+            navigation.replace('SesionColaborador', {
+              solicitudId: solicitudId,
+              sesionInventario: datos.sesionInventario || null,
+            })
+          } else {
+            Alert.alert('Error', 'No se pudo iniciar sesión como colaborador')
+          }
+        }
+
         Alert.alert(
           '¡Autorizado!',
           'Tu solicitud ha sido aceptada. Ahora puedes comenzar a trabajar.',
-          [
-            {
-              text: 'Continuar',
-              onPress: () => {
-                // Aquí navegar a la sesión de inventario colaborador
-                navigation.replace('SesionColaborador', {
-                  solicitudId: solicitudId,
-                  sesionInventario: datos.sesionInventario || null
-                })
-              }
-            }
-          ]
+          [{ text: 'Continuar', onPress: onContinuar }]
         )
       }
 
