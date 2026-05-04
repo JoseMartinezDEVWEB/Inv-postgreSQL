@@ -16,8 +16,11 @@ if exist "android" (
 if exist "ios" (
     rmdir /s /q "ios"
     echo    ✓ Carpeta ios/ eliminada
-) else (
-    echo    ℹ Carpeta ios/ no existe
+)
+
+if exist "android_backup" (
+    rmdir /s /q "android_backup"
+    echo    ✓ Carpeta android_backup/ eliminada
 )
 
 echo.

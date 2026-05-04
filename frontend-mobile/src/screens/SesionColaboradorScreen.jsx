@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import {
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
-import { CameraView, Camera } from 'expo-camera'
+import { CameraView, useCameraPermissions } from 'expo-camera'
 import { productosApi, solicitudesConexionApi } from '../services/api'
 import localDb from '../services/localDb'
 import NetInfo from '@react-native-community/netinfo'
@@ -40,6 +40,8 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
   const [productos, setProductos] = useState([])
   const [productosOffline, setProductosOffline] = useState([])
   const [isConnected, setIsConnected] = useState(true)
+  // Hook de permisos de cámara de expo-camera v15
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions()
   const [hasPermission, setHasPermission] = useState(null)
   const [envioTiempoReal, setEnvioTiempoReal] = useState(true) // Checkbox para envío en tiempo real
 
@@ -88,7 +90,16 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     try {
       const historial = await AsyncStorage.getItem('historial_envios_colaborador')
       if (historial) {
-        setHistorialEnvios(JSON.parse(historial))
+        try {
+          const parsed = JSON.parse(historial)
+          if (Array.isArray(parsed)) {
+            setHistorialEnvios(parsed)
+          }
+        } catch (parseError) {
+          console.warn('⚠️ Error parseando historial de envíos:', parseError)
+          await AsyncStorage.removeItem('historial_envios_colaborador')
+          setHistorialEnvios([])
+        }
       }
     } catch (e) {
       console.error('Error cargando historial', e)
@@ -128,11 +139,44 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
   }
 
   useEffect(() => {
-    cargarProductosOffline()
+    const initColaborador = async () => {
+      try {
+        console.log('🚀 Inicializando SesionColaboradorScreen...')
+        
+        // Sincronizar configuración inicial
+        syncService.start()
+        
+        if (solicitudId) {
+          // Intentar conectar con el servidor
+          try {
+            await solicitudesConexionApi.conectar(solicitudId)
+          } catch (e) {
+            console.warn('⚠️ No se pudo notificar conexión al servidor (puede ser modo offline):', e.message)
+          }
+        }
+        
+        // Si no hay sesión de inventario, mostrar advertencia pero no cerrar
+        if (!sesionInventario) {
+          console.warn('⚠️ No se recibió información de la sesión de inventario')
+        } else {
+          console.log('📊 Sesión configurada:', sesionInventario._id || sesionInventario.id || sesionInventario)
+        }
+        
+        await cargarProductosOffline()
+        await actualizarEstadisticasSync()
+      } catch (error) {
+        console.error('❌ Error fatal en initColaborador:', error)
+        showMessage({
+          message: 'Error de inicialización',
+          description: error.message || 'Hubo un problema al entrar en la sesión',
+          type: 'danger'
+        })
+      }
+    }
+    
+    initColaborador()
     cargarHistorialLocal()
-
-    syncService.start()
-
+    
     // Listener para eventos de sincronización
     const unsubscribeSync = syncService.addListener((evento) => {
       if (evento.tipo === 'tarea_completada') {
@@ -144,11 +188,8 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     // Actualizar estadísticas iniciales
     actualizarEstadisticasSync()
 
-    // Conectar colaborador cuando se monta el componente
     const conectarColaborador = async () => {
       try {
-        await solicitudesConexionApi.conectar(solicitudId)
-        
         // Generar token local para WebSocket si no existe
         console.log('🔐 [SesionColaborador] Verificando credenciales para WebSocket...')
         const tokenCredentials = await getInternetCredentials('auth_token')
@@ -218,35 +259,49 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       }
     })
 
-    const getCameraPermissions = async () => {
-      const { status } = await Camera.requestCameraPermissionsAsync()
-      setHasPermission(status === 'granted')
+    // Solo verificar estado inicial, NO solicitar automáticamente
+
+    const handleOpenScanner = async () => {
+      try {
+        let granted = false
+        if (!cameraPermission?.granted && cameraPermission?.canAskAgain) {
+          const result = await requestCameraPermission()
+          granted = result?.granted === true
+        } else {
+          granted = cameraPermission?.granted === true
+        }
+        
+        setHasPermission(granted)
+        if (granted) {
+          setFlashOn(false)
+          setShowScanner(true)
+        } else {
+          Alert.alert('Permiso denegado', 'Se necesita acceso a la cámara para escanear')
+        }
+      } catch (err) {
+        console.error('Error al abrir el escáner:', err)
+      }
     }
-    getCameraPermissions()
 
     // Escuchar evento de sincronización de inventario desde el admin
     const handleSendInventory = async (data) => {
       console.log('📦 [SesionColaboradorScreen] Recibido send_inventory:', data.productos?.length || 0, 'productos', 'timestamp:', data.timestamp)
       
-      if (!data.productos || data.productos.length === 0) {
-        console.warn('⚠️ [SesionColaboradorScreen] No hay productos para sincronizar')
+      if (!data || !Array.isArray(data.productos) || data.productos.length === 0) {
+        console.warn('⚠️ [SesionColaboradorScreen] No hay productos para sincronizar o formato inválido')
         return
       }
 
-      // Evitar procesar el mismo inventario múltiples veces
-      if (processingInventoryRef.current.isProcessing) {
-        console.log('⏸️ [SesionColaboradorScreen] Ya se está procesando un inventario, ignorando duplicado')
-        return
-      }
-
-      // Si es el mismo timestamp, ignorarlo
+      // Idempotencia: Verificar si ya procesamos este inventario
       if (data.timestamp && processingInventoryRef.current.lastTimestamp === data.timestamp) {
-        console.log('⏸️ [SesionColaboradorScreen] Inventario con mismo timestamp, ignorando duplicado')
-        return
+        console.log('📦 [SesionColaborador] Inventario ya procesado (timestamp coincidente), omitiendo.');
+        return;
       }
 
-      processingInventoryRef.current.isProcessing = true
-      processingInventoryRef.current.lastTimestamp = data.timestamp
+      processingInventoryRef.current = {
+        isProcessing: true,
+        lastTimestamp: data.timestamp || Date.now()
+      };
       setIsSincronizandoInventario(true)
 
       try {
@@ -306,55 +361,84 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     }
   }, [solicitudId])
 
-  // Lógica de agrupación visual para cumplir con el requerimiento de "sumar cantidades" y "mover al principio"
+  useEffect(() => {
+    if (cameraPermission) {
+      setHasPermission(cameraPermission.granted)
+    }
+  }, [cameraPermission])
+
+  // --- MEMORIZACIÓN DE DATOS (Prevención de White Screen y Optimización) ---
+  
+  // Agrupar productos para visualización (idempotencia y legibilidad)
   const productosVisuales = useMemo(() => {
-    const grupos = {};
+    if (!productos || !Array.isArray(productos) || productos.length === 0) return []
     
-    // Solo procesamos si hay productos
-    if (!productos || productos.length === 0) return [];
-
+    const grupos = {}
     productos.forEach(p => {
-      // Clave única por nombre y código de barras/sku (normalizada)
-      const nombreNorm = (p.nombre || '').toLowerCase().trim();
-      const codigoNorm = (p.codigoBarras || p.sku || '').trim();
-      const key = `${nombreNorm}-${codigoNorm}`;
-      
+      // Usar nombre y costo como llave de grupo si no hay SKU/CB
+      const key = p.sku || p.codigoBarras || `${p.nombre}_${p.costo}`
       if (!grupos[key]) {
-        grupos[key] = { 
-          ...p, 
-          cantidad: 0, 
-          _ids: [], 
-          maxTimestamp: p.timestamp 
-        };
+        grupos[key] = {
+          ...p,
+          cantidad: 0,
+          _ids: [],
+          maxTimestamp: p.timestamp
+        }
+      }
+      grupos[key].cantidad += (Number(p.cantidad) || 0)
+      grupos[key]._ids.push(p.temporalId)
+      
+      // Si alguno del grupo no está sincronizado, marcar el grupo como pendiente
+      if (!p.sincronizado) {
+        grupos[key].sincronizado = 0
       }
       
-      grupos[key].cantidad += Number(p.cantidad) || 0;
-      grupos[key]._ids.push(p.temporalId);
-      
-      // Mantener el timestamp más reciente para el ordenamiento
       if (new Date(p.timestamp) > new Date(grupos[key].maxTimestamp)) {
-        grupos[key].maxTimestamp = p.timestamp;
-        grupos[key].timestamp = p.timestamp; // Actualizar también el campo que usa la UI
-        // También actualizamos otros datos del registro más reciente (como el costo)
-        grupos[key].costo = p.costo;
+        grupos[key].maxTimestamp = p.timestamp
       }
-    });
+    })
 
-    // Convertir a array y ordenar por el timestamp más reciente (DESC)
-    return Object.values(grupos).sort((a, b) => 
-      new Date(b.maxTimestamp).getTime() - new Date(a.maxTimestamp).getTime()
-    );
-  }, [productos]);
+    return Object.values(grupos).sort((a, b) => {
+      const timeA = new Date(a.maxTimestamp).getTime() || 0
+      const timeB = new Date(b.maxTimestamp).getTime() || 0
+      return timeB - timeA
+    })
+  }, [productos])
+
+  // Estadísticas globales
+  const stats = useMemo(() => {
+    if (!productos || !Array.isArray(productos)) {
+      return { total: 0, unidades: 0, valor: 0 }
+    }
+    const total = productos.length
+    const unidades = productos.reduce((sum, p) => sum + (Number(p.cantidad) || 0), 0)
+    const valor = productos.reduce((sum, p) => sum + ((Number(p.cantidad) || 0) * (Number(p.costo) || 0)), 0)
+    return { total, unidades, valor }
+  }, [productos])
+
+  // Filtrado de productos con costo cero para el aviso visual
+  const productosConCostoZero = useMemo(() => {
+    if (!productos || !Array.isArray(productos)) return []
+    return productos.filter(p => !p.costo || Number(p.costo) === 0)
+  }, [productos])
+
+  // Alias para mantener compatibilidad con el resto del código
+  const totalProductos = stats.total
+  const totalConteo = stats.unidades
+  const totalValor = stats.valor
+
+  // --- MÉTODOS DE DATOS ---
 
   const cargarProductosOffline = async () => {
+    if (!solicitudId) return;
     try {
       let lista = await localDb.obtenerProductosColaborador(solicitudId)
-      // Ordenar por timestamp (más reciente primero)
-      lista = lista.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-      setProductosOffline(lista)
-      setProductos(lista)
+      if (Array.isArray(lista)) {
+        setProductosOffline(lista)
+        setProductos(lista)
+      }
     } catch (error) {
-      console.error('Error al cargar productos offline:', error)
+      console.error('❌ Error cargando productos locales:', error)
     }
   }
 
@@ -438,27 +522,20 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     if (envioTiempoReal && isConnected) {
       try {
         await solicitudesConexionApi.agregarProductoOffline(solicitudId, payload)
+        
+        // MARCAR COMO SINCRONIZADO EN DB LOCAL
+        await localDb.marcarProductoColaboradorSincronizado(item.temporalId)
+        
         showMessage({ message: '✅ Producto enviado', type: 'success' })
         cargarProductosOffline()
       } catch (error) {
         console.error('Error al enviar producto:', error)
-        // Si falla, agregar a cola de sincronización
-        await syncService.agregarTarea('enviar_producto', { solicitudId, producto: payload })
-        showMessage({ message: '📦 Guardado en cola de sincronización', type: 'info' })
-        await guardarItemOffline({ ...item, offline: true })
+        // Si falla, se queda como pendiente en la DB local (sincronizado = 0)
+        showMessage({ message: '📦 Guardado localmente (pendiente)', type: 'info' })
         cargarProductosOffline()
       }
     } else {
-      // Si envío en tiempo real está desactivado o no hay conexión: agregar a cola
-      await syncService.agregarTarea('enviar_producto', { solicitudId, producto: payload })
-      showMessage({
-        message: '📦 Producto guardado',
-        description: envioTiempoReal 
-          ? 'Se enviará cuando haya conexión' 
-          : 'Se enviará cuando sincronices manualmente',
-        type: 'info',
-      })
-      await guardarItemOffline({ ...item, offline: true })
+      // Si envío en tiempo real está desactivado o no hay conexión: ya está guardado como pendiente
       cargarProductosOffline()
     }
     
@@ -754,11 +831,6 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     setModalSincronizar(true)
   }
 
-  // Verificar si hay productos con costo 0
-  const productosConCostoZero = productos.filter(p => {
-    const costo = Number(p.costo) || 0
-    return costo === 0
-  })
 
   // Función para actualizar productos con costo 0
   const handleUpdateZeroCostProducts = async (productosActualizados) => {
@@ -887,11 +959,14 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     // Ejecutar animación de envío
     ejecutarAnimacionEnvio()
     
-    // Enviar productos al servidor
-    if (isConnected && productos.length > 0) {
+    // Enviar productos al servidor (solo los pendientes)
+    if (isConnected) {
       try {
-        for (const item of productos) {
-          await enviarProductoServidor(item)
+        const pendientes = productos.filter(p => !p.sincronizado)
+        if (pendientes.length > 0) {
+          for (const item of pendientes) {
+            await enviarProductoServidor(item)
+          }
         }
       } catch (error) {
         console.error('Error enviando productos:', error)
@@ -1035,7 +1110,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     let iconoEstado = 'checkmark-circle'
     let textoEstado = 'Sincronizado'
 
-    if (item.offline) {
+    if (!item.sincronizado) {
       estadoSync = 'pendiente'
       colorEstado = '#f59e0b' // Naranja
       iconoEstado = 'cloud-upload-outline'
@@ -1064,7 +1139,9 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
             <Text style={styles.productoCosto}>${(Number(item.costo) || 0).toFixed(2)}</Text>
             <Text style={styles.productoTotal}>Total: ${total.toFixed(2)}</Text>
           </View>
-          <Text style={styles.productoTimestamp}>{new Date(item.timestamp).toLocaleString()}</Text>
+          <Text style={styles.productoTimestamp}>
+            {item.timestamp ? new Date(item.timestamp).toLocaleString() : 'Fecha desconocida'}
+          </Text>
         </View>
         <View style={styles.productoActions}>
           {/* Badge de estado con colores */}
@@ -1170,7 +1247,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       <View style={styles.actionsRow}>
         <TouchableOpacity
           style={[styles.actionButton, { backgroundColor: '#22c55e' }]}
-          onPress={() => setShowScanner(true)}
+          onPress={handleOpenScanner}
         >
           <Ionicons name="scan-outline" size={24} color="#fff" />
           <Text style={styles.actionButtonText}>Escanear</Text>
@@ -1246,6 +1323,9 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
           <View style={styles.scannerContainer}>
             <CameraView
               onBarcodeScanned={handleBarCodeScanned}
+              barcodeScannerSettings={{
+                barcodeTypes: ['qr', 'ean13', 'ean8', 'code128', 'code39', 'upc_a', 'upc_e'],
+              }}
               style={StyleSheet.absoluteFillObject}
               enableTorch={flashOn}
             />
@@ -1288,7 +1368,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
                 style={styles.scannerInSearch} 
                 onPress={() => {
                   setModalBuscar(false);
-                  setShowScanner(true);
+                  handleOpenScanner();
                 }}
               >
                 <Ionicons name="barcode-outline" size={24} color="#3b82f6" />

@@ -128,7 +128,16 @@ export const AuthProvider = ({ children }) => {
         let refresh = refreshCredentials?.password
 
         if (access && userJson) {
-          const userData = JSON.parse(userJson)
+          let userData = null
+          try {
+            userData = JSON.parse(userJson)
+          } catch (e) {
+            console.error('❌ Error parseando datos de usuario:', e)
+            // Si los datos están corruptos, limpiar y forzar login
+            await resetInternetCredentials('user_data')
+            dispatch({ type: AUTH_ACTIONS.SET_LOADING, payload: false })
+            return
+          }
 
           // Permitir sesión temporal de colaborador sin refresh token
           const isTempCollaborator = userData?.tipo === 'colaborador_temporal' || userData?.rol === 'colaborador'
@@ -313,7 +322,14 @@ export const AuthProvider = ({ children }) => {
 
         try {
           const response = await authApi.login(credentials)
-          const { usuario, accessToken, refreshToken } = handleApiResponse(response)
+          const responseData = handleApiResponse(response)
+          const accessToken = responseData?.accessToken || responseData?.token
+          const refreshToken = responseData?.refreshToken
+          const usuario = responseData?.usuario
+
+          if (!accessToken || !usuario) {
+            throw new Error('Respuesta de login inválida')
+          }
 
           // Guardar en Keychain
           await Promise.all([
@@ -362,6 +378,8 @@ export const AuthProvider = ({ children }) => {
         console.log('✅ Login local exitoso (modo offline)')
 
         const usuario = loginResult.usuario
+        // Generar token local con formato reconocido por el backend
+        // El backend acepta tokens que empiezan con 'colaborador-token-' o 'local-token-'
         const accessToken = 'local-token-' + Date.now()
         const refreshToken = 'local-refresh-' + Date.now()
 

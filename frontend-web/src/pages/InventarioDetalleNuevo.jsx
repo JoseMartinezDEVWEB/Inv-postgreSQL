@@ -13,6 +13,7 @@ import toast from 'react-hot-toast'
 import { useAuth } from '../context/AuthContext'
 import ProductoForm from '../components/ProductoForm'
 import { useSocket } from '../hooks/useSocket'
+import SearchBarcodeModal from '../components/SearchBarcodeModal'
 
 const PRODUCTOS_POR_PAGINA = 45
 
@@ -67,8 +68,11 @@ const InventarioDetalleNuevo = () => {
   const [showExitOptionsModal, setShowExitOptionsModal] = useState(false)
   const [showExitDropdown, setShowExitDropdown] = useState(false)
   const [showSearchModal, setShowSearchModal] = useState(false)
+  const [showSearchBarcodeModal, setShowSearchBarcodeModal] = useState(false)
   const [showProductNotFoundModal, setShowProductNotFoundModal] = useState(false)
   const [showAddProductModal, setShowAddProductModal] = useState(false)
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false)
+  const [createdProductName, setCreatedProductName] = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [showZeroCostModal, setShowZeroCostModal] = useState(false)
@@ -206,6 +210,27 @@ const InventarioDetalleNuevo = () => {
     },
     tipoPeso: 'ninguno'
   })
+
+  // Estabilizar el objeto para ProductoForm (FUERA DEL CONDICIONAL)
+  const stabilizedNewProduct = useMemo(() => ({
+    nombre: newProductData.nombre || '',
+    codigoBarras: newProductData.codigoBarras || productNotFoundCode || '',
+    categoria: newProductData.categoria || 'General',
+    unidad: newProductData.unidad || 'unidad',
+    costoBase: newProductData.costoBase || 0,
+    descripcion: newProductData.descripcion || '',
+    proveedor: newProductData.proveedor || '',
+    tipoContenedor: newProductData.tipoContenedor || 'ninguno',
+    tieneUnidadesInternas: newProductData.tieneUnidadesInternas || false,
+    unidadesInternas: newProductData.unidadesInternas || {
+      cantidad: 0,
+      codigoBarras: '',
+      nombre: '',
+      costoPorUnidad: 0
+    },
+    tipoPeso: newProductData.tipoPeso || 'ninguno',
+    notas: newProductData.notas || ''
+  }), [newProductData, productNotFoundCode]);
 
   // Estados para datos financieros
   const [datosFinancieros, setDatosFinancieros] = useState({
@@ -819,100 +844,89 @@ const InventarioDetalleNuevo = () => {
     }
   }, [pendingProducts])
 
-  // Buscar por código de barras
-  useEffect(() => {
-    const searchByBarcode = async () => {
-      if (codigoBarras.length < 3) return
+  const searchByBarcode = async (codeOverride = null) => {
+    const targetCode = (codeOverride || codigoBarras).trim()
+    if (targetCode.length < 3) return
 
-      setIsSearching(true)
-      try {
-        // Buscar directamente en productos generales
-        console.log('🔍 Buscando por código de barras:', codigoBarras)
-        const generalResponse = await productosApi.buscarPorCodigoBarras(codigoBarras)
-        console.log('✅ Respuesta búsqueda código:', generalResponse.data)
+    setIsSearching(true)
+    console.log('🚀 [FRONTEND-WEB] Iniciando búsqueda de código:', `"${targetCode}"`)
+    
+    try {
+      const generalResponse = await productosApi.buscarPorCodigoBarras(targetCode)
+      console.log('✅ [FRONTEND-WEB] Respuesta del servidor:', generalResponse.data)
 
-        // Backend SQLite devuelve: { exito: true, datos: producto } o { exito: true, datos: { producto } }
-        let productoGeneral = generalResponse.data?.datos
-
-        // Si datos es un objeto con propiedad producto, extraerlo
-        if (productoGeneral && productoGeneral.producto) {
-          productoGeneral = productoGeneral.producto
-        }
-
+      let productoGeneral = generalResponse.data?.datos || generalResponse.data?.producto
+      
+      if (productoGeneral) {
         // Asegurar que tenga _id para compatibilidad
-        if (productoGeneral && !productoGeneral._id && productoGeneral.id) {
+        if (!productoGeneral._id && productoGeneral.id) {
           productoGeneral._id = productoGeneral.id
         }
 
-        if (productoGeneral) {
-          const now = Date.now()
+        const now = Date.now()
+        // Verificar si es escaneo rápido del mismo producto
+        const isQuickScan = lastScannedProduct &&
+          (lastScannedProduct.id === productoGeneral.id || lastScannedProduct._id === productoGeneral._id) &&
+          (now - lastScannedTime) < 2000
 
-          // Verificar si es escaneo rápido del mismo producto
-          const isQuickScan = lastScannedProduct &&
-            lastScannedProduct.nombre === productoGeneral.nombre &&
-            (now - lastScannedTime) < 2000 // 2 segundos
+        if (isQuickScan) {
+          console.log('🔄 Modo escaneo rápido detectado')
+          setCantidad(targetCode)
+          setCodigoBarras('')
+          setIsQuickScanMode(true)
+          setQuickScanProduct(productoGeneral)
+          setTimeout(() => costoInputRef.current?.focus(), 100)
+          toast.success(`Cantidad rápida: ${targetCode}`)
+        } else {
+          const hasRecentPendingProducts = pendingProducts.length > 0 && (now - lastScannedTime) < 3000
 
-          if (isQuickScan) {
-            // Escaneo rápido: usar como cantidad
-            console.log('🔄 Escaneo rápido detectado, estableciendo cantidad:', codigoBarras)
-            setCantidad(codigoBarras)
+          if (hasRecentPendingProducts) {
+            setPendingProducts(prev => [...prev, {
+              producto: productoGeneral,
+              cantidad: '1',
+              costo: productoGeneral.costoBase || productoGeneral.costo || '',
+              id: Date.now() + Math.random()
+            }])
             setCodigoBarras('')
-            setIsQuickScanMode(true)
-            setQuickScanProduct(productoGeneral)
-
-            // Enfocar automáticamente el campo de costo
-            setTimeout(() => costoInputRef.current?.focus(), 100)
-
-            toast.success(`Cantidad rápida: ${codigoBarras}`)
+            toast.info(`Agregado a lista pendiente: ${productoGeneral.nombre}`)
           } else {
-            // Verificar si hay productos pendientes recientes
-            const hasRecentPendingProducts = pendingProducts.length > 0 &&
-              (now - lastScannedTime) < 3000 // 3 segundos para productos múltiples
-
-            if (hasRecentPendingProducts) {
-              // Agregar a productos pendientes para mostrar en modal múltiple
-              console.log('📦 Agregando producto a lista pendiente:', productoGeneral.nombre)
-              setPendingProducts(prev => [...prev, {
-                producto: productoGeneral,
-                cantidad: '1',
-                costo: productoGeneral.costoBase || productoGeneral.costo || '',
-                id: Date.now() + Math.random()
-              }])
-              setCodigoBarras('')
-              toast.info(`Producto agregado a lista: ${productoGeneral.nombre}`)
-               // Primer escaneo o producto diferente: seleccionar producto normalmente
-               console.log('📱 Primer escaneo, seleccionando producto:', productoGeneral.nombre)
-               handleSelectProduct(productoGeneral)
-               setLastScannedTime(now)
-               setLastScannedProduct(productoGeneral)
-               setIsQuickScanMode(false)
-               setQuickScanProduct(null)
-               // Forzar un refetch para asegurar sincronía
-               refetch()
-             }
+            console.log('📱 Seleccionando producto encontrado:', productoGeneral.nombre)
+            handleSelectProduct(productoGeneral)
+            setCodigoBarras('')
+            setLastScannedTime(now)
+            setLastScannedProduct(productoGeneral)
+            setIsQuickScanMode(false)
+            setQuickScanProduct(null)
+            refetch()
           }
-        } else {
-          // Producto no encontrado
-          setProductNotFoundCode(codigoBarras)
-          setShowProductNotFoundModal(true)
         }
-      } catch (error) {
-        if (error.response?.status === 404) {
-          // Producto no encontrado
-          setProductNotFoundCode(codigoBarras)
-          setShowProductNotFoundModal(true)
-        } else {
-          console.error('Error buscando por código:', error)
-          toast.error('Error al buscar producto')
-        }
-      } finally {
-        setIsSearching(false)
+      } else {
+        throw { response: { status: 404 } }
       }
+    } catch (error) {
+      if (error.response?.status === 404) {
+        console.warn('⚠️ [FRONTEND-WEB] Producto no encontrado exacto:', targetCode)
+        setProductNotFoundCode(targetCode)
+        // Ya no abrimos el modal de búsqueda parcial automáticamente al escanear
+        // Mostramos el modal para CREAR el producto directamente
+        setShowProductNotFoundModal(true)
+      } else {
+        console.error('❌ [FRONTEND-WEB] Error en búsqueda:', error)
+        toast.error('Error al buscar producto')
+      }
+    } finally {
+      setIsSearching(false)
     }
+  }
 
-    const debounce = setTimeout(searchByBarcode, 800)
+  useEffect(() => {
+    const debounce = setTimeout(() => {
+      if (!showSearchBarcodeModal && !showAddProductModal) {
+        searchByBarcode()
+      }
+    }, 500)
     return () => clearTimeout(debounce)
-  }, [codigoBarras, lastScannedProduct, lastScannedTime, pendingProducts])
+  }, [codigoBarras])
 
   // Cargar productos generales cuando se abre el modal (sin búsqueda o con menos de 3 caracteres)
   useEffect(() => {
@@ -2238,9 +2252,15 @@ const InventarioDetalleNuevo = () => {
         setShowAddProductModal(false)
         setShowProductNotFoundModal(false)
 
-        // Seleccionar el producto recién creado
+        // Seleccionar el producto recién creado con animación
         if (nuevoProducto) {
-          handleSelectProduct(nuevoProducto)
+          setCreatedProductName(nuevoProducto.nombre || 'Producto')
+          setShowSuccessAnimation(true)
+          
+          setTimeout(() => {
+            setShowSuccessAnimation(false)
+            handleSelectProduct(nuevoProducto)
+          }, 4000)
         }
 
         // Resetear formulario
@@ -3171,21 +3191,37 @@ const InventarioDetalleNuevo = () => {
               {/* Input Código de Barras */}
               <div>
                 <label className="block text-white text-sm mb-1">Código de Barras</label>
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={codigoBarras}
-                  onChange={(e) => setCodigoBarras(e.target.value)}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter' && codigoBarras.length >= 3) {
-                      // El código ya se buscará automáticamente por el useEffect
-                      e.preventDefault()
-                    }
-                  }}
-                  placeholder="Escanea o escribe código"
-                  className="w-full px-4 py-3 bg-slate-700 text-white placeholder-slate-400 rounded border border-slate-600 focus:outline-none focus:border-blue-400 text-lg"
-                  autoFocus
-                />
+                <div className="relative">
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={codigoBarras}
+                    onChange={(e) => setCodigoBarras(e.target.value)}
+                    onClick={() => setShowSearchBarcodeModal(true)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        const code = codigoBarras.trim()
+                        if (code.length >= 3) {
+                           // Disparar búsqueda inmediata
+                           e.preventDefault()
+                           searchByBarcode(code)
+                        } else if (code.length > 0) {
+                           toast.error('Ingrese al menos 3 caracteres')
+                        }
+                      }
+                    }}
+                    placeholder="Escanea o escribe código"
+                    className="w-full pl-4 pr-12 py-3 bg-slate-700 text-white placeholder-slate-400 rounded border border-slate-600 focus:outline-none focus:border-blue-400 text-lg shadow-inner"
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => setShowSearchBarcodeModal(true)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors p-1"
+                    title="Búsqueda avanzada por código"
+                  >
+                    <Search className="w-6 h-6" />
+                  </button>
+                </div>
               </div>
 
               {/* Input Buscar por Nombre */}
@@ -3195,7 +3231,7 @@ const InventarioDetalleNuevo = () => {
                   onClick={handleOpenSearchModal}
                   className="w-full px-4 py-3 bg-slate-700 rounded border border-slate-600 hover:border-blue-400 focus:outline-none focus:border-blue-400 text-lg text-left flex items-center justify-between transition-colors"
                 >
-                  <span className={`truncate font-semibold ${selectedProducto ? 'text-white' : 'text-slate-400'
+                  <span className={`font-semibold ${selectedProducto ? 'text-white' : 'text-slate-400'
                     }`}>
                     {selectedProducto ? selectedProducto.nombre : 'Click para buscar...'}
                   </span>
@@ -3765,25 +3801,7 @@ const InventarioDetalleNuevo = () => {
             </div>
 
             <ProductoForm
-              producto={{
-                nombre: newProductData.nombre || '',
-                codigoBarras: newProductData.codigoBarras || productNotFoundCode || '',
-                categoria: newProductData.categoria || 'General',
-                unidad: newProductData.unidad || 'unidad',
-                costoBase: newProductData.costoBase || 0,
-                descripcion: newProductData.descripcion || '',
-                proveedor: newProductData.proveedor || '',
-                tipoContenedor: newProductData.tipoContenedor || 'ninguno',
-                tieneUnidadesInternas: newProductData.tieneUnidadesInternas || false,
-                unidadesInternas: newProductData.unidadesInternas || {
-                  cantidad: 0,
-                  codigoBarras: '',
-                  nombre: '',
-                  costoPorUnidad: 0
-                },
-                tipoPeso: newProductData.tipoPeso || 'ninguno',
-                notas: newProductData.notas || ''
-              }}
+              producto={stabilizedNewProduct}
               onSubmit={handleCreateProduct}
               onCancel={() => {
                 setShowAddProductModal(false)
@@ -5731,6 +5749,38 @@ const InventarioDetalleNuevo = () => {
           </div>
         </div>
       )}
+      {/* Animación de Éxito al Crear Producto */}
+      {showSuccessAnimation && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-70 backdrop-blur-sm transition-all duration-500">
+          <div className="bg-white rounded-3xl p-10 flex flex-col items-center justify-center shadow-[0_0_50px_rgba(0,0,0,0.3)] transform scale-110 animate-in zoom-in duration-300">
+            <div className="relative mb-6">
+              <div className="absolute inset-0 bg-green-100 rounded-full animate-ping opacity-25"></div>
+              <div className="relative bg-green-500 rounded-full p-6 text-white">
+                <CheckCircle className="w-16 h-16" />
+              </div>
+            </div>
+            <h2 className="text-3xl font-extrabold text-gray-800 mb-2">¡Producto Creado!</h2>
+            <p className="text-xl text-gray-600 mb-6 font-medium">{createdProductName}</p>
+            <div className="w-64 h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-green-500 transition-all duration-[4000ms] ease-linear"
+                style={{ width: showSuccessAnimation ? '100%' : '0%' }}
+              ></div>
+            </div>
+            <p className="text-sm text-gray-400 mt-4 italic">Preparando para agregar cantidad...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Búsqueda por Código de Barras (Gris-600) */}
+      <SearchBarcodeModal
+        isOpen={showSearchBarcodeModal}
+        onClose={() => setShowSearchBarcodeModal(false)}
+        onSelect={(producto) => {
+          handleSelectProduct(producto)
+          setShowSearchBarcodeModal(false)
+        }}
+      />
     </div>
   )
 }

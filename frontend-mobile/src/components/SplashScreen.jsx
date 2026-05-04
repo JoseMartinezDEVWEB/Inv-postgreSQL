@@ -237,7 +237,7 @@ const SplashScreen = ({ onComplete, durationMs = 1200, variant = 'splash', messa
 
       {/* Partículas flotantes */}
       <View style={styles.particles}>
-        {[...Array(20)].map((_, i) => (
+        {[...Array(12)].map((_, i) => (
           <Animatable.View
             key={i}
             animation={{
@@ -355,9 +355,10 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
     borderRadius: 25,
-    backdropFilter: 'blur(10px)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   stepText: {
     color: '#ffffff',

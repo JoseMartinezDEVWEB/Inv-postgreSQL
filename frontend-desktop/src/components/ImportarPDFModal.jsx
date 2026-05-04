@@ -198,7 +198,8 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
               // Si no hay total, avanzar suavemente hasta 90%
               setProgreso(prev => Math.min(90, prev + 5))
             }
-          }
+          },
+          timeout: 180000 // 3 minutos para dar tiempo a la IA
         }
       )
 

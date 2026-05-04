@@ -12,15 +12,22 @@ const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
         origin: "*",
-        methods: ["GET", "POST"]
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        allowedHeaders: "*",
+        credentials: true
     }
 });
 
 // Configuración de Middlewares
-app.use(cors()); // Permitir peticiones desde otros dominios (frontend)
+app.use(cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allowedHeaders: "*", // Permitir todos los headers para evitar bloqueos
+    credentials: true
+})); 
 app.use(express.json()); // Permitir el procesamiento de JSON en el cuerpo de las peticiones
 
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 4501;
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const { setupSockets, getColaboradoresActivos } = require('./utils/socketHandlers');
@@ -172,8 +179,8 @@ app.get('/api/mi-perfil', authenticateToken, (req, res) => {
 // 'alter: true' actualiza las tablas existentes sin borrar datos (ideal para desarrollo fluido)
 db.sequelize.sync({ alter: true }).then(() => {
     console.log('✅ Conexión y sincronización con PostgreSQL completadas');
-    server.listen(PORT, () => {
-        console.log(`🚀 Servidor de Inventario PostgreSQL + Socket.io iniciado en el puerto ${PORT}`);
+    server.listen(PORT, '0.0.0.0', () => {
+        console.log(`🚀 Servidor de Inventario PostgreSQL + Socket.io iniciado en el puerto ${PORT} (todas las interfaces)`);
     });
 }).catch(err => {
     console.error('❌ Error fatal al sincronizar o conectar con PostgreSQL:', err);

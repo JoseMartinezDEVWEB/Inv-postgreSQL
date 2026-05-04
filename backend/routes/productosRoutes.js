@@ -31,62 +31,78 @@ router.post('/generales/importar', authenticateToken, authorizeRole(['administra
         }
 
         const resultados = [];
+        const errores = [];
+        
+        console.log(`🚀 Iniciando procesamiento de ${productosProcesados.length} productos...`);
+
         for (const p of productosProcesados) {
-            // Lógica de "upsert" manual por nombre o código de barras
-            let producto = null;
-            
-            if (p.codigoBarras) {
-                producto = await db.ProductoGeneral.findOne({ where: { codigoBarras: p.codigoBarras } });
-            }
-            
-            if (!producto && p.nombre) {
-                producto = await db.ProductoGeneral.findOne({ where: { nombre: p.nombre } });
-            }
-
-            if (producto) {
-                const oldValues = producto.toJSON();
-                await producto.update({
-                    ...p,
-                    activo: true
-                });
+            try {
+                // Lógica de "upsert" manual por nombre o código de barras
+                let producto = null;
                 
-                // Registrar auditoría de actualización por importación
-                await db.AuditoriaMovimiento.create({
-                    usuarioId: req.user.id,
-                    productoGeneralId: producto.id,
-                    tipoMovimiento: 'IMPORTACION',
-                    detalles: { 
-                        action: 'update_via_import',
-                        old: oldValues,
-                        new: producto.toJSON()
-                    },
-                    fecha: new Date(),
-                    notas: 'Producto actualizado mediante importación'
-                });
+                // Asegurar que buscamos por STRING para evitar error: character varying = bigint
+                if (p.codigoBarras && String(p.codigoBarras).trim() !== '') {
+                    const codStr = String(p.codigoBarras).trim();
+                    producto = await db.ProductoGeneral.findOne({ where: { codigoBarras: codStr } });
+                }
+                
+                if (!producto && p.nombre && String(p.nombre).trim() !== '') {
+                    const nomStr = String(p.nombre).trim();
+                    producto = await db.ProductoGeneral.findOne({ where: { nombre: nomStr } });
+                }
 
-                resultados.push({ ...producto.toJSON(), _importStatus: 'updated' });
-            } else {
-                const nuevo = await db.ProductoGeneral.create({
-                    ...p,
-                    activo: true,
-                    creadoPorId: req.user.id,
-                    tipoCreacion: 'importacion'
-                });
+                if (producto) {
+                    const oldValues = producto.toJSON();
+                    await producto.update({
+                        ...p,
+                        activo: true
+                    });
+                    
+                    // Registrar auditoría de actualización por importación
+                    await db.AuditoriaMovimiento.create({
+                        usuarioId: req.user.id,
+                        productoGeneralId: producto.id,
+                        tipoMovimiento: 'IMPORTACION',
+                        detalles: { 
+                            action: 'update_via_import',
+                            old: oldValues,
+                            new: producto.toJSON()
+                        },
+                        fecha: new Date(),
+                        notas: 'Producto actualizado mediante importación'
+                    });
 
-                // Registrar auditoría de creación por importación
-                await db.AuditoriaMovimiento.create({
-                    usuarioId: req.user.id,
-                    productoGeneralId: nuevo.id,
-                    tipoMovimiento: 'IMPORTACION',
-                    detalles: { 
-                        action: 'create_via_import',
-                        data: nuevo.toJSON()
-                    },
-                    fecha: new Date(),
-                    notas: 'Producto creado mediante importación'
-                });
+                    resultados.push({ ...producto.toJSON(), _importStatus: 'updated' });
+                } else {
+                    const nuevo = await db.ProductoGeneral.create({
+                        ...p,
+                        activo: true,
+                        creadoPorId: req.user.id,
+                        tipoCreacion: 'importacion'
+                    });
 
-                resultados.push({ ...nuevo.toJSON(), _importStatus: 'created' });
+                    // Registrar auditoría de creación por importación
+                    await db.AuditoriaMovimiento.create({
+                        usuarioId: req.user.id,
+                        productoGeneralId: nuevo.id,
+                        tipoMovimiento: 'IMPORTACION',
+                        detalles: { 
+                            action: 'create_via_import',
+                            data: nuevo.toJSON()
+                        },
+                        fecha: new Date(),
+                        notas: 'Producto creado mediante importación'
+                    });
+
+                    resultados.push({ ...nuevo.toJSON(), _importStatus: 'created' });
+                }
+            } catch (pError) {
+                console.error(`❌ Error procesando producto [${p.nombre || 'SIN NOMBRE'}]:`, pError.message);
+                errores.push({
+                    producto: p.nombre,
+                    error: pError.message
+                });
+                // Continuamos con el siguiente producto
             }
         }
 
@@ -95,17 +111,19 @@ router.post('/generales/importar', authenticateToken, authorizeRole(['administra
 
         res.json({
             exito: true,
-            mensaje: `Importación completada: ${creados} nuevos, ${actualizados} actualizados.`,
+            mensaje: `Importación completada: ${creados} nuevos, ${actualizados} actualizados. ${errores.length > 0 ? `Se omitieron ${errores.length} productos por errores.` : ''}`,
             resumen: {
                 totalProcesados: productosProcesados.length,
                 creados,
-                actualizados
+                actualizados,
+                fallidos: errores.length
             },
-            productos: resultados
+            productos: resultados,
+            errores: errores.length > 0 ? errores : undefined
         });
 
     } catch (error) {
-        console.error('Error en importación:', error);
+        console.error('Error fatal en importación:', error);
         res.status(500).json({ mensaje: 'Error al importar productos: ' + error.message });
     }
 });
@@ -165,6 +183,85 @@ const getProductosGenerales = async (req, res) => {
 };
 
 router.get('/generales', authenticateToken, getProductosGenerales);
+
+/**
+ * Buscar producto por código de barras (Catálogo Maestro)
+ */
+router.get('/generales/buscar/codigo-barras/:codigo', authenticateToken, async (req, res) => {
+    try {
+        const { codigo } = req.params;
+        const trimmedCodigo = (codigo || '').trim();
+        console.log(`🔍 [BACKEND] Buscando código de barras: "${trimmedCodigo}"`);
+
+        // 1. Intentar match exacto primero (con activo: true)
+        let producto = await db.ProductoGeneral.findOne({
+            where: { 
+                codigoBarras: trimmedCodigo,
+                activo: true
+            }
+        });
+
+        // 2. Si no se encuentra, intentar con TRIM en la base de datos (por si hay espacios en el registro)
+        if (!producto) {
+            producto = await db.ProductoGeneral.findOne({
+                where: db.sequelize.and(
+                    db.sequelize.where(db.sequelize.fn('TRIM', db.sequelize.col('codigoBarras')), trimmedCodigo),
+                    { activo: true }
+                )
+            });
+        }
+
+        // 3. Si sigue sin aparecer y el código buscado no tiene ceros a la izquierda, 
+        // intentar buscar registros que tengan ceros a la izquierda (ej: "001049" vs "1049")
+        if (!producto && /^\d+$/.test(trimmedCodigo)) {
+            const pattern = '%' + trimmedCodigo;
+            producto = await db.ProductoGeneral.findOne({
+                where: {
+                    codigoBarras: { [db.Sequelize.Op.like]: pattern },
+                    activo: true
+                }
+            });
+        }
+
+        if (!producto) {
+            console.log(`❌ [BACKEND] Producto no encontrado: "${trimmedCodigo}"`);
+            return res.status(404).json({ mensaje: 'Producto no encontrado por código de barras' });
+        }
+
+        console.log(`✅ [BACKEND] Producto encontrado: ${producto.nombre}`);
+        res.json({
+            exito: true,
+            datos: producto
+        });
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al buscar producto: ' + error.message });
+    }
+});
+
+// Alias para compatibilidad con el móvil
+router.get('/generales/buscar/codigo/:codigo', authenticateToken, async (req, res) => {
+    try {
+        const { codigo } = req.params;
+        const trimmedCodigo = (codigo || '').trim();
+        const producto = await db.ProductoGeneral.findOne({
+            where: { 
+                codigoBarras: trimmedCodigo,
+                activo: true
+            }
+        });
+
+        if (!producto) {
+            return res.status(404).json({ mensaje: 'Producto no encontrado' });
+        }
+
+        res.json({
+            exito: true,
+            datos: producto
+        });
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al buscar producto: ' + error.message });
+    }
+});
 
 router.get('/generales/categorias', authenticateToken, async (req, res) => {
     try {

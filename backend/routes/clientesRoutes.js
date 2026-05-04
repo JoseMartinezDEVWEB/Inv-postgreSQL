@@ -192,14 +192,21 @@ router.post('/:id/importar-pdf', authenticateToken, upload.array('files', 10), a
         const todosLosProductos = [];
         const erroresArchivos = [];
 
-        for (const file of files) {
+        // Procesar cada archivo y acumular productos en paralelo para máxima eficiencia
+        const promesasProcesamiento = files.map(async (file) => {
             try {
-                const productos = await processFile(file.buffer, file.originalname, apiKey);
-                todosLosProductos.push(...productos);
+                return await processFile(file.buffer, file.originalname, apiKey);
             } catch (err) {
+                console.error(`❌ Error procesando archivo ${file.originalname}:`, err.message);
                 erroresArchivos.push({ archivo: file.originalname, error: err.message });
+                return [];
             }
-        }
+        });
+
+        const resultadosProductos = await Promise.all(promesasProcesamiento);
+        resultadosProductos.forEach(productos => {
+            todosLosProductos.push(...productos);
+        });
 
         if (todosLosProductos.length === 0 && erroresArchivos.length > 0) {
             return res.status(422).json({

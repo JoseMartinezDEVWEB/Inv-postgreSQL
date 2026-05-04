@@ -6,7 +6,12 @@ import SplashScreen from './SplashScreen'
 const LoaderPortal = () => {
   const { visible, durationMs, variant, message } = useLoader()
   return (
-    <Modal visible={visible} animationType="fade" transparent={false}>
+    <Modal 
+      key={`loader-modal-${visible}`} 
+      visible={visible} 
+      animationType="fade" 
+      transparent={true}
+    >
       <SplashScreen onComplete={() => {}} durationMs={durationMs} variant={variant} message={message} />
     </Modal>
   )

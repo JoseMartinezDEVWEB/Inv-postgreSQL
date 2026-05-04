@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Vibration,
 } from 'react-native'
-import { CameraView, Camera } from 'expo-camera'
+import { CameraView, useCameraPermissions } from 'expo-camera'
 import { Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { invitacionesApi, handleApiError } from '../services/api'
@@ -31,33 +31,46 @@ const QRScannerModal = ({ visible, onClose, onSuccess, mode = 'invitacion' }) =>
   const [isProcessing, setIsProcessing] = useState(false)
   const [flashOn, setFlashOn] = useState(false)
 
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions()
+
   useEffect(() => {
     if (visible) {
-      requestCameraPermission()
+      checkAndRequestPermission()
       setScanned(false)
       setFlashOn(false) // Siempre inicia con flash apagado
     }
   }, [visible])
 
-  const requestCameraPermission = async () => {
+  const checkAndRequestPermission = async () => {
     try {
-      const { status } = await Camera.requestCameraPermissionsAsync()
-      setHasPermission(status === 'granted')
-
-      if (status !== 'granted') {
-        Alert.alert(
-          'Permiso necesario',
-          'Se requiere acceso a la cámara para escanear códigos QR',
-          [
-            { text: 'Cancelar', onPress: onClose },
-            { text: 'Reintentar', onPress: requestCameraPermission }
-          ]
-        )
+      let granted = false;
+      if (!cameraPermission?.granted && cameraPermission?.canAskAgain) {
+        const result = await requestCameraPermission();
+        granted = result?.granted === true;
+      } else {
+        granted = cameraPermission?.granted === true;
+      }
+      
+      setHasPermission(granted);
+      if (!granted) {
+        showPermissionAlert();
       }
     } catch (error) {
-      console.error('Error requesting camera permission:', error)
-      Alert.alert('Error', 'No se pudo obtener permiso para usar la cámara')
+      console.error('Error requesting camera permission:', error);
+      setHasPermission(false);
+      Alert.alert('Error', 'No se pudo obtener permiso para usar la cámara');
     }
+  };
+
+  const showPermissionAlert = () => {
+    Alert.alert(
+      'Permiso necesario',
+      'Se requiere acceso a la cámara para escanear códigos QR',
+      [
+        { text: 'Cancelar', onPress: onClose },
+        { text: 'Reintentar', onPress: checkAndRequestPermission }
+      ]
+    )
   }
 
   const handleBarCodeScanned = async ({ type, data }) => {

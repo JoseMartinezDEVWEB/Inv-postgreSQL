@@ -30,6 +30,7 @@
         "buildType": "apk"
       },
       "env": {
+        "EXPO_PUBLIC_API_URL": "https://appj4-hlqj.onrender.com/api",
         "EAS_BUILD_GRADLE_UNIVERSAL_APK": "true"
       }
     }

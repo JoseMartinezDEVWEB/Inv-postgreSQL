@@ -63,6 +63,7 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
     // Cargar datos de la sesión
     useEffect(() => {
         if (isOpen && sesion) {
+            console.log('📄 [REPORTE] Sesión cargada para reporte:', sesion)
             if (sesion.datosFinancieros) {
                 const df = sesion.datosFinancieros
                 const nuevosDatosFinancieros = {
@@ -272,71 +273,176 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
 
     // --- ACCIONES ---
 
+    // ---- IMPRIMIR PAGINA ACTUAL (Compatible con Electron y navegadores) ----
+    const imprimirPaginaActual = () => {
+        const contenido = document.getElementById('reporte-content-body')
+        if (!contenido) {
+            toast.error('No se encontró el contenido del reporte')
+            return
+        }
+
+        const seccionLabel = getReportPageInfo().label
+        const clienteNombre = cliente?.nombre || sesion?.clienteNegocio?.nombre || 'CLIENTE'
+        const pageTitle = `Reporte: ${clienteNombre} - ${seccionLabel}`
+
+        // Obtener estilos Tailwind vigentes del documento
+        const estilosActuales = Array.from(document.styleSheets)
+            .filter(s => { try { return s.cssRules && s.href === null } catch { return false } })
+            .map(s => Array.from(s.cssRules).map(r => r.cssText).join('\n'))
+            .join('\n')
+
+        const htmlCompleto = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>${pageTitle}</title>
+  <style>
+    ${estilosActuales}
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 12px;
+      color: #111;
+      background: #fff;
+      padding: 24px 32px;
+    }
+    h1, h2, h3, h4, h5 { font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { padding: 6px 8px; border: 1px solid #ddd; text-align: left; font-size: 11px; }
+    th { background: #f0f4f8; font-weight: 700; }
+    tr:nth-child(even) { background: #f9fafb; }
+    .text-right { text-align: right; }
+    .text-center { text-align: center; }
+    .font-bold { font-weight: bold; }
+    button { display: none !important; }
+    @media print {
+      body { margin: 0; padding: 10px; }
+      @page { margin: 1.5cm; size: A4; }
+      button, .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  ${contenido.innerHTML}
+</body>
+</html>`
+
+        // Crear iframe oculto e inyectarlo en el documento actual
+        // (funciona en Electron, donde window.open puede estar bloqueado)
+        const idIframe = '__print_frame__'
+        const existente = document.getElementById(idIframe)
+        if (existente) existente.remove()
+
+        const iframe = document.createElement('iframe')
+        iframe.id = idIframe
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:900px;height:700px;border:none;visibility:hidden;'
+        document.body.appendChild(iframe)
+
+        const iframeDoc = iframe.contentWindow?.document || iframe.contentDocument
+        if (!iframeDoc) {
+            toast.error('No se pudo preparar la ventana de impresión')
+            return
+        }
+
+        iframeDoc.open()
+        iframeDoc.write(htmlCompleto)
+        iframeDoc.close()
+
+        // Esperar que el contenido cargue, luego lanzar diálogo del sistema
+        setTimeout(() => {
+            try {
+                iframe.contentWindow.focus()
+                iframe.contentWindow.print()
+            } catch (e) {
+                console.error('Error al imprimir:', e)
+                toast.error('Error al abrir el diálogo de impresión')
+            }
+            // Limpiar el iframe después de 5s
+            setTimeout(() => { iframe.remove() }, 5000)
+        }, 600)
+    }
+
     const ejecutarAccionReporte = async (tipoDocumento) => {
         const toastId = toast.loading('Preparando reporte...')
         setShowSelectionModal(false)
 
+        // Si es impresión directa de la página actual
+        if (selectionAction === 'imprimir') {
+            toast.dismiss(toastId)
+            imprimirPaginaActual()
+            return
+        }
+
+        // Si es descarga: generar PDF desde el frontend con html2canvas + jsPDF
         try {
-            const payload = {
-                contadorData: {
-                    ...contadorData,
-                    nombre: user?.nombre || contadorData.nombre || 'ADMINISTRADOR',
-                    cedula: user?.cedula || contadorData.cedula || '',
-                    telefono: user?.telefono || contadorData.telefono || '',
-                    email: user?.email || contadorData.email || ''
-                },
-                distribucionData: {
-                    utilidadesNetas: calculateUtilidadesNetas(),
-                    // Enviar socios reales con sus deudas calculadas dinámicamente
-                    socios: distribucionData.socios.map((socio, idx) => ({
-                        nombre: socio.nombre || `Socio ${idx + 1}`,
-                        porcentaje: Number(socio.porcentaje) || 0,
-                        // cuentaAdeudada calculada desde deudaANegocio en tiempo real
-                        cuentaAdeudada: calculateDeudaSocio(idx, socio.nombre)
-                    }))
-                },
-                tipoDocumento: tipoDocumento, // 'completo', 'productos', 'total'
-                incluirDistribucion: true
+            const { default: jsPDF } = await import('jspdf')
+            const { default: html2canvas } = await import('html2canvas')
+
+            const clienteNombre = cliente?.nombre || sesion?.clienteNegocio?.nombre || 'CLIENTE'
+            const nombreArchivo = `Reporte_${clienteNombre}_${sesion?.numeroSesion || ''}.pdf`
+
+            // Determinar qué secciones incluir según tipoDocumento
+            const secciones = []
+            if (tipoDocumento === 'completo') {
+                secciones.push('portada', 'balance', 'distribucion', 'productos')
+            } else if (tipoDocumento === 'total') {
+                secciones.push('portada', 'balance', 'distribucion')
+            } else if (tipoDocumento === 'productos') {
+                secciones.push('productos')
             }
 
-            if (selectionAction === 'imprimir') {
-                // Pausar reloj (opcional en historial, pero por consistencia)
-                sesionesApi.pauseTimer(sesion._id).catch(() => { })
-            }
+            const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+            const pageW = pdf.internal.pageSize.getWidth()
+            const pageH = pdf.internal.pageSize.getHeight()
+            let isFirstPage = true
 
-            const resp = await reportesApi.downloadInventoryPDF(sesion._id, payload)
-            const blob = new Blob([resp.data], { type: 'application/pdf' })
-            const url = URL.createObjectURL(blob)
+            for (const seccion of secciones) {
+                // Cambiar sección actual para renderizarla
+                setCurrentReportSection(seccion)
+                if (seccion === 'productos') {
+                    const totalPags = getTotalPaginasProductos()
+                    for (let pag = 0; pag < totalPags; pag++) {
+                        setCurrentReportPage(pag)
+                        // Dar tiempo al DOM para actualizar
+                        await new Promise(r => setTimeout(r, 250))
 
-            if (selectionAction === 'descargar') {
-                const link = document.createElement('a')
-                link.href = url
-                link.download = `Reporte_${cliente?.nombre || 'Cliente'}_${sesion.numeroSesion}.pdf`
-                document.body.appendChild(link)
-                link.click()
-                link.remove()
-                URL.revokeObjectURL(url)
-                toast.success('Reporte descargado', { id: toastId })
-            } else {
-                // Estrategia Iframe para impresión
-                const iframe = document.createElement('iframe')
-                iframe.style.display = 'none'
-                iframe.src = url
-                document.body.appendChild(iframe)
+                        const el = document.getElementById('reporte-content-body')
+                        if (!el) continue
+                        const canvas = await html2canvas(el, { scale: 1.5, useCORS: true, logging: false })
+                        const imgData = canvas.toDataURL('image/jpeg', 0.92)
+                        const ratio = Math.min(pageW / canvas.width, pageH / canvas.height)
+                        const imgW = canvas.width * ratio
+                        const imgH = canvas.height * ratio
 
-                iframe.onload = () => {
-                    iframe.contentWindow.focus()
-                    iframe.contentWindow.print()
-                    toast.success('Impresión enviada', { id: toastId })
-                    setTimeout(() => {
-                        document.body.removeChild(iframe)
-                        URL.revokeObjectURL(url)
-                    }, 3000)
+                        if (!isFirstPage) pdf.addPage()
+                        pdf.addImage(imgData, 'JPEG', (pageW - imgW) / 2, (pageH - imgH) / 2, imgW, imgH)
+                        isFirstPage = false
+                    }
+                } else {
+                    await new Promise(r => setTimeout(r, 250))
+                    const el = document.getElementById('reporte-content-body')
+                    if (!el) continue
+                    const canvas = await html2canvas(el, { scale: 1.5, useCORS: true, logging: false })
+                    const imgData = canvas.toDataURL('image/jpeg', 0.92)
+                    const ratio = Math.min(pageW / canvas.width, pageH / canvas.height)
+                    const imgW = canvas.width * ratio
+                    const imgH = canvas.height * ratio
+
+                    if (!isFirstPage) pdf.addPage()
+                    pdf.addImage(imgData, 'JPEG', (pageW - imgW) / 2, (pageH - imgH) / 2, imgW, imgH)
+                    isFirstPage = false
                 }
             }
+
+            pdf.save(nombreArchivo)
+            toast.success('Reporte descargado ✅', { id: toastId })
+
+            // Restaurar la vista original
+            setCurrentReportSection('portada')
+            setCurrentReportPage(0)
         } catch (error) {
-            console.error('Error en reporte:', error)
-            toast.error('Error al generar el reporte', { id: toastId })
+            console.error('Error al generar PDF:', error)
+            toast.error('Error al generar el PDF: ' + (error?.message || 'Error desconocido'), { id: toastId })
         }
     }
 
@@ -491,31 +597,71 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
                                         </div>
 
                                         <div className="p-6 space-y-4">
-                                            <p className="text-gray-600 text-sm mb-4">Seleccione el formato y contenido para su reporte profesional:</p>
+                                            {selectionAction === 'imprimir' ? (
+                                                // Opciones de impresión: sección actual o todas
+                                                <>
+                                                    <p className="text-gray-600 text-sm mb-2">¿Qué desea imprimir?</p>
 
-                                            <button
-                                                onClick={() => ejecutarAccionReporte('completo')}
-                                                className="w-full p-4 border-2 border-gray-100 rounded-xl hover:border-teal-500 hover:bg-teal-50 text-left transition-all group"
-                                            >
-                                                <div className="font-bold text-gray-800 group-hover:text-teal-700">Inventario Completo</div>
-                                                <div className="text-xs text-gray-500 italic">Portada + Balance + Distribución + Listado de Productos</div>
-                                            </button>
+                                                    <button
+                                                        onClick={() => { setShowSelectionModal(false); imprimirPaginaActual() }}
+                                                        className="w-full p-4 border-2 border-orange-100 rounded-xl hover:border-orange-500 hover:bg-orange-50 text-left transition-all group"
+                                                    >
+                                                        <div className="font-bold text-gray-800 group-hover:text-orange-700 flex items-center gap-2">
+                                                            <Printer className="w-4 h-4" /> Imprimir página actual
+                                                        </div>
+                                                        <div className="text-xs text-gray-500 italic mt-1">Solo la sección que está viendo ahora: <strong>{getReportPageInfo().label}</strong></div>
+                                                    </button>
 
-                                            <button
-                                                onClick={() => ejecutarAccionReporte('total')}
-                                                className="w-full p-4 border-2 border-gray-100 rounded-xl hover:border-teal-500 hover:bg-teal-50 text-left transition-all group"
-                                            >
-                                                <div className="font-bold text-gray-800 group-hover:text-teal-700">Reporte Total (Resumen)</div>
-                                                <div className="text-xs text-gray-500 italic">Portada + Balance General + Distribución de Saldo</div>
-                                            </button>
+                                                    <button
+                                                        onClick={() => ejecutarAccionReporte('completo')}
+                                                        className="w-full p-4 border-2 border-gray-100 rounded-xl hover:border-orange-500 hover:bg-orange-50 text-left transition-all group"
+                                                    >
+                                                        <div className="font-bold text-gray-800 group-hover:text-orange-700 flex items-center gap-2">
+                                                            <FileText className="w-4 h-4" /> Imprimir Inventario Completo (PDF)
+                                                        </div>
+                                                        <div className="text-xs text-gray-500 italic mt-1">Genera y abre el PDF completo — Portada + Balance + Distribución + Productos</div>
+                                                    </button>
 
-                                            <button
-                                                onClick={() => ejecutarAccionReporte('productos')}
-                                                className="w-full p-4 border-2 border-gray-100 rounded-xl hover:border-teal-500 hover:bg-teal-50 text-left transition-all group"
-                                            >
-                                                <div className="font-bold text-gray-800 group-hover:text-teal-700">Solo Listado de Productos</div>
-                                                <div className="text-xs text-gray-500 italic">Tabla detallada de mercancía contada</div>
-                                            </button>
+                                                    <button
+                                                        onClick={() => ejecutarAccionReporte('productos')}
+                                                        className="w-full p-4 border-2 border-gray-100 rounded-xl hover:border-orange-500 hover:bg-orange-50 text-left transition-all group"
+                                                    >
+                                                        <div className="font-bold text-gray-800 group-hover:text-orange-700 flex items-center gap-2">
+                                                            <ShoppingCart className="w-4 h-4" /> Solo Listado de Productos (PDF)
+                                                        </div>
+                                                        <div className="text-xs text-gray-500 italic mt-1">PDF solo con la tabla de mercancía contada</div>
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                // Opciones de descarga (sin cambios)
+                                                <>
+                                                    <p className="text-gray-600 text-sm mb-4">Seleccione el formato y contenido para su reporte profesional:</p>
+
+                                                    <button
+                                                        onClick={() => ejecutarAccionReporte('completo')}
+                                                        className="w-full p-4 border-2 border-gray-100 rounded-xl hover:border-teal-500 hover:bg-teal-50 text-left transition-all group"
+                                                    >
+                                                        <div className="font-bold text-gray-800 group-hover:text-teal-700">Inventario Completo</div>
+                                                        <div className="text-xs text-gray-500 italic">Portada + Balance + Distribución + Listado de Productos</div>
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() => ejecutarAccionReporte('total')}
+                                                        className="w-full p-4 border-2 border-gray-100 rounded-xl hover:border-teal-500 hover:bg-teal-50 text-left transition-all group"
+                                                    >
+                                                        <div className="font-bold text-gray-800 group-hover:text-teal-700">Reporte Total (Resumen)</div>
+                                                        <div className="text-xs text-gray-500 italic">Portada + Balance General + Distribución de Saldo</div>
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() => ejecutarAccionReporte('productos')}
+                                                        className="w-full p-4 border-2 border-gray-100 rounded-xl hover:border-teal-500 hover:bg-teal-50 text-left transition-all group"
+                                                    >
+                                                        <div className="font-bold text-gray-800 group-hover:text-teal-700">Solo Listado de Productos</div>
+                                                        <div className="text-xs text-gray-500 italic">Tabla detallada de mercancía contada</div>
+                                                    </button>
+                                                </>
+                                            )}
                                         </div>
 
                                         <div className="bg-gray-50 px-6 py-4 flex justify-end">
@@ -536,30 +682,37 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
                         <div id="reporte-content-body" className="bg-white shadow-lg mx-auto max-w-4xl p-10 min-h-[1000px] relative text-gray-800">
 
                             {currentReportSection === 'portada' && (
-                                <div className="flex flex-col h-full justify-between py-10">
-                                    <div>
-                                        <div className="text-sm text-gray-500 mb-2">Inventario elaborado por:</div>
-                                        <h2 className="text-2xl font-bold text-gray-800">{(sesion?.usuario?.nombre || 'ADMINISTRADOR').toUpperCase()}</h2>
-                                    </div>
+                                <div className="flex flex-col h-full min-h-[900px] relative py-8">
 
-                                    <div className="text-center my-20">
-                                        <h1 className="text-4xl font-extrabold text-gray-900 tracking-wide mb-6">
+                                    {/* CENTRO: Nombre del cliente + Logo + Contador */}
+                                    <div className="flex-1 flex flex-col items-center justify-center text-center">
+                                        <h1 className="text-5xl font-extrabold text-gray-900 tracking-widest mb-4 uppercase">
                                             {(cliente?.nombre || sesion?.clienteNegocio?.nombre || 'CLIENTE').toUpperCase()}
                                         </h1>
 
-                                        <div className="mt-10 flex justify-center opacity-100">
-                                            <img src={logoInfocolmados} alt="Logo" className="h-40 object-contain" />
+                                        {/* Logo grande en el centro */}
+                                        <div className="my-10 flex justify-center">
+                                            <img src={logoInfocolmados} alt="Logo" className="h-80 w-80 object-contain" />
+                                        </div>
+
+                                        {/* Inventario elaborado por - ahora en el centro */}
+                                        <div className="mt-4 border-t border-gray-200 pt-6">
+                                            <div className="text-sm text-gray-500 mb-1">Inventario elaborado por:</div>
+                                            <h2 className="text-2xl font-bold text-gray-800 uppercase">
+                                                {(sesion?.usuario?.nombre || 'ADMINISTRADOR').toUpperCase()}
+                                            </h2>
                                         </div>
                                     </div>
 
-                                    <div className="flex justify-between border-t-2 border-gray-100 pt-6">
+                                    {/* ABAJO: Fecha Inventario y Costo del Servicio pegado al fondo */}
+                                    <div className="flex justify-between border-t-4 border-teal-600 pt-4 mt-4">
                                         <div>
-                                            <div className="font-semibold text-gray-700">Fecha Inventario</div>
-                                            <div className="text-lg">{formatearFecha(sesion?.fecha)}</div>
+                                            <div className="font-semibold text-gray-700 text-base">Fecha Inventario</div>
+                                            <div className="text-xl font-bold text-gray-900">{formatearFecha(sesion?.fecha)}</div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="font-semibold text-gray-700">Costo del Servicio</div>
-                                            <div className="text-xl font-bold text-teal-700">{formatearMoneda(contadorData.costoServicio)}</div>
+                                            <div className="font-semibold text-gray-700 text-base">Costo del Servicio</div>
+                                            <div className="text-2xl font-extrabold text-teal-700">{formatearMoneda(contadorData.costoServicio)}</div>
                                         </div>
                                     </div>
                                 </div>
@@ -567,49 +720,45 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
 
                             {currentReportSection === 'productos' && (
                                 <div>
-                                    <div className="text-center mb-8 border-b pb-4">
-                                        <h2 className="text-2xl font-bold text-gray-800">Listado de Productos</h2>
-                                        <p className="text-gray-500">{cliente?.nombre} - {formatearFecha(sesion?.fecha)}</p>
+                                    <div className="text-center mb-6 border-b pb-4">
+                                        <h2 className="text-3xl font-bold text-gray-800">Listado de Productos</h2>
+                                        <p className="text-gray-500 text-base mt-1">{cliente?.nombre} - {formatearFecha(sesion?.fecha)}</p>
                                     </div>
 
-                                    <table className="w-full text-sm border-collapse">
+                                    <table className="w-full border-collapse">
                                         <thead>
-                                            <tr className="bg-gray-50 border-y border-gray-200">
-                                                <th className="py-3 px-2 text-left font-bold text-gray-700">Producto</th>
-                                                <th className="py-3 px-2 text-center font-bold text-gray-700">Cant.</th>
-                                                <th className="py-3 px-2 text-right font-bold text-gray-700">Costo</th>
-                                                <th className="py-3 px-2 text-right font-bold text-gray-700">Total</th>
+                                            <tr className="bg-gray-100 border-y-2 border-gray-300">
+                                                <th className="py-4 px-3 text-left font-bold text-gray-800 text-base">Producto</th>
+                                                <th className="py-4 px-3 text-center font-bold text-gray-800 text-base">Cant.</th>
+                                                <th className="py-4 px-3 text-right font-bold text-gray-800 text-base">Costo</th>
+                                                <th className="py-4 px-3 text-right font-bold text-gray-800 text-base">Total</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {getProductosPaginados().map((p, i) => (
-                                                <tr key={i} className="border-b border-gray-100">
-                                                    <td className="py-2 px-2 text-gray-800">{p.nombreProducto || p.nombre}</td>
-                                                    <td className="py-2 px-2 text-center font-medium bg-gray-50">{Number(p.cantidadContada || 0).toFixed(2)}</td>
-                                                    <td className="py-2 px-2 text-right">{Number(p.costoProducto || 0).toFixed(2)}</td>
-                                                    <td className="py-2 px-2 text-right font-bold">{formatearMoneda((Number(p.cantidadContada || 0) * Number(p.costoProducto || 0)))}</td>
+                                                <tr key={i} className={`border-b border-gray-200 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
+                                                    <td className="py-3 px-3 text-gray-900 text-base font-medium">{p.nombreProducto || p.nombre}</td>
+                                                    <td className="py-3 px-3 text-center font-semibold text-base">{Number(p.cantidadContada || 0).toFixed(2)}</td>
+                                                    <td className="py-3 px-3 text-right text-base">{Number(p.costoProducto || 0).toFixed(2)}</td>
+                                                    <td className="py-3 px-3 text-right font-bold text-base text-teal-700">{formatearMoneda((Number(p.cantidadContada || 0) * Number(p.costoProducto || 0)))}</td>
                                                 </tr>
                                             ))}
-                                            {Array.from({ length: Math.max(0, PRODUCTOS_POR_PAGINA - getProductosPaginados().length) }).map((_, i) => (
-                                                <tr key={`empty-${i}`}><td colSpan="4" className="py-4"></td></tr>
-                                            ))}
                                         </tbody>
-                                        {/* Footer de Tabla Productos como en imagen */}
                                         <tfoot>
                                             <tr>
                                                 <td colSpan="4" className="pt-4">
-                                                    <div className="flex justify-between items-end border-t-2 border-gray-800 pt-2">
-                                                        <div className="text-xs text-gray-500">
-                                                            Usuario {sesion?.usuario?.nombre || 'ADMINISTRADOR'}<br />
+                                                    <div className="flex justify-between items-end border-t-2 border-gray-800 pt-3">
+                                                        <div className="text-sm text-gray-500">
+                                                            Usuario: {sesion?.usuario?.nombre || 'ADMINISTRADOR'}<br />
                                                             Teléfono: {sesion?.usuario?.telefono || '1234567890'}
                                                         </div>
-                                                        <div className="text-right text-sm">
+                                                        <div className="text-right text-base">
                                                             <div>Líneas {(currentReportPage * PRODUCTOS_POR_PAGINA) + 1} a {(currentReportPage * PRODUCTOS_POR_PAGINA) + getProductosPaginados().length}</div>
                                                             <div className="font-bold">Total Página: {formatearMoneda(getProductosPaginados().reduce((sum, p) => sum + ((Number(p.cantidadContada || 0) * Number(p.costoProducto || 0))), 0))}</div>
-                                                            <div className="font-bold text-teal-700">Total Reporte: {formatearMoneda(valorTotal)}</div>
+                                                            <div className="font-bold text-teal-700 text-lg">Total Reporte: {formatearMoneda(valorTotal)}</div>
                                                         </div>
                                                     </div>
-                                                    <div className="text-right text-xs text-gray-400 mt-2">Pág. {currentReportPage + 1} de {getTotalPaginasProductos()}</div>
+                                                    <div className="text-right text-sm text-gray-400 mt-2">Pág. {currentReportPage + 1} de {getTotalPaginasProductos()}</div>
                                                 </td>
                                             </tr>
                                         </tfoot>
@@ -865,26 +1014,42 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
                         </div>
                     </div>
 
-                    {/* Pagination Footer (Only for Products) */}
-                    {currentReportSection === 'productos' && getTotalPaginasProductos() > 1 && (
-                        <div className="bg-white border-t px-6 py-3 flex justify-between items-center shrink-0">
-                            <button
-                                onClick={() => setCurrentReportPage(p => Math.max(0, p - 1))}
-                                disabled={currentReportPage === 0}
-                                className="flex items-center gap-2 px-4 py-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50 text-sm font-medium"
-                            >
-                                <ArrowLeft className="w-4 h-4" /> Anterior
-                            </button>
-                            <span className="text-sm font-medium text-gray-600">Pág. {currentReportPage + 1} de {getTotalPaginasProductos()}</span>
-                            <button
-                                onClick={() => setCurrentReportPage(p => Math.min(getTotalPaginasProductos() - 1, p + 1))}
-                                disabled={currentReportPage >= getTotalPaginasProductos() - 1}
-                                className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700 disabled:opacity-50 text-sm font-medium"
-                            >
-                                Siguiente <ArrowLeft className="w-4 h-4 rotate-180" />
-                            </button>
+                    {/* Footer: Navegación de páginas + Imprimir página actual */}
+                    <div className="bg-white border-t px-6 py-3 flex justify-between items-center shrink-0">
+                        <div className="flex items-center gap-2">
+                            {currentReportSection === 'productos' && getTotalPaginasProductos() > 1 && (
+                                <>
+                                    <button
+                                        onClick={() => setCurrentReportPage(p => Math.max(0, p - 1))}
+                                        disabled={currentReportPage === 0}
+                                        className="flex items-center gap-2 px-4 py-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50 text-sm font-medium"
+                                    >
+                                        <ArrowLeft className="w-4 h-4" /> Anterior
+                                    </button>
+                                    <span className="text-sm font-medium text-gray-600 px-3">
+                                        Pág. {currentReportPage + 1} de {getTotalPaginasProductos()}
+                                    </span>
+                                    <button
+                                        onClick={() => setCurrentReportPage(p => Math.min(getTotalPaginasProductos() - 1, p + 1))}
+                                        disabled={currentReportPage >= getTotalPaginasProductos() - 1}
+                                        className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700 disabled:opacity-50 text-sm font-medium"
+                                    >
+                                        Siguiente <ArrowLeft className="w-4 h-4 rotate-180" />
+                                    </button>
+                                </>
+                            )}
                         </div>
-                    )}
+
+                        {/* Botón rápido imprimir página actual */}
+                        <button
+                            onClick={imprimirPaginaActual}
+                            className="flex items-center gap-2 px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-bold transition-colors shadow"
+                            title={`Imprimir: ${getReportPageInfo().label}`}
+                        >
+                            <Printer className="w-4 h-4" />
+                            Imprimir esta página
+                        </button>
+                    </div>
                 </motion.div>
             </div>
         </AnimatePresence>

@@ -19,7 +19,7 @@ import {
   Switch, // Import Switch
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
-import { CameraView, Camera } from 'expo-camera'
+import { CameraView, useCameraPermissions } from 'expo-camera'
 import { useQuery, useMutation, useQueryClient } from 'react-query'
 import api, { sesionesApi, productosApi, invitacionesApi, solicitudesConexionApi, handleApiError } from '../services/api'
 import { showMessage } from 'react-native-flash-message'
@@ -81,31 +81,7 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
   const { sesionId } = route.params || {}
   const queryClient = useQueryClient()
   const { showAnimation, hideLoader, showLoader } = useLoader()
-  const { state: authState } = useAuth()
-
-  // Validar sesionId - Nota: Este return temprano está antes de otros hooks
-  // pero después de los hooks esenciales que siempre se necesitan
-  if (!sesionId) {
-    return (
-      <View style={styles.container}>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Ionicons name="alert-circle" size={64} color="#ef4444" />
-          <Text style={{ fontSize: 20, fontWeight: 'bold', marginTop: 20, marginBottom: 10, color: '#1e293b' }}>
-            Sesión no válida
-          </Text>
-          <Text style={{ fontSize: 16, textAlign: 'center', color: '#64748b', marginBottom: 20 }}>
-            No se encontró el ID de la sesión. Por favor, vuelve a la lista de sesiones.
-          </Text>
-          <TouchableOpacity
-            style={{ backgroundColor: '#3b82f6', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 }}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={{ color: '#ffffff', fontWeight: 'bold' }}>Volver</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    )
-  }
+  const authState = useAuth()
 
   // Estados de conectividad y sincronización
   const [isConnected, setIsConnected] = useState(true)
@@ -145,6 +121,29 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
   // Estados de permisos y escáner
   const [hasPermission, setHasPermission] = useState(null)
   const [isQuickScanMode, setIsQuickScanMode] = useState(false)
+
+  // Validar sesionId
+  if (!sesionId) {
+    return (
+      <View style={styles.container}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <Ionicons name="alert-circle" size={64} color="#ef4444" />
+          <Text style={{ fontSize: 20, fontWeight: 'bold', marginTop: 20, marginBottom: 10, color: '#1e293b' }}>
+            Sesión no válida
+          </Text>
+          <Text style={{ fontSize: 16, textAlign: 'center', color: '#64748b', marginBottom: 20 }}>
+            No se encontró el ID de la sesión. Por favor, vuelve a la lista de sesiones.
+          </Text>
+          <TouchableOpacity
+            style={{ backgroundColor: '#3b82f6', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 }}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={{ color: '#ffffff', fontWeight: 'bold' }}>Volver</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    )
+  }
 
   // Estados de temporizador  // Componente de Temporizador Memoizado para evitar re-renders innecesarios en Mobile
   const TimerDisplay = useMemo(() => {
@@ -504,6 +503,10 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
         batches.push(productos.slice(i, i + BATCH_SIZE))
       }
 
+      // Mapa para rastrear productos procesados en esta ejecución y evitar duplicados
+      // antes de que el servidor devuelva la sesión actualizada
+      const productosProcesadosLocal = new Map()
+
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i]
         showMessage({
@@ -514,20 +517,34 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
         // Procesar cada producto del lote
         for (const pOffline of batch) {
           const pData = pOffline.productoData
+          const nombreNormalizado = pData.nombre?.toLowerCase().trim()
 
-          // Buscar si existe en sesión (usar datos de sesión disponibles)
+          // 1. Buscar si ya existe en la sesión (datos del servidor)
           const productosExistentes = sesionData?.productosContados || []
-          const existente = productosExistentes.find(p =>
-            p.nombreProducto?.toLowerCase().trim() === pData.nombre?.toLowerCase().trim()
+          let existente = productosExistentes.find(p =>
+            p.nombreProducto?.toLowerCase().trim() === nombreNormalizado
           )
 
+          // 2. SI NO EXISTE EN EL SERVIDOR, buscar en lo que ya procesamos en este bucle
+          if (!existente && productosProcesadosLocal.has(nombreNormalizado)) {
+            existente = productosProcesadosLocal.get(nombreNormalizado)
+          }
+
           if (existente) {
+            // Actualizar existente
+            const nuevaCantidad = (existente.cantidadContada || 0) + Number(pData.cantidad || 1)
             await sesionesApi.updateProduct(sesionId, existente.productoId, {
-              cantidadContada: (existente.cantidadContada || 0) + Number(pData.cantidad || 1),
+              cantidadContada: nuevaCantidad,
               costoProducto: Number(pData.costo) || 0
             })
+            
+            // Actualizar nuestro mapa local para el siguiente producto del mismo lote
+            productosProcesadosLocal.set(nombreNormalizado, {
+              ...existente,
+              cantidadContada: nuevaCantidad
+            })
           } else {
-            // Buscar o crear el producto en ProductoCliente
+            // Crear nuevo
             let productoClienteId
             const clienteId = sesionData?.clienteNegocio?._id
 
@@ -537,7 +554,6 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
             }
 
             try {
-              // Buscar primero en productos del cliente
               const busqueda = await productosApi.getByCliente(clienteId, {
                 buscar: pData.nombre,
                 limite: 1
@@ -553,32 +569,40 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
             // Si no se encontró, crear uno nuevo
             if (!productoClienteId) {
               try {
-                const nuevoProducto = await productosApi.createForCliente(clienteId, {
+                const resNuevo = await productosApi.createForCliente(clienteId, {
                   nombre: pData.nombre,
                   costo: Number(pData.costo) || 0,
                   unidad: pData.unidad || 'unidad',
                   sku: pData.sku || '',
                   categoria: pData.categoria || 'General'
                 })
-                productoClienteId = nuevoProducto.data?.datos?.producto?._id || nuevoProducto.data?.datos?._id
+                productoClienteId = resNuevo.data?.datos?.producto?._id || resNuevo.data?.datos?._id
               } catch (error) {
                 console.error('Error creando producto:', error)
-                showMessage({
-                  message: `Error al crear producto ${pData.nombre}`,
-                  type: 'danger'
-                })
-                continue
               }
             }
 
             // Agregar a la sesión
             if (productoClienteId) {
               try {
-                await sesionesApi.addProduct(sesionId, {
+                const response = await sesionesApi.addProduct(sesionId, {
                   productoClienteId: productoClienteId,
+                  nombreProducto: pData.nombre,
+                  skuProducto: pData.sku || '',
                   cantidadContada: Number(pData.cantidad || 1),
-                  costoProducto: Number(pData.costo) || 0
+                  costoProducto: Number(pData.costo) || 0,
+                  fecha: pData.fecha || new Date().toISOString()
                 })
+
+                const nuevoProducto = response.data?.datos?.producto
+                if (nuevoProducto) {
+                  // Guardar en nuestro mapa local para futuras iteraciones de este mismo bucle
+                  productosProcesadosLocal.set(nombreNormalizado, {
+                    productoId: nuevoProducto.productoId || nuevoProducto._id,
+                    nombreProducto: pData.nombre,
+                    cantidadContada: Number(pData.cantidad || 1)
+                  })
+                }
               } catch (error) {
                 console.error('Error agregando producto a sesión:', error)
                 showMessage({
@@ -719,14 +743,44 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
     }
   );
 
-  // Solicitar permisos de cámara
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions()
+  const [flashOn, setFlashOn] = useState(false);
+
+  // Solo verificar estado inicial de permisos, NO solicitar automáticamente
   useEffect(() => {
-    const getCameraPermissions = async () => {
-      const { status } = await Camera.requestCameraPermissionsAsync()
-      setHasPermission(status === 'granted')
+    if (cameraPermission) {
+      setHasPermission(cameraPermission.granted)
     }
-    getCameraPermissions()
-  }, [])
+  }, [cameraPermission])
+
+  const handleOpenScanner = async () => {
+    try {
+      let granted = false
+      
+      // Si el permiso no está otorgado, solicitarlo explícitamente al abrir el escáner
+      if (!cameraPermission?.granted && cameraPermission?.canAskAgain) {
+        const result = await requestCameraPermission()
+        granted = result?.granted === true
+      } else {
+        granted = cameraPermission?.granted === true
+      }
+
+      setHasPermission(granted)
+      
+      if (granted) {
+        setFlashOn(false)
+        setShowScanner(true)
+      } else {
+        Alert.alert(
+          'Permiso denegado',
+          'Se necesita acceso a la cámara para escanear productos. Por favor, habilítalo en los ajustes del sistema.'
+        )
+      }
+    } catch (err) {
+      console.error('Error al abrir el escáner:', err)
+      Alert.alert('Error', 'No se pudo inicializar la cámara')
+    }
+  }
 
   // Inicializar datos financieros cuando se cargan los datos de la sesión
   useEffect(() => {
@@ -1777,7 +1831,7 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
       <View style={styles.actionButtonsContainer}>
         <TouchableOpacity
           style={[styles.actionButton, styles.scanButton]}
-          onPress={() => setShowScanner(true)}
+          onPress={handleOpenScanner}
         >
           <Ionicons name="barcode" size={24} color="#ffffff" />
           <Text style={styles.actionButtonText}>Código</Text>
@@ -1905,6 +1959,7 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
                 barcodeTypes: ['qr', 'ean13', 'ean8', 'code128', 'code39', 'upc_a', 'upc_e'],
               }}
               style={StyleSheet.absoluteFillObject}
+              enableTorch={flashOn}
             />
           )}
           <View style={styles.scannerOverlay}>
@@ -1916,6 +1971,12 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
                 <Ionicons name="close" size={24} color="#ffffff" />
               </TouchableOpacity>
               <Text style={styles.scannerTitle}>Escanear Código de Barras</Text>
+              <TouchableOpacity
+                style={[styles.scannerFlashButton, flashOn && styles.scannerFlashButtonActive]}
+                onPress={() => setFlashOn(prev => !prev)}
+              >
+                <Ionicons name={flashOn ? "flash" : "flash-off"} size={24} color={flashOn ? "#fbbf24" : "#ffffff"} />
+              </TouchableOpacity>
             </View>
             <View style={styles.scannerFrame} />
             <Text style={styles.scannerInstructions}>
@@ -2833,10 +2894,22 @@ const styles = StyleSheet.create({
   scannerTitle: {
     flex: 1,
     textAlign: 'center',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#ffffff',
-    marginRight: 40,
+  },
+  scannerFlashButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scannerFlashButtonActive: {
+    backgroundColor: 'rgba(251, 191, 36, 0.3)',
+    borderWidth: 1,
+    borderColor: '#fbbf24',
   },
   scannerFrame: {
     width: 250,

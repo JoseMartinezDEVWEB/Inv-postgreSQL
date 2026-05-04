@@ -67,7 +67,11 @@ function RootNavigator() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {isAuthenticated ? (
-        <Stack.Screen name="MainApp" component={DrawerNavigator} />
+        <>
+          <Stack.Screen name="MainApp" component={DrawerNavigator} />
+          {/* También disponible aquí para evitar cierres durante transiciones de rol */}
+          <Stack.Screen name="SesionColaborador" component={SesionColaboradorScreen} />
+        </>
       ) : (
         <>
           <Stack.Screen name="Login" component={LoginScreen} />

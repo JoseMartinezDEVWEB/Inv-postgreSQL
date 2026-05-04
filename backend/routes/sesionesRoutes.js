@@ -321,6 +321,42 @@ router.get('/agenda/resumen', authenticateToken, async (req, res) => {
 });
 
 /**
+ * Obtener sesiones por cliente ID
+ */
+router.get('/cliente/:clienteId', authenticateToken, async (req, res) => {
+    try {
+        const { clienteId } = req.params;
+        const { limite = 20, pagina = 1, estado } = req.query;
+        const offset = (pagina - 1) * limite;
+
+        const where = { clienteNegocioId: clienteId };
+        if (estado) {
+            where.estado = estado;
+        }
+
+        const { count, rows } = await db.SesionInventario.findAndCountAll({
+            where,
+            include: [{ model: db.ClienteNegocio }],
+            limit: parseInt(limite),
+            offset: parseInt(offset),
+            order: [['createdAt', 'DESC']]
+        });
+
+        res.json({
+            sesiones: rows,
+            paginacion: {
+                total: count,
+                pagina: parseInt(pagina),
+                limite: parseInt(limite),
+                totalPaginas: Math.ceil(count / limite)
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al obtener sesiones del cliente: ' + error.message });
+    }
+});
+
+/**
  * Gestión de productos dentro de una sesión
  */
 router.post('/:id/productos', authenticateToken, async (req, res) => {

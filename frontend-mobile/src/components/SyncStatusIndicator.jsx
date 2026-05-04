@@ -7,8 +7,8 @@ import colors from '../theme/colors';
 const SyncStatusIndicator = () => {
   const [status, setStatus] = useState('idle'); // 'idle', 'syncing', 'success', 'error'
   const [lastSync, setLastSync] = useState(null);
-  const spinValue = new Animated.Value(0);
-  const opacityValue = new Animated.Value(0);
+  const spinValue = React.useRef(new Animated.Value(0)).current;
+  const opacityValue = React.useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     // Suscribirse a eventos de sincronización

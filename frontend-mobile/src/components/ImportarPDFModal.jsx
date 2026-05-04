@@ -33,6 +33,7 @@ const ImportarPDFModal = ({ visible, onClose, cliente, onVerSesion }) => {
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState(null);
   const [reintentoHecho, setReintentoHecho] = useState(false);
+  const [fechaInventario, setFechaInventario] = useState(new Date().toISOString().split('T')[0]);
   const queryClient = useQueryClient();
 
   /**
@@ -177,6 +178,7 @@ const ImportarPDFModal = ({ visible, onClose, cliente, onVerSesion }) => {
               setProgreso(Math.max(30, percent));
             }
           },
+          timeout: 180000, // 3 minutos
         }
       );
 

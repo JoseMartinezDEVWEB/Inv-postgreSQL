@@ -16,7 +16,8 @@ const CLOUD_API_URL = 'https://appj4-hlqj.onrender.com/api';
 // (Dejar en null para usar la nube o detectar automaticamente)
 const CUSTOM_BACKEND_IP = null;  // Ejemplo: '192.168.1.100'
 // Puerto estándar para el backend PostgreSQL
-const CUSTOM_BACKEND_PORT = '4000';
+// Puerto estándar para el backend PostgreSQL
+const CUSTOM_BACKEND_PORT = '4501';
 // =============================================
 
 // Funcion para detectar tipo de dispositivo
@@ -35,7 +36,7 @@ const isProductionBuild = () => {
 };
 
 // Funcion para construir URL de backend local
-const buildLocalBackendUrl = (ip, port = '4000') => {
+const buildLocalBackendUrl = (ip, port = '4501') => {
   if (!ip) return null;
   const cleanIp = ip.replace(/^https?:\/\//, '');
   return `http://${cleanIp}:${port}/api`;

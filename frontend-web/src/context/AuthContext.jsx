@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react'
+import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo } from 'react'
 import { authApi, handleApiResponse, handleApiError } from '../services/api'
 import webSocketService from '../services/websocket'
 import toast from 'react-hot-toast'
@@ -270,7 +270,7 @@ export const AuthProvider = ({ children }) => {
     return userPermissions.includes('all') || userPermissions.includes(permission)
   }
 
-  const value = {
+  const value = useMemo(() => ({
     ...state,
     login,
     register,
@@ -279,7 +279,7 @@ export const AuthProvider = ({ children }) => {
     clearError,
     hasRole,
     hasPermission,
-  }
+  }), [state, login, register, logout, updateUser, clearError, hasRole, hasPermission])
 
   return (
     <AuthContext.Provider value={value}>

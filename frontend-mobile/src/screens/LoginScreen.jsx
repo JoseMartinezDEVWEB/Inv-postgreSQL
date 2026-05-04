@@ -19,6 +19,7 @@ import QRScannerModal from '../components/QRScannerModal'
 import api, { solicitudesConexionApi, setRuntimeApiBaseUrl } from '../services/api'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as Device from 'expo-device'
+import { showMessage } from 'react-native-flash-message'
 
 const LoginScreen = ({ navigation }) => {
   const { login, isLoading, loginAsCollaborator } = useAuth()

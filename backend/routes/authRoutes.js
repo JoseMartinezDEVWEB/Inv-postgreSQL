@@ -79,15 +79,19 @@ router.post('/login', async (req, res) => {
             { expiresIn: '7d' }
         );
 
+        // Retornar en formato compatible con frontend mobile
         res.json({
-            accessToken,
-            refreshToken,
-            token: accessToken,
-            usuario: {
-                id: usuario.id,
-                nombre: usuario.nombre,
-                rol: usuario.rol,
-                email: usuario.email
+            mensaje: 'Login exitoso',
+            datos: {
+                accessToken,
+                refreshToken,
+                token: accessToken,
+                usuario: {
+                    id: usuario.id,
+                    nombre: usuario.nombre,
+                    rol: usuario.rol,
+                    email: usuario.email
+                }
             }
         });
     } catch (error) {

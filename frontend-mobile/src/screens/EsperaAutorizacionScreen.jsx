@@ -22,7 +22,7 @@ const EsperaAutorizacionScreen = ({ route }) => {
   }, [])
 
   useEffect(() => {
-    if (!solicitudId) return
+    if (!solicitudId || estado !== 'pendiente') return
 
     // Polling cada 5 segundos
     const interval = setInterval(() => {
@@ -33,7 +33,7 @@ const EsperaAutorizacionScreen = ({ route }) => {
     verificarEstado()
 
     return () => clearInterval(interval)
-  }, [solicitudId])
+  }, [solicitudId, estado])
 
   const cargarSolicitudId = async () => {
     try {
@@ -67,6 +67,9 @@ const EsperaAutorizacionScreen = ({ route }) => {
 
       // Si fue aceptada, navegar a sesión de inventario
       if (datos.estado === 'aceptada') {
+        // DETENER POLLING INMEDIATAMENTE
+        setEstado('aceptada')
+        
         Alert.alert(
           '¡Autorizado!',
           'Tu solicitud ha sido aceptada. Ahora puedes comenzar a trabajar.',
@@ -77,7 +80,7 @@ const EsperaAutorizacionScreen = ({ route }) => {
                 // Aquí navegar a la sesión de inventario colaborador
                 navigation.replace('SesionColaborador', {
                   solicitudId: solicitudId,
-                  sesionInventario: datos.sesionInventario
+                  sesionInventario: datos.sesionInventario || null
                 })
               }
             }

@@ -148,12 +148,9 @@ class WebSocketService {
       
       // Solo mostrar mensaje si es la primera conexión o después de desconexión prolongada
       if (this.shouldShowMessages) {
-        showMessage({
-          message: '✓ Conectado',
-          type: 'success',
-          duration: 2000,
-          hideOnPress: true,
-        })
+        setTimeout(() => {
+          showMessage({ message: 'Conectado al servidor', type: 'success' })
+        }, 1500) // Esperar a que la navegación se estabilice
       }
       
       // Emitir evento local

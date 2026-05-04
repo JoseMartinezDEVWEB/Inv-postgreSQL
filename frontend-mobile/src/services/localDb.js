@@ -36,115 +36,115 @@ const localDb = {
             // Habilitar claves foráneas
             await database.execAsync('PRAGMA foreign_keys = ON;');
 
-            // Tabla de Productos con soporte Offline-First
-            await database.execAsync(`
-                CREATE TABLE IF NOT EXISTS productos(
-                    _id TEXT PRIMARY KEY, -- Mantenemos _id para compatibilidad
-                    id_uuid TEXT UNIQUE, -- UUID oficial para sincronización
-                    nombre TEXT NOT NULL,
-                    codigoBarras TEXT,
-                    precioVenta REAL,
-                    stock INTEGER,
-                    descripcion TEXT,
-                    categoria TEXT,
-                    unidad TEXT,
-                    costo REAL,
-                    sku TEXT,
-                    imagen TEXT,
-                    activo INTEGER DEFAULT 1,
-                    
-                    -- CAMPOS DE SINCRONIZACIÓN
-                    is_dirty INTEGER DEFAULT 0, -- 1 = Necesita ir a la nube
-                    last_updated INTEGER,       -- Timestamp UNIX
-                    deleted INTEGER DEFAULT 0   -- Soft delete para sincronizar borrados
-                );
-            `);
+            // 1. Tabla de Productos
+            try {
+                await database.execAsync(`
+                    CREATE TABLE IF NOT EXISTS productos(
+                        _id TEXT PRIMARY KEY,
+                        id_uuid TEXT UNIQUE,
+                        nombre TEXT NOT NULL,
+                        codigoBarras TEXT,
+                        precioVenta REAL,
+                        stock INTEGER,
+                        descripcion TEXT,
+                        categoria TEXT,
+                        unidad TEXT,
+                        costo REAL,
+                        sku TEXT,
+                        imagen TEXT,
+                        activo INTEGER DEFAULT 1,
+                        is_dirty INTEGER DEFAULT 0,
+                        last_updated INTEGER,
+                        deleted INTEGER DEFAULT 0
+                    );
+                `);
+            } catch (e) { console.error('Error creando tabla productos:', e); }
 
-            // Tabla de Sesiones (Inventarios) con soporte Offline-First y roles
-            await database.execAsync(`
-                CREATE TABLE IF NOT EXISTS sesiones(
-                    _id TEXT PRIMARY KEY,
-                    id_uuid TEXT UNIQUE,
-                    numeroSesion TEXT,
-                    fecha TEXT,
-                    estado TEXT,
-                    clienteNombre TEXT,
-                    clienteNegocioId TEXT,
-                    totalProductos INTEGER DEFAULT 0,
-                    valorTotal REAL DEFAULT 0,
-                    
-                    -- CAMPOS DE JERARQUÍA Y ROLES
-                    business_id TEXT,           -- ID del Admin/Negocio principal
-                    created_by TEXT,            -- Usuario que creó el registro
-                    
-                    -- CAMPOS DE SINCRONIZACIÓN
-                    is_dirty INTEGER DEFAULT 0,
-                    sync_status TEXT DEFAULT 'pending',
-                    last_updated INTEGER,
-                    deleted INTEGER DEFAULT 0,
-                    
-                    local INTEGER DEFAULT 1,
-                    createdAt TEXT
-                );
-            `);
+            // 2. Tabla de Sesiones
+            try {
+                await database.execAsync(`
+                    CREATE TABLE IF NOT EXISTS sesiones(
+                        _id TEXT PRIMARY KEY,
+                        id_uuid TEXT UNIQUE,
+                        numeroSesion TEXT,
+                        fecha TEXT,
+                        estado TEXT,
+                        clienteNombre TEXT,
+                        clienteNegocioId TEXT,
+                        totalProductos INTEGER DEFAULT 0,
+                        valorTotal REAL DEFAULT 0,
+                        business_id TEXT,
+                        created_by TEXT,
+                        is_dirty INTEGER DEFAULT 0,
+                        sync_status TEXT DEFAULT 'pending',
+                        last_updated INTEGER,
+                        deleted INTEGER DEFAULT 0,
+                        local INTEGER DEFAULT 1,
+                        createdAt TEXT
+                    );
+                `);
+            } catch (e) { console.error('Error creando tabla sesiones:', e); }
 
-            // Tabla de Productos Contados (Detalle de Sesión)
-            await database.execAsync(`
-                CREATE TABLE IF NOT EXISTS productos_contados(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id_uuid TEXT UNIQUE,
-                    sesionId TEXT,
-                    productoId TEXT,
-                    nombreProducto TEXT,
-                    skuProducto TEXT,
-                    cantidad REAL,
-                    costo REAL,
-                    fecha TEXT,
-                    
-                    -- CAMPOS DE SINCRONIZACIÓN
-                    is_dirty INTEGER DEFAULT 0,
-                    last_updated INTEGER,
-                    deleted INTEGER DEFAULT 0,
-                    
-                    sincronizado INTEGER DEFAULT 0, -- Legacy flag
-                    FOREIGN KEY(sesionId) REFERENCES sesiones(_id)
-                );
-            `);
+            // 3. Tabla de Productos Contados
+            try {
+                await database.execAsync(`
+                    CREATE TABLE IF NOT EXISTS productos_contados(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id_uuid TEXT UNIQUE,
+                        sesionId TEXT,
+                        productoId TEXT,
+                        nombreProducto TEXT,
+                        skuProducto TEXT,
+                        cantidad REAL,
+                        costo REAL,
+                        fecha TEXT,
+                        is_dirty INTEGER DEFAULT 0,
+                        last_updated INTEGER,
+                        deleted INTEGER DEFAULT 0,
+                        sincronizado INTEGER DEFAULT 0,
+                        FOREIGN KEY(sesionId) REFERENCES sesiones(_id)
+                    );
+                `);
+            } catch (e) { console.error('Error creando tabla productos_contados:', e); }
 
-            // Tabla de Productos Colaborador (Offline)
-            await database.execAsync(`
-                CREATE TABLE IF NOT EXISTS productos_colaborador(
-                    temporalId TEXT PRIMARY KEY,
-                    solicitudId TEXT,
-                    nombre TEXT,
-                    sku TEXT,
-                    codigoBarras TEXT,
-                    cantidad REAL,
-                    costo REAL,
-                    timestamp TEXT,
-                    sincronizado INTEGER DEFAULT 0
-                );
-            `);
+            // 4. Tabla de Productos Colaborador
+            try {
+                await database.execAsync(`
+                    CREATE TABLE IF NOT EXISTS productos_colaborador(
+                        temporalId TEXT PRIMARY KEY,
+                        solicitudId TEXT,
+                        nombre TEXT,
+                        sku TEXT,
+                        codigoBarras TEXT,
+                        cantidad REAL,
+                        costo REAL,
+                        timestamp TEXT,
+                        sincronizado INTEGER DEFAULT 0
+                    );
+                `);
+            } catch (e) { console.error('Error creando tabla productos_colaborador:', e); }
 
-            // Tabla de Cola de Sincronización mejorada (Outbox Pattern)
-            await database.execAsync(`
-                CREATE TABLE IF NOT EXISTS cola_sincronizacion(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tipo TEXT NOT NULL,          -- 'cliente', 'producto', 'sesion', 'conteo'
-                    operacion TEXT NOT NULL,     -- 'create', 'update', 'delete'
-                    tabla TEXT NOT NULL,         -- Tabla origen
-                    registro_id TEXT NOT NULL,   -- ID del registro afectado
-                    payload TEXT NOT NULL,       -- Datos serializados
-                    estado TEXT DEFAULT 'pending', -- pending, processing, completed, failed
-                    intentos INTEGER DEFAULT 0,
-                    max_intentos INTEGER DEFAULT 5,
-                    ultimoIntento TEXT,
-                    error TEXT,
-                    prioridad INTEGER DEFAULT 5, -- 1-10, menor es más prioritario
-                    createdAt TEXT,
-                    updatedAt TEXT
-                );
-            `);
+            // 5. Tabla de Cola de Sincronización
+            try {
+                await database.execAsync(`
+                    CREATE TABLE IF NOT EXISTS cola_sincronizacion(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tipo TEXT NOT NULL,
+                        operacion TEXT NOT NULL,
+                        tabla TEXT NOT NULL,
+                        registro_id TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        estado TEXT DEFAULT 'pending',
+                        intentos INTEGER DEFAULT 0,
+                        max_intentos INTEGER DEFAULT 5,
+                        ultimoIntento TEXT,
+                        error TEXT,
+                        prioridad INTEGER DEFAULT 5,
+                        createdAt TEXT,
+                        updatedAt TEXT
+                    );
+                `);
+            } catch (e) { console.error('Error creando tabla cola_sincronizacion:', e); }
 
             // Tabla de configuración de usuario para sincronización
             await database.execAsync(`
@@ -421,6 +421,12 @@ const localDb = {
 
                     // Insertar cada producto del lote
                     for (const producto of batch) {
+                        // Validación básica: El producto debe tener al menos un nombre o SKU
+                        if (!producto.nombre && !producto.sku) {
+                            console.warn('⚠️ [localDb] Omitiendo producto sin nombre ni SKU');
+                            continue;
+                        }
+
                         const id = producto._id || producto.id || `prod_${Date.now()}_${Math.random()}`;
                         const uuid = producto.id_uuid || id;
                         const timestamp = Date.now();
@@ -1176,7 +1182,7 @@ const localDb = {
         try {
             const database = await getDatabase();
             return await database.getAllAsync(
-                'SELECT * FROM productos_colaborador WHERE solicitudId = ? AND sincronizado = 0',
+                'SELECT * FROM productos_colaborador WHERE solicitudId = ? ORDER BY timestamp DESC',
                 [solicitudId]
             );
         } catch (e) {
@@ -1185,10 +1191,33 @@ const localDb = {
     },
 
     /**
+     * Marcar producto de colaborador como sincronizado
+     */
+    marcarProductoColaboradorSincronizado: async (temporalId) => {
+        try {
+            const database = await getDatabase();
+            await database.runAsync(
+                'UPDATE productos_colaborador SET sincronizado = 1 WHERE temporalId = ?',
+                [temporalId]
+            );
+            return true;
+        } catch (e) {
+            console.error('Error marcando producto como sincronizado:', e);
+            return false;
+        }
+    },
+
+    /**
      * Guardar producto de colaborador localmente
      */
     guardarProductoColaborador: async (item, solicitudId) => {
         try {
+            // Validación: El producto debe tener nombre
+            if (!item.nombre || item.nombre.trim() === '') {
+                console.warn('⚠️ [localDb] No se puede guardar producto sin nombre');
+                return false;
+            }
+
             const database = await getDatabase();
             const timestamp = item.timestamp || new Date().toISOString();
 

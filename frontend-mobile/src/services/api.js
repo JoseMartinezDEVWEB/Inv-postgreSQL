@@ -580,6 +580,12 @@ export const usuariosApi = {
     delete: (id) => api.delete(`/usuarios/${id}`),
 };
 
+// API de salud y conectividad
+export const saludApi = {
+    check: () => api.get('/salud'),
+    checkDB: () => api.get('/salud/db'),
+};
+
 // Export default
 export const initializeOfflineMode = async () => localDb.init();
 export default api;

@@ -21,6 +21,7 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
   const [error, setError] = useState(null)
   const [reintentoHecho, setReintentoHecho] = useState(false)
   const [guardando, setGuardando] = useState(false)
+  const [fechaInventario, setFechaInventario] = useState(new Date().toISOString().split('T')[0])
   const inputFileRef = useRef(null)
   const queryClient = useQueryClient()
 
@@ -55,12 +56,12 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
       file.name?.endsWith('.xls')
     )
     
-    if (pdfFiles.length !== files.length) {
-      toast.error('Solo se permiten archivos PDF')
+    if (archivosValidos.length !== files.length) {
+      toast.error('Solo se permiten archivos PDF, XLSX o XLS')
     }
     
-    if (pdfFiles.length > 10) {
-      toast.error('Máximo 10 archivos PDF permitidos')
+    if (archivosValidos.length > 10) {
+      toast.error('Máximo 10 archivos permitidos')
       return
     }
     
@@ -187,7 +188,8 @@ const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
               // Si no hay total, avanzar suavemente hasta 90%
               setProgreso(prev => Math.min(90, prev + 5))
             }
-          }
+          },
+          timeout: 180000 // 3 minutos
         }
       )
 

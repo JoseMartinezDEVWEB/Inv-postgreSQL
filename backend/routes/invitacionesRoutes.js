@@ -520,7 +520,7 @@ router.post('/:id/productos-offline', async (req, res) => {
                     const finalCantidad = Number(nuevoProducto.cantidad) || 1;
                     const finalCosto = Number(nuevoProducto.costo) || 0;
                     const nombre = nuevoProducto.nombre.trim();
-                    const sku = nuevoProducto.codigoBarras || '';
+                    const sku = String(nuevoProducto.codigoBarras || '').trim();
 
                     // A. Producto General
                     let productoGeneral = await db.ProductoGeneral.findOne({
@@ -555,13 +555,13 @@ router.post('/:id/productos-offline', async (req, res) => {
 
                     // B. Producto Cliente
                     let productoCliente = await db.Producto.findOne({
-                        where: { nombre },
+                        where: { nombre: nombre.trim() },
                         transaction: t
                     });
 
                     if (!productoCliente && sku) {
                         productoCliente = await db.Producto.findOne({
-                            where: { sku },
+                            where: { sku: String(sku).trim() },
                             transaction: t
                         });
                     }
@@ -740,6 +740,7 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
                     }
 
                     const { nombre, cantidad, costo, unidad, categoria, sku, codigoBarras } = productoData;
+                    const finalSku = String(codigoBarras || sku || '').trim();
                     const finalCantidad = Number(cantidad) || 1;
                     const finalCosto = Number(costo) || 0;
 
@@ -749,9 +750,9 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
                         transaction: t
                     });
 
-                    if (!productoGeneral && (codigoBarras || sku)) {
+                    if (!productoGeneral && finalSku) {
                         productoGeneral = await db.ProductoGeneral.findOne({
-                            where: { codigoBarras: codigoBarras || sku },
+                            where: { codigoBarras: finalSku },
                             transaction: t
                         });
                     }
@@ -779,9 +780,9 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
                         transaction: t
                     });
 
-                    if (!productoCliente && (codigoBarras || sku)) {
+                    if (!productoCliente && finalSku) {
                         productoCliente = await db.Producto.findOne({
-                            where: { sku: codigoBarras || sku },
+                            where: { sku: finalSku },
                             transaction: t
                         });
                     }

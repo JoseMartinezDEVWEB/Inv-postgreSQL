@@ -16,7 +16,7 @@ class BackendServer {
   constructor() {
     this.process = null
     // Puerto estable para el backend embebido (debe ser fijo para QR/auto-conexión)
-    this.port = 4500
+    this.port = 4501
     // En Windows, `localhost` puede resolver a IPv6 (::1) y fallar si el backend
     // solo escucha en IPv4. Usamos loopback IPv4 explícito para checks internos.
     this.host = '127.0.0.1'
@@ -88,7 +88,7 @@ class BackendServer {
         // No hay backend corriendo, procedemos a intentar iniciarlo
       }
 
-      // 2. Validar disponibilidad del puerto fijo 4500
+      // 2. Validar disponibilidad del puerto fijo
       const isAvailable = await this.checkPort(this.port)
       if (!isAvailable) {
         throw new Error(
@@ -96,6 +96,15 @@ class BackendServer {
           `J4 Pro requiere el backend en ${this.port}. ` +
           `Cierra la app/proceso que usa ese puerto y reintenta.`
         )
+      }
+
+      // 3. Configurar Firewall automáticamente en Windows
+      if (process.platform === 'win32') {
+        try {
+          await this.setupFirewall()
+        } catch (fwErr) {
+          console.warn('⚠️ No se pudo configurar el firewall automáticamente:', fwErr.message)
+        }
       }
 
       console.log('🚀 Iniciando backend local...')
@@ -373,6 +382,20 @@ class BackendServer {
       this.process = null
       this.isRunning = false
     }
+  }
+
+  async setupFirewall() {
+    return new Promise((resolve) => {
+      // Intentar agregar regla de firewall de forma silenciosa
+      // Usamos TCP y UDP para el puerto configurado
+      const ruleName = 'J4ProBackend'
+      const cmd = `netsh advfirewall firewall show rule name="${ruleName}" >nul 2>&1 || ` +
+                  `netsh advfirewall firewall add rule name="${ruleName}" dir=in action=allow protocol=TCP localport=${this.port} profile=any enable=yes`
+      
+      spawn('cmd.exe', ['/c', cmd], { stdio: 'ignore' }).on('exit', () => {
+        resolve(true)
+      })
+    })
   }
 
   getApiUrl() {

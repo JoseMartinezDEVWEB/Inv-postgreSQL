@@ -392,7 +392,7 @@ const InventarioDetalle = () => {
         return
       }
       const { PDFDocument } = await import('pdf-lib')
-      const resp = await reportesApi.downloadInventoryPDF(id)
+      const resp = await reportesApi.downloadInventoryPDF(id || sesionId)
       const ab = await resp.data.arrayBuffer?.() || await new Response(resp.data).arrayBuffer()
       const srcDoc = await PDFDocument.load(ab)
       const total = srcDoc.getPageCount()

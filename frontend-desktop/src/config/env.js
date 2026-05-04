@@ -68,8 +68,8 @@ export const resolveApiBaseUrl = async () => {
     } catch (error) {
       console.error('❌ Error al obtener URL del backend embebido:', error);
       // Fallback a localhost
-      console.log('   ⚠️ Usando fallback: http://localhost:4500/api');
-      return 'http://localhost:4500/api';
+      console.log('   ⚠️ Usando fallback: http://localhost:4501/api');
+      return 'http://localhost:4501/api';
     }
   }
 
@@ -97,7 +97,7 @@ export const resolveApiBaseUrl = async () => {
     candidates = [
       env.VITE_API_URL,           // Variable principal
       env.VITE_API_URL_LAN,       // URL LAN (desarrollo local en red)
-      'http://localhost:4500/api', // Desarrollo local (puerto PostgreSQL backend)
+      'http://localhost:4501/api', // Desarrollo local (puerto PostgreSQL backend)
       env.VITE_API_URL_REMOTE,    // Remoto como fallback
       fallbackCloudUrl,           // Último recurso
     ];
@@ -135,7 +135,7 @@ export const resolveWebSocketUrl = async () => {
       return wsUrl;
     } catch (error) {
       console.error('❌ Error al obtener WS del backend embebido:', error);
-      return 'http://localhost:4500';
+      return 'http://localhost:4501';
     }
   }
 
@@ -156,7 +156,7 @@ export const resolveWebSocketUrl = async () => {
     candidates = [
       env.VITE_WS_URL,
       env.VITE_WS_URL_LAN,
-      'http://localhost:4500',
+      'http://localhost:4501',
       env.VITE_WS_URL_REMOTE,
       fallbackCloudUrl,
     ];
@@ -233,8 +233,8 @@ export const getConfig = () => {
     // No mostrar warning en consola para evitar confusión - solo retornar valores por defecto
     // Retornar configuración por defecto silenciosamente
     return {
-      apiUrl: 'http://localhost:4500/api',
-      wsUrl: 'http://localhost:4500',
+      apiUrl: 'http://localhost:4501/api',
+      wsUrl: 'http://localhost:4501',
       environment: 'development',
       appName: 'Gestor de Inventario J4 Pro',
       appVersion: '2.0.0',

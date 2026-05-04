@@ -56,13 +56,13 @@ const processExcel = (buffer) => {
         const categoria = getFieldValue(item, ['Categoria', 'Departamento', 'Grupo', 'Seccion', 'categoria', 'familia', 'línea', 'linea', 'rubro']);
 
         return {
-            nombre: nombre || '',
-            costoBase: parseFloat(costo) || 0,
-            cantidadContada: parseFloat(cantidad) || 0,
-            unidad: unidad || 'unidad',
-            codigoBarras: codigo ? String(codigo).trim() : null,
-            categoria: categoria || 'General',
-            descripcion: item.Descripcion || item.descripcion || '',
+            nombre: (nombre !== null && nombre !== undefined && nombre !== '') ? String(nombre).trim() : '',
+            costoBase: parseFloat(String(costo || 0).replace(/[^0-9.]/g, '')) || 0,
+            cantidadContada: parseFloat(String(cantidad || 0).replace(/[^0-9.]/g, '')) || 0,
+            unidad: (unidad !== null && unidad !== undefined && unidad !== '') ? String(unidad).trim() : 'unidad',
+            codigoBarras: (codigo !== undefined && codigo !== null && codigo !== '') ? String(codigo).trim() : null,
+            categoria: (categoria !== null && categoria !== undefined && categoria !== '') ? String(categoria).trim() : 'General',
+            descripcion: (item.Descripcion || item.descripcion) ? String(item.Descripcion || item.descripcion).trim() : '',
             importado: true
         };
     }).filter(p => p.nombre);
@@ -137,7 +137,7 @@ const processPDF = async (buffer, apiKey) => {
             
             const result = await Promise.race([
                 model.generateContent(prompt),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 40s')), 40000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 60s')), 60000))
             ]);
 
             const response = await result.response;

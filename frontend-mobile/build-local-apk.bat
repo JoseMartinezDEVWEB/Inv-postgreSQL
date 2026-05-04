@@ -59,10 +59,16 @@ pause
 exit /b 1
 
 :gradlew_ok
+echo [INFO] Optimizando memoria para compilacion (Metro Node Memory)...
+set NODE_OPTIONS=--max-old-space-size=4096
+
+echo [INFO] Limpiando cache de Metro...
+call npx expo start -c --no-dev --no-watch < nul > nul 2>&1
+
 echo [INFO] Limpiando cache de Gradle...
 call gradlew.bat clean
 
-echo [INFO] Compilando APK Release (puede tardar varios minutos)...
+echo [INFO] Compilando APK Release (esto puede tardar varios minutos)...
 call gradlew.bat assembleRelease
 if %ERRORLEVEL% neq 0 goto :error_gradle
 

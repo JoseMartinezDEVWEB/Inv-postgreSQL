@@ -15,12 +15,38 @@ export const LoaderProvider = ({ children }) => {
     let mounted = true
     ;(async () => {
       try {
-        const [s1, s2] = await Promise.allSettled([saludApi.check(), saludApi.checkDB()])
-        const ok1 = s1.status === 'fulfilled' && s1.value?.status === 200
-        const ok2 = s2.status === 'fulfilled' && s2.value?.status === 200
-        if (mounted && ok1 && ok2) setDurationMs(6000)
-      } catch {
-        /* mantener 1200ms por defecto */
+        // Ejecutar chequeos de salud sin bloquear el inicio si fallan o tardan mucho
+        const healthPromise = Promise.allSettled([
+          saludApi.check(),
+          saludApi.checkDB()
+        ]);
+        
+        // Timeout de 2 segundos para el chequeo de salud
+        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve('timeout'), 2000));
+        
+        const result = await Promise.race([healthPromise, timeoutPromise]);
+        
+        if (result === 'timeout') {
+          console.log('⏳ LoaderContext: Salud API timeout, continuando...');
+          if (mounted) setDurationMs(1200);
+        } else {
+          const [s1, s2] = result;
+          const ok1 = s1.status === 'fulfilled' && s1.value?.status === 200;
+          const ok2 = s2.status === 'fulfilled' && s2.value?.status === 200;
+          
+          if (mounted) {
+            if (ok1 && ok2) {
+              setDurationMs(600); // Rápido si está sano
+              console.log('🚀 LoaderContext: Sistema saludable, acelerando inicio');
+            } else {
+              setDurationMs(1500); // Un poco más lento si hay problemas
+              console.log('⚠️ LoaderContext: Problemas de salud detectados');
+            }
+          }
+        }
+      } catch (err) {
+        console.log('❌ LoaderContext: Error en health check:', err.message);
+        if (mounted) setDurationMs(1200);
       }
     })()
     return () => { mounted = false }

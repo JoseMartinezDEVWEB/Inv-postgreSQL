@@ -42,7 +42,7 @@ const Reportes = () => {
     try {
       const response = type === 'balance' 
         ? await reportesApi.downloadBalancePDF(sesionId)
-        : await reportesApi.downloadInventoryPDF(sesionId)
+        : await reportesApi.downloadInventoryPDF(sesionId || sesion?._id)
       
       const blob = new Blob([response.data], { type: 'application/pdf' })
       const url = window.URL.createObjectURL(blob)

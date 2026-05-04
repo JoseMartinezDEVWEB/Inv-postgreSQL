@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useAuth } from '../context/AuthContext'
 import webSocketService from '../services/websocket'
 
@@ -19,8 +19,6 @@ export const useSocket = () => {
     if (isConnected && rolesAutorizados.includes(user?.rol)) {
       console.log('📡 [useSocket] Solicitando contador de colaboradores...')
       webSocketService.emit('get_online_colaborators')
-    } else {
-      console.log('⚠️ [useSocket] No se puede solicitar contador:', { isConnected, userRol: user?.rol })
     }
   }, [isConnected, user?.rol])
 
@@ -120,7 +118,7 @@ export const useSocket = () => {
         clearInterval(intervalId)
       }
     }
-  }, [user, user?.rol, obtenerColaboradoresEnLinea])
+  }, [user?.id, user?.rol]) // Solo re-registrar si cambia el usuario o su rol
 
   // Efecto para verificar estado de conexión periódicamente
   useEffect(() => {
@@ -159,7 +157,8 @@ export const useSocket = () => {
     webSocketService.emit('send_inventory', { productos })
   }, [isConnected, user?.rol])
 
-  return {
+  // Memoizar el objeto retornado para evitar re-renders innecesarios en componentes que usan el hook
+  return useMemo(() => ({
     isConnected,
     onlineColaboradores,
     onlineColaboradoresDetalles,
@@ -168,5 +167,11 @@ export const useSocket = () => {
     emit: webSocketService.emit.bind(webSocketService),
     on: webSocketService.on.bind(webSocketService),
     off: webSocketService.off.bind(webSocketService)
-  }
+  }), [
+    isConnected, 
+    onlineColaboradores, 
+    onlineColaboradoresDetalles, 
+    obtenerColaboradoresEnLinea, 
+    enviarInventarioAColaboradores
+  ])
 }

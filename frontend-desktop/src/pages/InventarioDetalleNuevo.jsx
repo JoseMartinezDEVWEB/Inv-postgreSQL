@@ -15,6 +15,7 @@ import { useSocket } from '../hooks/useSocket'
 import ProductoForm from '../components/ProductoForm'
 import ReporteInventarioModal from '../components/ReporteInventarioModal'
 import SearchProductModal from '../components/SearchProductModal'
+import SearchBarcodeModal from '../components/SearchBarcodeModal'
 
 const PRODUCTOS_POR_PAGINA = 45
 
@@ -47,8 +48,72 @@ const highlightMatch = (text, term) => {
   )
 }
 
+// -- COMPONENTE INTERNO PARA EL CRONÓMETRO --
+const TimerDisplay = ({ sesion, id }) => {
+  const [tiempo, setTiempo] = useState(0)
+
+  useEffect(() => {
+    if (!sesion) return
+    
+    const tick = () => {
+      const enMarcha = sesion.timerEnMarcha
+      const acumulado = Number(sesion.timerAcumuladoSegundos) || 0
+      let ultimoInicio = 0
+      
+      if (sesion.timerUltimoInicio) {
+        let fechaStr = sesion.timerUltimoInicio
+        if (fechaStr.includes(' ')) fechaStr = fechaStr.replace(' ', 'T')
+        if (!fechaStr.endsWith('Z')) fechaStr = fechaStr + 'Z'
+        
+        const fechaInicio = new Date(fechaStr)
+        if (!isNaN(fechaInicio.getTime())) ultimoInicio = fechaInicio.getTime()
+      }
+      
+      let segundos = acumulado
+      if (enMarcha && ultimoInicio > 0) {
+        const ahora = Date.now()
+        const diferencia = Math.floor((ahora - ultimoInicio) / 1000)
+        if (diferencia > 0) segundos += diferencia
+      }
+      
+      setTiempo(Math.max(0, segundos))
+    }
+    
+    tick()
+    const interval = setInterval(tick, 1000)
+    return () => clearInterval(interval)
+  }, [sesion?.timerEnMarcha, sesion?.timerUltimoInicio, sesion?.timerAcumuladoSegundos])
+
+  const format = (seg) => {
+    const s = Math.max(0, Math.floor(Number(seg) || 0))
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+  }
+
+  const queryClient = useQueryClient()
+  const { id: sesionId } = useParams()
+
+  return (
+    <button
+      onClick={async (e) => {
+        e.stopPropagation();
+        try {
+          await sesionesApi.toggleTimer(id || sesionId)
+          queryClient.invalidateQueries(['sesion-inventario', id || sesionId])
+        } catch (err) {
+          console.error('Error changing timer state:', err)
+        }
+      }}
+      className="flex items-center space-x-2 bg-teal-500 hover:bg-teal-600 active:bg-teal-700 px-4 py-2 rounded text-white font-mono text-lg transition-colors cursor-pointer select-none"
+      title={sesion?.timerEnMarcha ? 'Pausar' : 'Iniciar'}
+    >
+      {sesion?.timerEnMarcha ? <Pause className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+      <span>{format(tiempo)}</span>
+    </button>
+  )
+}
+
 const InventarioDetalleNuevo = () => {
-  console.log('🚀 [UI] InventarioDetalleNuevo v2.1 loaded (Collaborator Management Dashboard)');
   // Obtener parámetros de la URL (ID de la sesión de inventario)
   const { id } = useParams()
   const navigate = useNavigate()
@@ -59,76 +124,6 @@ const InventarioDetalleNuevo = () => {
   const searchInputRef = useRef(null)
   const cantidadInputRef = useRef(null)
   const costoInputRef = useRef(null)
-
-  // -- COMPONENTE INTERNO PARA EL CRONÓMETRO (Optimización para evitar re-renders globales) --
-  const TimerDisplay = useMemo(() => ({ sesion, id }) => {
-    const [tiempo, setTiempo] = useState(0)
-
-    useEffect(() => {
-      if (!sesion) return
-      
-      const tick = () => {
-        const enMarcha = sesion.timerEnMarcha
-        const acumulado = Number(sesion.timerAcumuladoSegundos) || 0
-        let ultimoInicio = 0
-        
-        if (sesion.timerUltimoInicio) {
-          let fechaStr = sesion.timerUltimoInicio
-          if (fechaStr.includes(' ')) fechaStr = fechaStr.replace(' ', 'T')
-          if (!fechaStr.endsWith('Z')) fechaStr = fechaStr + 'Z'
-          
-          const fechaInicio = new Date(fechaStr)
-          if (!isNaN(fechaInicio.getTime())) ultimoInicio = fechaInicio.getTime()
-        }
-        
-        let segundos = acumulado
-        if (enMarcha && ultimoInicio > 0) {
-          const ahora = Date.now()
-          const diferencia = Math.floor((ahora - ultimoInicio) / 1000)
-          if (diferencia > 0) segundos += diferencia
-        }
-        
-        setTiempo(Math.max(0, segundos))
-      }
-      
-      tick()
-      const interval = setInterval(tick, 1000)
-      return () => clearInterval(interval)
-    }, [sesion?.timerEnMarcha, sesion?.timerUltimoInicio, sesion?.timerAcumuladoSegundos])
-
-    // Función para formatear tiempo
-    const format = (seg) => {
-      const s = Math.max(0, Math.floor(Number(seg) || 0))
-      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-    }
-
-    return (
-      <button
-        onClick={async (e) => {
-          e.stopPropagation();
-          try {
-            if (sesion?.timerEnMarcha) {
-              await sesionesApi.pauseTimer(id)
-              toast('⏸ Cronómetro pausado', { duration: 2000 })
-            } else {
-              await sesionesApi.resumeTimer(id)
-              toast('▶️ Cronómetro iniciado', { duration: 2000 })
-            }
-            if (typeof refetch === 'function') refetch()
-          } catch (err) {
-            console.error('Error cambiando estado del timer:', err)
-          }
-        }}
-        className="flex items-center space-x-2 bg-teal-500 hover:bg-teal-600 active:bg-teal-700 px-4 py-2 rounded text-white font-mono text-lg transition-colors cursor-pointer select-none"
-        title={sesion?.timerEnMarcha ? 'Pausar' : 'Iniciar'}
-      >
-        {sesion?.timerEnMarcha ? <Pause className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
-        <span>{format(tiempo)}</span>
-      </button>
-    )
-  }, [id])
-  // ------------------------------------------------------------------------------------------
 
   // Estados para la gestión de productos y búsqueda
   const [codigoBarras, setCodigoBarras] = useState('')
@@ -145,6 +140,9 @@ const InventarioDetalleNuevo = () => {
   const [showSearchModal, setShowSearchModal] = useState(false)
   const [showProductNotFoundModal, setShowProductNotFoundModal] = useState(false)
   const [showAddProductModal, setShowAddProductModal] = useState(false)
+  const [showSearchBarcodeModal, setShowSearchBarcodeModal] = useState(false)
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false)
+  const [createdProductName, setCreatedProductName] = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [showZeroCostModal, setShowZeroCostModal] = useState(false)
@@ -330,6 +328,27 @@ const InventarioDetalleNuevo = () => {
     },
     tipoPeso: 'ninguno'
   })
+
+  // Estabilizar el objeto para ProductoForm (FUERA DEL CONDICIONAL)
+  const stabilizedNewProduct = useMemo(() => ({
+    nombre: newProductData.nombre || '',
+    codigoBarras: newProductData.codigoBarras || productNotFoundCode || '',
+    categoria: newProductData.categoria || 'General',
+    unidad: newProductData.unidad || 'unidad',
+    costoBase: newProductData.costoBase || 0,
+    descripcion: newProductData.descripcion || '',
+    proveedor: newProductData.proveedor || '',
+    tipoContenedor: newProductData.tipoContenedor || 'ninguno',
+    tieneUnidadesInternas: newProductData.tieneUnidadesInternas || false,
+    unidadesInternas: newProductData.unidadesInternas || {
+      cantidad: 0,
+      codigoBarras: '',
+      nombre: '',
+      costoPorUnidad: 0
+    },
+    tipoPeso: newProductData.tipoPeso || 'ninguno',
+    notas: newProductData.notas || ''
+  }), [newProductData, productNotFoundCode]);
 
   // Estados para datos financieros
   const [datosFinancieros, setDatosFinancieros] = useState({
@@ -1124,101 +1143,88 @@ const InventarioDetalleNuevo = () => {
     }
   }, [pendingProducts])
 
-  // Buscar por código de barras
-  useEffect(() => {
-    const searchByBarcode = async () => {
-      if (codigoBarras.length < 3) return
+  const searchByBarcode = async (codeOverride = null) => {
+    const targetCode = (codeOverride || codigoBarras).trim()
+    if (targetCode.length < 3) return
 
-      setIsSearching(true)
-      try {
-        // Buscar directamente en productos generales
-        console.log('🔍 Buscando por código de barras:', codigoBarras)
-        const generalResponse = await productosApi.buscarPorCodigoBarras(codigoBarras)
-        console.log('✅ Respuesta búsqueda código:', generalResponse.data)
+    setIsSearching(true)
+    console.log('🚀 [FRONTEND] Iniciando búsqueda de código:', `"${targetCode}"`)
+    
+    try {
+      const generalResponse = await productosApi.buscarPorCodigoBarras(targetCode)
+      console.log('✅ [FRONTEND] Respuesta del servidor:', generalResponse.data)
 
-        // Backend SQLite devuelve: { exito: true, datos: producto } o { exito: true, datos: { producto } }
-        let productoGeneral = generalResponse.data?.datos
-
-        // Si datos es un objeto con propiedad producto, extraerlo
-        if (productoGeneral && productoGeneral.producto) {
-          productoGeneral = productoGeneral.producto
-        }
-
+      let productoGeneral = generalResponse.data?.datos || generalResponse.data?.producto
+      
+      if (productoGeneral) {
         // Asegurar que tenga _id para compatibilidad
-        if (productoGeneral && !productoGeneral._id && productoGeneral.id) {
+        if (!productoGeneral._id && productoGeneral.id) {
           productoGeneral._id = productoGeneral.id
         }
 
-        if (productoGeneral) {
-          const now = Date.now()
+        const now = Date.now()
+        // Verificar si es escaneo rápido del mismo producto
+        const isQuickScan = lastScannedProduct &&
+          (lastScannedProduct.id === productoGeneral.id || lastScannedProduct._id === productoGeneral._id) &&
+          (now - lastScannedTime) < 2000
 
-          // Verificar si es escaneo rápido del mismo producto
-          const isQuickScan = lastScannedProduct &&
-            lastScannedProduct.nombre === productoGeneral.nombre &&
-            (now - lastScannedTime) < 2000 // 2 segundos
+        if (isQuickScan) {
+          console.log('🔄 Modo escaneo rápido detectado')
+          setCantidad(targetCode)
+          setCodigoBarras('')
+          setIsQuickScanMode(true)
+          setQuickScanProduct(productoGeneral)
+          setTimeout(() => costoInputRef.current?.focus(), 100)
+          toast.success(`Cantidad rápida: ${targetCode}`)
+        } else {
+          const hasRecentPendingProducts = pendingProducts.length > 0 && (now - lastScannedTime) < 3000
 
-          if (isQuickScan) {
-            // Escaneo rápido: usar como cantidad
-            console.log('🔄 Escaneo rápido detectado, estableciendo cantidad:', codigoBarras)
-            setCantidad(codigoBarras)
-            setCodigoBarras('')
-            setIsQuickScanMode(true)
-            setQuickScanProduct(productoGeneral)
-
-            // Enfocar automáticamente el campo de costo
-            setTimeout(() => costoInputRef.current?.focus(), 100)
-
-            toast.success(`Cantidad rápida: ${codigoBarras}`)
+          if (hasRecentPendingProducts) {
+            setPendingProducts(prev => [...prev, {
+              producto: productoGeneral,
+              cantidad: '1',
+              costo: productoGeneral.costoBase || productoGeneral.costo || '',
+              id: Date.now() + Math.random()
+            }])
+            toast.info(`Agregado a lista pendiente: ${productoGeneral.nombre}`)
           } else {
-            // Verificar si hay productos pendientes recientes
-            const hasRecentPendingProducts = pendingProducts.length > 0 &&
-              (now - lastScannedTime) < 3000 // 3 segundos para productos múltiples
-
-            if (hasRecentPendingProducts) {
-              // Agregar a productos pendientes para mostrar en modal múltiple
-              console.log('📦 Agregando producto a lista pendiente:', productoGeneral.nombre)
-              setPendingProducts(prev => [...prev, {
-                producto: productoGeneral,
-                cantidad: '1',
-                costo: productoGeneral.costoBase || productoGeneral.costo || '',
-                id: Date.now() + Math.random()
-              }])
-              setCodigoBarras('')
-              toast.info(`Producto agregado a lista: ${productoGeneral.nombre}`)
-            } else {
-              // Primer escaneo o producto diferente: seleccionar producto normalmente
-              console.log('📱 Primer escaneo, seleccionando producto:', productoGeneral.nombre)
-              handleSelectProduct(productoGeneral)
-              setLastScannedTime(now)
-              setLastScannedProduct(productoGeneral)
-              setIsQuickScanMode(false)
-              setQuickScanProduct(null)
-              // Forzar un refetch para asegurar sincronía
-              refetch()
-            }
+            console.log('📱 Seleccionando producto encontrado:', productoGeneral.nombre)
+            handleSelectProduct(productoGeneral)
+            setCodigoBarras('')
+            setLastScannedTime(now)
+            setLastScannedProduct(productoGeneral)
+            setIsQuickScanMode(false)
+            setQuickScanProduct(null)
+            refetch()
           }
-        } else {
-          // Producto no encontrado
-          setProductNotFoundCode(codigoBarras)
-          setShowProductNotFoundModal(true)
         }
-      } catch (error) {
-        if (error.response?.status === 404) {
-          // Producto no encontrado
-          setProductNotFoundCode(codigoBarras)
-          setShowProductNotFoundModal(true)
-        } else {
-          console.error('Error buscando por código:', error)
-          toast.error('Error al buscar producto')
-        }
-      } finally {
-        setIsSearching(false)
+      } else {
+        throw { response: { status: 404 } }
       }
+    } catch (error) {
+      if (error.response?.status === 404) {
+        console.warn('⚠️ [FRONTEND] Producto no encontrado exacto:', targetCode)
+        setProductNotFoundCode(targetCode)
+        // Ya no abrimos el modal de búsqueda parcial automáticamente al escanear
+        // Mostramos el modal para CREAR el producto directamente
+        setShowProductNotFoundModal(true)
+      } else {
+        console.error('❌ [FRONTEND] Error en búsqueda:', error)
+        toast.error('Error al buscar producto')
+      }
+    } finally {
+      setIsSearching(false)
     }
+  }
 
-    const debounce = setTimeout(searchByBarcode, 800)
+  useEffect(() => {
+    const debounce = setTimeout(() => {
+      if (!showSearchBarcodeModal && !showAddProductModal) {
+        searchByBarcode()
+      }
+    }, 500)
     return () => clearTimeout(debounce)
-  }, [codigoBarras, lastScannedProduct, lastScannedTime, pendingProducts])
+  }, [codigoBarras])
 
   // El estado y la lógica de búsqueda por nombre ahora se manejan dentro de SearchProductModal
   // para mejorar el rendimiento, evitar parpadeos y permitir navegación por teclado.
@@ -2361,7 +2367,7 @@ const InventarioDetalleNuevo = () => {
         formato: downloadData.formato
       }
 
-      const respuesta = await reportesApi.downloadInventoryPDF(sesion._id, payload)
+      const respuesta = await reportesApi.downloadInventoryPDF(sesion.id || sesion._id, payload)
       const blob = new Blob([respuesta.data], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
 
@@ -2710,7 +2716,15 @@ const InventarioDetalleNuevo = () => {
 
         // Seleccionar el producto recién creado
         if (nuevoProducto) {
-          handleSelectProduct(nuevoProducto)
+          setCreatedProductName(nuevoProducto.nombre || 'Producto')
+          setShowSuccessAnimation(true)
+          
+          // Cerrar animación y seleccionar producto después de un tiempo
+          // La animación dura 5 segundos por petición del usuario
+          setTimeout(() => {
+            setShowSuccessAnimation(false)
+            handleSelectProduct(nuevoProducto)
+          }, 4000) // Lo cerramos un poco antes de los 5s para mejor UX
         }
 
         // Resetear formulario
@@ -3801,21 +3815,37 @@ const InventarioDetalleNuevo = () => {
               {/* Input Código de Barras */}
               <div>
                 <label className="block text-white text-sm mb-1">Código de Barras</label>
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={codigoBarras}
-                  onChange={(e) => setCodigoBarras(e.target.value)}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter' && codigoBarras.length >= 3) {
-                      // El código ya se buscará automáticamente por el useEffect
-                      e.preventDefault()
-                    }
-                  }}
-                  placeholder="Escanee o ingrese código de barras"
-                  className="w-full px-3 py-2 bg-slate-700 text-white border border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
-                  style={{ textShadow: '0 0 1px rgba(255,255,255,0.5)' }}
-                />
+                <div className="relative">
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={codigoBarras}
+                    onChange={(e) => setCodigoBarras(e.target.value)}
+                    onClick={() => setShowSearchBarcodeModal(true)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        const code = codigoBarras.trim()
+                        if (code.length >= 3) {
+                           // Disparar búsqueda inmediata
+                           e.preventDefault()
+                           searchByBarcode(code)
+                        } else if (code.length > 0) {
+                           toast.error('Ingrese al menos 3 caracteres')
+                        }
+                      }
+                    }}
+                    placeholder="Escanee o ingrese código de barras"
+                    className="w-full pl-3 pr-10 py-2 bg-slate-700 text-white border border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
+                    style={{ textShadow: '0 0 1px rgba(255,255,255,0.5)' }}
+                  />
+                  <button
+                    onClick={() => setShowSearchBarcodeModal(true)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
+                    title="Búsqueda avanzada por código"
+                  >
+                    <Search className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
 
               {/* Input Buscar por Nombre */}
@@ -3836,7 +3866,7 @@ const InventarioDetalleNuevo = () => {
                     }}
                     className="w-full px-4 py-3 bg-slate-700 rounded border border-slate-600 hover:border-blue-400 focus:outline-none focus:border-blue-400 text-lg text-left flex items-center justify-between transition-colors"
                   >
-                    <span className={`truncate font-semibold ${selectedProducto ? 'text-white' : 'text-slate-400'
+                    <span className={`font-semibold ${selectedProducto ? 'text-white' : 'text-slate-400'
                       }`}>
                       {selectedProducto ? selectedProducto.nombre : 'Click para buscar...'}
                     </span>
@@ -4292,25 +4322,7 @@ const InventarioDetalleNuevo = () => {
             </div>
 
             <ProductoForm
-              producto={{
-                nombre: newProductData.nombre || '',
-                codigoBarras: newProductData.codigoBarras || productNotFoundCode || '',
-                categoria: newProductData.categoria || 'General',
-                unidad: newProductData.unidad || 'unidad',
-                costoBase: newProductData.costoBase || 0,
-                descripcion: newProductData.descripcion || '',
-                proveedor: newProductData.proveedor || '',
-                tipoContenedor: newProductData.tipoContenedor || 'ninguno',
-                tieneUnidadesInternas: newProductData.tieneUnidadesInternas || false,
-                unidadesInternas: newProductData.unidadesInternas || {
-                  cantidad: 0,
-                  codigoBarras: '',
-                  nombre: '',
-                  costoPorUnidad: 0
-                },
-                tipoPeso: newProductData.tipoPeso || 'ninguno',
-                notas: newProductData.notas || ''
-              }}
+              producto={stabilizedNewProduct}
               onSubmit={handleCreateProduct}
               onCancel={() => {
                 setShowAddProductModal(false)
@@ -5713,6 +5725,59 @@ const InventarioDetalleNuevo = () => {
           />
         )
       }
+      {/* Animación de Éxito al Crear Producto */}
+      {showSuccessAnimation && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-70 backdrop-blur-sm transition-all duration-500">
+          <div className="bg-white rounded-3xl p-10 flex flex-col items-center justify-center shadow-[0_0_50px_rgba(0,0,0,0.3)] transform scale-110 animate-in zoom-in duration-300">
+            <div className="relative mb-6">
+              <div className="absolute inset-0 bg-green-100 rounded-full animate-ping opacity-25"></div>
+              <div className="relative bg-green-500 rounded-full p-6 text-white">
+                <CheckCircle className="w-16 h-16" />
+              </div>
+            </div>
+            <h2 className="text-3xl font-extrabold text-gray-800 mb-2">¡Producto Creado!</h2>
+            <p className="text-xl text-gray-600 mb-6 font-medium">{createdProductName}</p>
+            <div className="w-64 h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-green-500 transition-all duration-[4000ms] ease-linear"
+                style={{ width: showSuccessAnimation ? '100%' : '0%' }}
+              ></div>
+            </div>
+            <p className="text-sm text-gray-400 mt-4 italic">Preparando para agregar cantidad...</p>
+          </div>
+        </div>
+      )}
+      {/* Animación de Éxito al Crear Producto */}
+      {showSuccessAnimation && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-70 backdrop-blur-sm transition-all duration-500">
+          <div className="bg-white rounded-3xl p-10 flex flex-col items-center justify-center shadow-[0_0_50px_rgba(0,0,0,0.3)] transform scale-110 animate-in zoom-in duration-300">
+            <div className="relative mb-6">
+              <div className="absolute inset-0 bg-green-100 rounded-full animate-ping opacity-25"></div>
+              <div className="relative bg-green-500 rounded-full p-6 text-white">
+                <CheckCircle className="w-16 h-16" />
+              </div>
+            </div>
+            <h2 className="text-3xl font-extrabold text-gray-800 mb-2">¡Producto Creado!</h2>
+            <p className="text-xl text-gray-600 mb-6 font-medium">{createdProductName}</p>
+            <div className="w-64 h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-green-500 transition-all duration-[4000ms] ease-linear"
+                style={{ width: showSuccessAnimation ? '100%' : '0%' }}
+              ></div>
+            </div>
+            <p className="text-sm text-gray-400 mt-4 italic">Preparando para agregar cantidad...</p>
+          </div>
+        </div>
+      )}
+      {/* Modal de Búsqueda por Código de Barras (Gris-600) */}
+      <SearchBarcodeModal
+        isOpen={showSearchBarcodeModal}
+        onClose={() => setShowSearchBarcodeModal(false)}
+        onSelect={(producto) => {
+          handleSelectProduct(producto)
+          setShowSearchBarcodeModal(false)
+        }}
+      />
     </div >
   )
 }

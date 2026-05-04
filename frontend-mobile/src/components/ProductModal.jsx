@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Modal, TextInput, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform, Switch, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { CameraView, Camera } from 'expo-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Picker } from '@react-native-picker/picker';
 
 const ProductModal = ({ visible, onClose, onSave, product }) => {
@@ -126,20 +126,31 @@ const ProductModal = ({ visible, onClose, onSave, product }) => {
     });
   };
 
-  const requestCameraPermission = async () => {
-    const { status } = await Camera.requestCameraPermissionsAsync();
-    setHasPermission(status === 'granted');
-    return status === 'granted';
-  };
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
   const handleOpenScanner = async (field) => {
-    const granted = await requestCameraPermission();
-    if (granted) {
-      setScanningField(field);
-      setFlashOn(false); // Siempre inicia con flash apagado
-      setShowScanner(true);
-    } else {
-      Alert.alert('Permiso Denegado', 'Necesitamos permiso para acceder a la cámara para escanear códigos de barras.');
+    try {
+      let granted = false;
+      if (!cameraPermission?.granted && cameraPermission?.canAskAgain) {
+        const result = await requestCameraPermission();
+        granted = result?.granted === true;
+        setHasPermission(granted);
+      } else if (cameraPermission) {
+        granted = cameraPermission.granted;
+        setHasPermission(granted);
+      }
+
+      if (granted) {
+        setScanningField(field);
+        setFlashOn(false);
+        setShowScanner(true);
+      } else {
+        Alert.alert('Permiso denegado', 'Se necesita acceso a la cámara para escanear');
+      }
+    } catch (err) {
+      console.error('Error al solicitar permisos de cámara:', err);
+      setHasPermission(false);
+      Alert.alert('Error', 'No se pudo solicitar el permiso de la cámara');
     }
   };
 
@@ -163,6 +174,9 @@ const ProductModal = ({ visible, onClose, onSave, product }) => {
         <View style={styles.scannerContainer}>
           <CameraView
             onBarcodeScanned={handleBarCodeScanned}
+            barcodeScannerSettings={{
+              barcodeTypes: ['qr', 'ean13', 'ean8', 'code128', 'code39', 'upc_a', 'upc_e'],
+            }}
             style={styles.absoluteFill}
             enableTorch={flashOn}
           />

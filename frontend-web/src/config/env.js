@@ -76,7 +76,7 @@ export const resolveApiBaseUrl = () => {
     candidates = [
       env.VITE_API_URL,           // Variable principal
       env.VITE_API_URL_LAN,       // URL LAN (desarrollo local en red)
-      'http://localhost:4500/api', // Desarrollo local (puerto PostgreSQL backend)
+      'http://localhost:4501/api', // Desarrollo local (puerto PostgreSQL backend)
       env.VITE_API_URL_REMOTE,    // Remoto como fallback
       fallbackCloudUrl,           // Último recurso
     ];
@@ -121,7 +121,7 @@ export const resolveWebSocketUrl = () => {
     candidates = [
       env.VITE_WS_URL,
       env.VITE_WS_URL_LAN,
-      'http://localhost:4500',
+      'http://localhost:4501',
       env.VITE_WS_URL_REMOTE,
       fallbackCloudUrl,
     ];

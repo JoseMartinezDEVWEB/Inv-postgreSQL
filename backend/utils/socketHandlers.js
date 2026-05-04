@@ -27,11 +27,18 @@ const setupSockets = (io) => {
             return next(new Error('Autenticación fallida: Token no proporcionado'));
         }
 
-        // Caso 1: Token Local de Colaborador (Móvil)
-        if (token.startsWith('colaborador-token-')) {
+        // Caso 1: Token Local de Colaborador (Móvil) - varios formatos soportados
+        if (token.startsWith('colaborador-token-') || token.startsWith('local-token-')) {
             try {
-                const parts = token.split('-');
-                const solicitudId = parts[2];
+                let solicitudId = null
+                
+                if (token.startsWith('colaborador-token-')) {
+                    const parts = token.split('-')
+                    solicitudId = parts[2]
+                } else if (token.startsWith('local-token-')) {
+                    const parts = token.split('-')
+                    solicitudId = parts[2]
+                }
                 
                 traceSocket(`🔍 Verificando token local para solicitud: ${solicitudId}`);
                 
