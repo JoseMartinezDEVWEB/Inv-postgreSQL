@@ -8,7 +8,7 @@
 module.exports = {
   project: {
     android: {
-      sourceDir: './android_backup',
+      sourceDir: './android',
     },
     ios: {},
   },

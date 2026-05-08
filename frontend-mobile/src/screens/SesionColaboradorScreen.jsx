@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   View,
   Text,
@@ -30,19 +30,23 @@ import ZeroCostProductsColaboradorModal from '../components/modals/ZeroCostProdu
 import syncService from '../services/syncService'
 import { useAuth } from '../context/AuthContext'
 import webSocketService from '../services/websocket'
-import { getInternetCredentials, setInternetCredentials } from '../services/secureStorage'
+import { getInternetCredentials } from '../services/secureStorage'
 import { config } from '../config/env'
 
 const SesionColaboradorScreen = ({ route, navigation }) => {
-  const { solicitudId, sesionInventario } = route.params || {}
-  const { loginAsCollaborator } = useAuth()
+  const { solicitudId: routeSolicitudId, sesionInventario: routeSesionInventario } = route.params || {}
+  const { logout, user } = useAuth()
+
+  // Leer desde route.params o desde el contexto de autenticación (para reinicios de app)
+  const solicitudId = routeSolicitudId || user?.solicitudId
+  const sesionInventario = routeSesionInventario || user?.sesionInventario
 
   const [productos, setProductos] = useState([])
   const [productosOffline, setProductosOffline] = useState([])
   const [isConnected, setIsConnected] = useState(true)
   // Hook de permisos de cámara de expo-camera v15
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
-  const [hasPermission, setHasPermission] = useState(null)
+  const [hasPermission, setHasPermission] = useState(false)
   const [envioTiempoReal, setEnvioTiempoReal] = useState(true) // Checkbox para envío en tiempo real
 
   const [showScanner, setShowScanner] = useState(false)
@@ -70,11 +74,26 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
   const [isSincronizandoInventario, setIsSincronizandoInventario] = useState(false)
   
   // Ref para evitar procesamiento múltiple de inventario
-  const processingInventoryRef = useRef({ isProcessing: false, lastTimestamp: null })
+  const processingInventoryRef = useRef({ isProcessing: false, lastTimestamp: null, lastTime: 0 })
+
+  // Estado del modal de inventario entrante (protocolo chunked)
+  const [inventarioEntrante, setInventarioEntrante] = useState({
+    visible: false,
+    total: 0,
+    totalChunks: 0,
+    receivedChunks: 0,
+    progress: 0,
+    ready: false,
+    sessionId: null,
+  })
+  const inventoryBufferRef = useRef({ sessionId: null, productos: [], total: 0, totalChunks: 0, receivedChunks: 0 })
+  const progressAnim = useRef(new Animated.Value(0)).current
 
   const [barcode, setBarcode] = useState('')
   const [busqueda, setBusqueda] = useState('')
   const [resultadosBusqueda, setResultadosBusqueda] = useState([])
+  const [productosLocalesAll, setProductosLocalesAll] = useState([])
+  const [cargandoProductos, setCargandoProductos] = useState(false)
 
   const [nombreProducto, setNombreProducto] = useState('')
   const [skuProducto, setSkuProducto] = useState('')
@@ -188,51 +207,24 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     // Actualizar estadísticas iniciales
     actualizarEstadisticasSync()
 
-    const conectarColaborador = async () => {
+    const conectarWebSocket = async () => {
       try {
-        // Generar token local para WebSocket si no existe
-        console.log('🔐 [SesionColaborador] Verificando credenciales para WebSocket...')
+        // Las credenciales ya fueron escritas por loginAsCollaborator — solo verificar
+        // si el WebSocket necesita conectarse y usar el token existente
         const tokenCredentials = await getInternetCredentials('auth_token')
-        const userCredentials = await getInternetCredentials('user_data')
-        
-        if (!tokenCredentials?.password || !userCredentials?.password) {
-          console.log('🔐 [SesionColaborador] No hay credenciales, generando token local para colaborador...')
-          const localToken = `colaborador-token-${solicitudId}-${Date.now()}`
-          const colaboradorUser = {
-            nombre: 'Colaborador',
-            rol: 'colaborador',
-            tipo: 'colaborador_sesion',
-            solicitudId: solicitudId
-          }
-          
-          await Promise.all([
-            setInternetCredentials('auth_token', 'token', localToken),
-            setInternetCredentials('user_data', 'user', JSON.stringify(colaboradorUser))
-          ])
-          
-          console.log('✅ [SesionColaborador] Credenciales guardadas, conectando WebSocket...')
-          
-          // Conectar WebSocket con el token local
-          if (!config.isOffline) {
-            webSocketService.connect(localToken)
-          }
-        } else {
-          console.log('✅ [SesionColaborador] Credenciales existentes, verificando conexión WebSocket...')
-          const token = tokenCredentials.password
-          
-          // Verificar si el WebSocket está conectado
-          const wsStatus = webSocketService.getConnectionStatus()
-          if (!wsStatus.isConnected && !wsStatus.isConnecting && !config.isOffline) {
-            console.log('🔌 [SesionColaborador] WebSocket no conectado, intentando conectar...')
-            webSocketService.connect(token)
-          }
+        const token = tokenCredentials?.password
+        if (!token) return
+
+        const wsStatus = webSocketService.getConnectionStatus()
+        if (!wsStatus.isConnected && !wsStatus.isConnecting && !config.isOffline) {
+          console.log('🔌 [SesionColaborador] Verificando conexión WebSocket...')
+          webSocketService.connect(token)
         }
       } catch (error) {
-        console.error('❌ [SesionColaborador] Error al conectar colaborador:', error)
-        // Silencioso - puede fallar si ya está conectado
+        console.warn('⚠️ [SesionColaborador] Error verificando WebSocket:', error?.message)
       }
     }
-    conectarColaborador()
+    conectarWebSocket()
 
     // Sistema de ping periódico para mantener conexión activa (cada 20 segundos)
     const pingInterval = setInterval(async () => {
@@ -245,15 +237,21 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       }
     }, 20000) // 20 segundos
 
+    let prevConnected = null
     const unsubscribe = NetInfo.addEventListener((state) => {
-      setIsConnected(Boolean(state.isConnected))
+      const connected = Boolean(state.isConnected)
+      setIsConnected(connected)
 
-      if (state.isConnected) {
+      // Solo reaccionar cuando el estado cambia (evita disparos múltiples al montar)
+      if (connected === prevConnected) return
+      prevConnected = connected
+
+      if (connected) {
         showMessage({ message: '✅ Conectado - Sincronizando...', type: 'success' })
-        // Conectar cuando se detecta conexión
-        conectarColaborador()
-        // Forzar sincronización cuando se detecta conexión
-        syncService.forzarSincronizacion()
+        conectarWebSocket()
+        if (!syncService.isProcessing) {
+          syncService.forzarSincronizacion()
+        }
       } else {
         showMessage({ message: '⚠️ Sin conexión - Modo offline activado', type: 'warning' })
       }
@@ -261,84 +259,86 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
 
     // Solo verificar estado inicial, NO solicitar automáticamente
 
-    const handleOpenScanner = async () => {
-      try {
-        let granted = false
-        if (!cameraPermission?.granted && cameraPermission?.canAskAgain) {
-          const result = await requestCameraPermission()
-          granted = result?.granted === true
-        } else {
-          granted = cameraPermission?.granted === true
-        }
-        
-        setHasPermission(granted)
-        if (granted) {
-          setFlashOn(false)
-          setShowScanner(true)
-        } else {
-          Alert.alert('Permiso denegado', 'Se necesita acceso a la cámara para escanear')
-        }
-      } catch (err) {
-        console.error('Error al abrir el escáner:', err)
+    // sincronizarProductos está definido a nivel de componente (ver abajo del useEffect)
+
+    // ── Protocolo chunked (inventarios grandes) ────────────────────────────
+    const handleInventoryStart = (data) => {
+      console.log('📦 [Collab] Inicio transferencia chunked:', data.total, 'productos')
+      inventoryBufferRef.current = {
+        sessionId: data.sessionId,
+        productos: [],
+        total: data.total,
+        totalChunks: data.totalChunks,
+        receivedChunks: 0,
       }
+      setInventarioEntrante({
+        visible: true,
+        total: data.total,
+        totalChunks: data.totalChunks,
+        receivedChunks: 0,
+        progress: 0,
+        ready: false,
+        sessionId: data.sessionId,
+      })
+      Animated.timing(progressAnim, { toValue: 0, duration: 0, useNativeDriver: false }).start()
     }
 
-    // Escuchar evento de sincronización de inventario desde el admin
+    const handleInventoryChunk = (data) => {
+      const buf = inventoryBufferRef.current
+      if (!buf || buf.sessionId !== data.sessionId) return
+      buf.productos.push(...(data.productos || []))
+      buf.receivedChunks++
+      const progress = Math.round((buf.receivedChunks / data.totalChunks) * 100)
+      setInventarioEntrante(prev => ({
+        ...prev,
+        receivedChunks: buf.receivedChunks,
+        progress,
+      }))
+      Animated.timing(progressAnim, {
+        toValue: progress / 100,
+        duration: 200,
+        useNativeDriver: false,
+      }).start()
+    }
+
+    const handleInventoryComplete = (data) => {
+      const buf = inventoryBufferRef.current
+      if (!buf || buf.sessionId !== data.sessionId) return
+      console.log('✅ [Collab] Transferencia chunked completa:', buf.productos.length, 'productos')
+      setInventarioEntrante(prev => ({ ...prev, progress: 100, ready: true }))
+      Animated.timing(progressAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start()
+    }
+
+    // ── Inventario directo (compatibilidad sin chunking) ──────────────────
     const handleSendInventory = async (data) => {
-      console.log('📦 [SesionColaboradorScreen] Recibido send_inventory:', data.productos?.length || 0, 'productos', 'timestamp:', data.timestamp)
-      
       if (!data || !Array.isArray(data.productos) || data.productos.length === 0) {
-        console.warn('⚠️ [SesionColaboradorScreen] No hay productos para sincronizar o formato inválido')
+        showMessage({ message: '⚠️ Inventario recibido sin productos', type: 'warning', duration: 3000 })
         return
       }
+      const tsKey = data.timestamp ? String(data.timestamp) : null
+      const ahora = Date.now()
+      if (
+        tsKey &&
+        processingInventoryRef.current.lastTimestamp === tsKey &&
+        ahora - (processingInventoryRef.current.lastTime || 0) < 10000
+      ) return
+      processingInventoryRef.current.lastTimestamp = tsKey
+      processingInventoryRef.current.lastTime = ahora
 
-      // Idempotencia: Verificar si ya procesamos este inventario
-      if (data.timestamp && processingInventoryRef.current.lastTimestamp === data.timestamp) {
-        console.log('📦 [SesionColaborador] Inventario ya procesado (timestamp coincidente), omitiendo.');
-        return;
-      }
-
-      processingInventoryRef.current = {
-        isProcessing: true,
-        lastTimestamp: data.timestamp || Date.now()
-      };
-      setIsSincronizandoInventario(true)
-
-      try {
-        console.log('🔄 [SesionColaboradorScreen] Iniciando sincronización de productos...')
-        // Usar el método de sincronización masiva de localDb (actualiza SQLite)
-        await localDb.sincronizarProductosMasivo(data.productos)
-        console.log('✅ [SesionColaboradorScreen] Sincronización completada exitosamente')
-        
-        // Mostrar mensaje de éxito
-        Alert.alert(
-          '¡Inventario actualizado!',
-          `Se sincronizaron ${data.productos.length} productos correctamente. Los productos ahora están disponibles para buscar y escanear.`,
-          [{ 
-            text: 'OK',
-            onPress: () => {
-              // Recargar productos offline para refrescar cualquier caché
-              cargarProductosOffline()
-            }
-          }]
-        )
-      } catch (error) {
-        console.error('❌ [SesionColaboradorScreen] Error sincronizando productos:', error)
-        Alert.alert(
-          'Error',
-          'No se pudo sincronizar el inventario. Por favor, intente nuevamente.',
-          [{ text: 'OK' }]
-        )
-      } finally {
-        processingInventoryRef.current.isProcessing = false
-        setIsSincronizandoInventario(false)
-      }
+      showMessage({ message: `📦 Inventario recibido — ${data.productos.length} productos`, type: 'info', duration: 3000 })
+      await aplicarInventarioAdmin(data.productos)
     }
 
+    webSocketService.on('send_inventory_start', handleInventoryStart)
+    webSocketService.on('send_inventory_chunk', handleInventoryChunk)
+    webSocketService.on('send_inventory_complete', handleInventoryComplete)
     webSocketService.on('send_inventory', handleSendInventory)
 
     // Cleanup al desmontar
     return () => {
+      webSocketService.off('send_inventory_start', handleInventoryStart)
+      webSocketService.off('send_inventory_chunk', handleInventoryChunk)
+      webSocketService.off('send_inventory_complete', handleInventoryComplete)
       webSocketService.off('send_inventory', handleSendInventory)
       clearInterval(pingInterval)
       unsubscribe()
@@ -366,6 +366,27 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       setHasPermission(cameraPermission.granted)
     }
   }, [cameraPermission])
+
+  // Guardar inventario recibido del admin en la DB local (protocolo chunked + directo)
+  const aplicarInventarioAdmin = async (productos) => {
+    if (processingInventoryRef.current.isProcessing) return
+    processingInventoryRef.current.isProcessing = true
+    setIsSincronizandoInventario(true)
+    try {
+      const result = await localDb.sincronizarProductosMasivo(productos)
+      Alert.alert(
+        '✅ ¡Inventario actualizado!',
+        `Se sincronizaron ${result.insertados} de ${result.total} productos.${result.errores > 0 ? `\n(${result.errores} ignorados)` : ''}`,
+        [{ text: 'OK', onPress: () => cargarProductosOffline() }]
+      )
+    } catch (error) {
+      showMessage({ message: '❌ Error al sincronizar inventario', type: 'danger', duration: 4000 })
+      Alert.alert('Error', `No se pudo guardar: ${error.message || 'Error desconocido'}`, [{ text: 'OK' }])
+    } finally {
+      processingInventoryRef.current.isProcessing = false
+      setIsSincronizandoInventario(false)
+    }
+  }
 
   // --- MEMORIZACIÓN DE DATOS (Prevención de White Screen y Optimización) ---
   
@@ -506,7 +527,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     }
   }
 
-  const enviarProductoServidor = async (item) => {
+  const enviarProductoServidor = async (item, force = false) => {
     const payload = {
       temporalId: item.temporalId,
       nombre: item.nombre,
@@ -518,27 +539,19 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       origen: 'colaborador',
     }
 
-    // Si envío en tiempo real está activado y hay conexión, enviar inmediatamente
-    if (envioTiempoReal && isConnected) {
+    // force=true permite enviar aunque envioTiempoReal esté desactivado (usado desde handleConfirmarEnvio)
+    if ((envioTiempoReal || force) && isConnected) {
       try {
         await solicitudesConexionApi.agregarProductoOffline(solicitudId, payload)
-        
-        // MARCAR COMO SINCRONIZADO EN DB LOCAL
         await localDb.marcarProductoColaboradorSincronizado(item.temporalId)
-        
         showMessage({ message: '✅ Producto enviado', type: 'success' })
-        cargarProductosOffline()
       } catch (error) {
         console.error('Error al enviar producto:', error)
-        // Si falla, se queda como pendiente en la DB local (sincronizado = 0)
         showMessage({ message: '📦 Guardado localmente (pendiente)', type: 'info' })
-        cargarProductosOffline()
       }
-    } else {
-      // Si envío en tiempo real está desactivado o no hay conexión: ya está guardado como pendiente
-      cargarProductosOffline()
     }
-    
+
+    await cargarProductosOffline()
     await actualizarEstadisticasSync()
   }
 
@@ -561,7 +574,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       costo: costoConfirmado,
     })
 
-    agregarOActualizarEnListas(item)
+    await agregarOActualizarEnListas(item)
 
     // Si envío en tiempo real está activado, enviar inmediatamente
     if (envioTiempoReal && isConnected) {
@@ -569,8 +582,8 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     } else {
       showMessage({
         message: '📦 Producto guardado',
-        description: envioTiempoReal 
-          ? 'Se enviará cuando haya conexión' 
+        description: envioTiempoReal
+          ? 'Se enviará cuando haya conexión'
           : 'Se enviará cuando sincronices manualmente',
         type: 'success',
       })
@@ -614,7 +627,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       console.log('El producto ya existe en el catálogo o hubo error al guardar');
     }
 
-    agregarOActualizarEnListas(item)
+    await agregarOActualizarEnListas(item)
 
     // Si envío en tiempo real está activado, enviar inmediatamente
     if (envioTiempoReal && isConnected) {
@@ -622,8 +635,8 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     } else {
       showMessage({
         message: '📦 Producto guardado',
-        description: envioTiempoReal 
-          ? 'Se enviará cuando haya conexión' 
+        description: envioTiempoReal
+          ? 'Se enviará cuando haya conexión'
           : 'Se enviará cuando sincronices manualmente',
         type: 'success',
       })
@@ -648,7 +661,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       offline: !isConnected,
     }
 
-    agregarOActualizarEnListas(actualizado)
+    await agregarOActualizarEnListas(actualizado)
 
     if (isConnected) {
       await enviarProductoServidor(actualizado)
@@ -685,6 +698,29 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
       },
     ])
   }
+
+  // Definido a nivel de componente (NO dentro de useEffect) para que el JSX pueda accederlo
+  const handleOpenScanner = useCallback(async () => {
+    try {
+      let granted = false
+      if (!cameraPermission?.granted && cameraPermission?.canAskAgain) {
+        const result = await requestCameraPermission()
+        granted = result?.granted === true
+      } else {
+        granted = cameraPermission?.granted === true
+      }
+
+      setHasPermission(granted)
+      if (granted) {
+        setFlashOn(false)
+        setShowScanner(true)
+      } else {
+        Alert.alert('Permiso denegado', 'Se necesita acceso a la cámara para escanear')
+      }
+    } catch (err) {
+      console.error('Error al abrir el escáner:', err)
+    }
+  }, [cameraPermission, requestCameraPermission])
 
   const handleBarCodeScanned = async ({ data }) => {
     setShowScanner(false)
@@ -821,6 +857,49 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
     }
   }
 
+  const cargarProductosParaBusqueda = async () => {
+    setCargandoProductos(true)
+    try {
+      const todos = await localDb.obtenerProductos({ buscar: '', limite: 500 })
+      setProductosLocalesAll(todos)
+      setResultadosBusqueda(todos.slice(0, 60))
+    } catch (e) {
+      console.warn('⚠️ Error cargando productos para búsqueda:', e.message)
+    } finally {
+      setCargandoProductos(false)
+    }
+  }
+
+  useEffect(() => {
+    if (modalBuscar) {
+      setBusqueda('')
+      cargarProductosParaBusqueda()
+    } else {
+      setResultadosBusqueda([])
+    }
+  }, [modalBuscar])
+
+  const filtrarProductosLocales = useCallback((texto) => {
+    const q = texto.trim().toLowerCase()
+    if (q.length === 0) {
+      return productosLocalesAll.slice(0, 60)
+    }
+    const filtered = productosLocalesAll.filter(p => {
+      const nombre = (p.nombre || '').toLowerCase()
+      const codigo = (p.codigoBarras || p.codigo_barra || p.sku || '').toLowerCase()
+      return nombre.includes(q) || codigo.includes(q)
+    })
+    // Ordenar: primero los que empiezan con el texto, luego el resto
+    filtered.sort((a, b) => {
+      const aNombre = (a.nombre || '').toLowerCase()
+      const bNombre = (b.nombre || '').toLowerCase()
+      const aStart = aNombre.startsWith(q) ? 0 : 1
+      const bStart = bNombre.startsWith(q) ? 0 : 1
+      return aStart - bStart
+    })
+    return filtered.slice(0, 40)
+  }, [productosLocalesAll])
+
   const sincronizarProductos = async () => {
     if (productosOffline.length === 0) {
       Alert.alert('Sin productos', 'No hay productos pendientes de sincronización')
@@ -954,20 +1033,16 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
   // Función para confirmar envío desde el modal
   const handleConfirmarEnvio = async () => {
     setModalConfirmarEnvio(false)
-    setEnvioTiempoReal(true)
-    
-    // Ejecutar animación de envío
     ejecutarAnimacionEnvio()
-    
-    // Enviar productos al servidor (solo los pendientes)
+
     if (isConnected) {
       try {
+        // force=true garantiza envío sin importar el estado de envioTiempoReal
         const pendientes = productos.filter(p => !p.sincronizado)
-        if (pendientes.length > 0) {
-          for (const item of pendientes) {
-            await enviarProductoServidor(item)
-          }
+        for (const item of pendientes) {
+          await enviarProductoServidor(item, true)
         }
+        setEnvioTiempoReal(true)
       } catch (error) {
         console.error('Error enviando productos:', error)
       }
@@ -1067,9 +1142,9 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
         `Se guardará el listado de ${productosOffline.length} producto(s) para el cliente "${clienteNombre}" en tu historial de envíos.`,
         [
           { text: 'Cancelar', style: 'cancel' },
-          { 
-            text: 'Guardar y Salir', 
-            style: 'default', 
+          {
+            text: 'Guardar y Salir',
+            style: 'default',
             onPress: async () => {
               // Guardar en historial antes de salir
               await guardarEnHistorial(productosOffline.length, [...productosOffline])
@@ -1078,13 +1153,13 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
                 description: `Cliente: ${clienteNombre}`,
                 type: 'success',
               })
-              navigation.navigate('Login')
+              logout()
             }
           },
-          { 
-            text: 'Salir sin guardar', 
-            style: 'destructive', 
-            onPress: () => navigation.navigate('Login') 
+          {
+            text: 'Salir sin guardar',
+            style: 'destructive',
+            onPress: () => logout()
           },
         ]
       )
@@ -1095,7 +1170,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
         '¿Estás seguro que deseas salir?',
         [
           { text: 'Cancelar', style: 'cancel' },
-          { text: 'Salir', onPress: () => navigation.navigate('Login') },
+          { text: 'Salir', onPress: () => logout() },
         ]
       )
     }
@@ -1166,21 +1241,6 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
             </TouchableOpacity>
           </View>
         </View>
-      </View>
-    )
-  }
-
-  const totalProductos = productos.length
-  const totalConteo = productos.reduce((sum, p) => sum + (Number(p.cantidad) || 0), 0)
-  const totalValor = productos.reduce(
-    (sum, p) => sum + (Number(p.cantidad) || 0) * (Number(p.costo) || 0),
-    0
-  )
-
-  if (hasPermission === null) {
-    return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <Text>Solicitando permisos de cámara...</Text>
       </View>
     )
   }
@@ -1353,70 +1413,120 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
 
       {/* Modal Buscar */}
       <Modal visible={modalBuscar} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Buscar Producto</Text>
-            <View style={styles.searchBarContainer}>
-              <TextInput
-                style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                placeholder="Nombre o código"
-                value={busqueda}
-                onChangeText={setBusqueda}
-                onSubmitEditing={buscarProductos}
-              />
-              <TouchableOpacity 
-                style={styles.scannerInSearch} 
-                onPress={() => {
-                  setModalBuscar(false);
-                  handleOpenScanner();
-                }}
-              >
-                <Ionicons name="barcode-outline" size={24} color="#3b82f6" />
+        <View style={styles.searchModalOverlay}>
+          <View style={styles.searchModalContent}>
+            {/* Header */}
+            <View style={styles.searchModalHeader}>
+              <Text style={styles.searchModalTitle}>Buscar Producto</Text>
+              <TouchableOpacity onPress={() => setModalBuscar(false)} style={styles.searchModalClose}>
+                <Ionicons name="close" size={24} color="#64748b" />
               </TouchableOpacity>
             </View>
-            <TouchableOpacity style={[styles.buscarButton, { marginTop: 10 }]} onPress={buscarProductos}>
-              <Ionicons name="search-outline" size={18} color="#fff" />
-              <Text style={styles.buscarButtonText}>Buscar</Text>
-            </TouchableOpacity>
 
+            {/* Barra de búsqueda grande */}
+            <View style={styles.searchBarBig}>
+              <Ionicons name="search-outline" size={22} color="#64748b" style={{ marginRight: 10 }} />
+              <TextInput
+                style={styles.searchInputBig}
+                placeholder="Escribe nombre o código..."
+                placeholderTextColor="#94a3b8"
+                value={busqueda}
+                autoFocus
+                returnKeyType="search"
+                onChangeText={(texto) => {
+                  setBusqueda(texto)
+                  if (texto.length === 0 || texto.length >= 3) {
+                    setResultadosBusqueda(filtrarProductosLocales(texto))
+                  }
+                }}
+                onSubmitEditing={buscarProductos}
+              />
+              {busqueda.length > 0 && (
+                <TouchableOpacity onPress={() => {
+                  setBusqueda('')
+                  setResultadosBusqueda(productosLocalesAll.slice(0, 60))
+                }}>
+                  <Ionicons name="close-circle" size={20} color="#94a3b8" />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.scannerInSearch}
+                onPress={() => { setModalBuscar(false); handleOpenScanner() }}
+              >
+                <Ionicons name="barcode-outline" size={22} color="#3b82f6" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Contador */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={styles.searchCountText}>
+                {cargandoProductos
+                  ? 'Cargando productos...'
+                  : busqueda.length > 0 && busqueda.length < 3
+                    ? 'Escribe al menos 3 letras para filtrar'
+                    : `${resultadosBusqueda.length} producto${resultadosBusqueda.length !== 1 ? 's' : ''}`
+                }
+              </Text>
+              {busqueda.length >= 3 && resultadosBusqueda.length === 0 && !cargandoProductos && (
+                <TouchableOpacity onPress={buscarProductos}>
+                  <Text style={{ color: '#3b82f6', fontSize: 13 }}>Buscar en línea</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Lista de productos */}
             <FlatList
               data={resultadosBusqueda}
-              keyExtractor={(item, index) => item._id || item.id || `busqueda-${index}`}
-              style={{ marginTop: 12, maxHeight: 260 }}
+              keyExtractor={(item, index) => String(item._id || item.id || index)}
+              style={styles.searchResultList}
+              keyboardShouldPersistTaps="handled"
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={styles.resultItem}
+                  style={styles.searchResultItem}
                   onPress={() => {
                     setProductoParaAgregar(item)
                     setCodigoBarrasEscaneado(null)
                     setModalBuscar(false)
                     setShowBarcodeProductModal(true)
                   }}
+                  activeOpacity={0.7}
                 >
-                  <Text style={styles.resultNombre}>{item.nombre}</Text>
-                  <Text style={styles.resultSku}>
-                    SKU: {item.sku || 'Sin SKU'} · CB:{' '}
-                    {item.codigoBarras || item.codigo || 'N/A'}
-                  </Text>
+                  <View style={styles.searchResultIcon}>
+                    <Ionicons name="cube-outline" size={20} color="#3b82f6" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.searchResultNombre} numberOfLines={1}>
+                      {item.nombre}
+                    </Text>
+                    <Text style={styles.searchResultMeta}>
+                      {[
+                        item.sku && `SKU: ${item.sku}`,
+                        (item.codigoBarras || item.codigo_barra) && `CB: ${item.codigoBarras || item.codigo_barra}`,
+                        item.categoria && item.categoria
+                      ].filter(Boolean).join('  ·  ') || 'Sin datos adicionales'}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
                 </TouchableOpacity>
               )}
               ListEmptyComponent={
-                <View style={{ paddingVertical: 12 }}>
-                  <Text style={{ textAlign: 'center', color: '#94a3b8' }}>
-                    Escribe al menos 2 caracteres y presiona Buscar
-                  </Text>
-                </View>
+                !cargandoProductos && (
+                  <View style={styles.searchEmptyBox}>
+                    <Ionicons name="search-outline" size={40} color="#cbd5e1" />
+                    <Text style={styles.searchEmptyText}>
+                      {busqueda.length >= 3
+                        ? 'Sin resultados locales'
+                        : 'Los productos aparecerán aquí'}
+                    </Text>
+                    {busqueda.length >= 3 && (
+                      <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>
+                        Prueba tocando "Buscar en línea"
+                      </Text>
+                    )}
+                  </View>
+                )
               }
             />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => setModalBuscar(false)}
-              >
-                <Text style={styles.cancelButtonText}>Cerrar</Text>
-              </TouchableOpacity>
-            </View>
           </View>
         </View>
       </Modal>
@@ -1627,6 +1737,90 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
 
       {/* Modal de sincronización de inventario */}
       <ModalSincronizacionInventario visible={isSincronizandoInventario} />
+
+      {/* Modal: Inventario entrante del admin (protocolo chunked) */}
+      <Modal visible={inventarioEntrante.visible} animationType="slide" transparent>
+        <View style={styles.invEntranteOverlay}>
+          <View style={styles.invEntranteCard}>
+            {/* Cabecera */}
+            <View style={styles.invEntranteHeader}>
+              <View style={styles.invEntranteIconWrap}>
+                <Ionicons
+                  name={inventarioEntrante.ready ? 'checkmark-circle' : 'cloud-download'}
+                  size={36}
+                  color={inventarioEntrante.ready ? '#22c55e' : '#3b82f6'}
+                />
+              </View>
+              <Text style={styles.invEntranteTitle}>
+                {inventarioEntrante.ready ? 'Inventario listo' : 'Recibiendo inventario...'}
+              </Text>
+              <Text style={styles.invEntranteSubtitle}>
+                {inventarioEntrante.ready
+                  ? `${inventarioEntrante.total.toLocaleString()} productos listos para sincronizar`
+                  : `${inventarioEntrante.total.toLocaleString()} productos del administrador`}
+              </Text>
+            </View>
+
+            {/* Barra de progreso */}
+            <View style={styles.invEntranteProgressWrap}>
+              <View style={styles.invEntranteProgressBg}>
+                <Animated.View
+                  style={[
+                    styles.invEntranteProgressFill,
+                    {
+                      width: progressAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0%', '100%'],
+                      }),
+                      backgroundColor: inventarioEntrante.ready ? '#22c55e' : '#3b82f6',
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={styles.invEntranteProgressText}>
+                {inventarioEntrante.ready
+                  ? '100% completado'
+                  : `${inventarioEntrante.progress}% — lote ${inventarioEntrante.receivedChunks}/${inventarioEntrante.totalChunks}`}
+              </Text>
+            </View>
+
+            {/* Botones: solo visibles cuando está listo */}
+            {inventarioEntrante.ready && (
+              <View style={styles.invEntranteButtons}>
+                <TouchableOpacity
+                  style={styles.invEntrCancelBtn}
+                  onPress={() => {
+                    inventoryBufferRef.current = { sessionId: null, productos: [], total: 0, totalChunks: 0, receivedChunks: 0 }
+                    setInventarioEntrante(prev => ({ ...prev, visible: false, ready: false }))
+                    showMessage({ message: 'Inventario descartado', type: 'warning', duration: 2000 })
+                  }}
+                >
+                  <Text style={styles.invEntrCancelText}>Descartar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.invEntrAcceptBtn}
+                  onPress={async () => {
+                    const productos = [...inventoryBufferRef.current.productos]
+                    inventoryBufferRef.current = { sessionId: null, productos: [], total: 0, totalChunks: 0, receivedChunks: 0 }
+                    setInventarioEntrante(prev => ({ ...prev, visible: false, ready: false }))
+                    await aplicarInventarioAdmin(productos)
+                  }}
+                >
+                  <Ionicons name="sync" size={18} color="#fff" style={{ marginRight: 6 }} />
+                  <Text style={styles.invEntrAcceptText}>Sincronizar ahora</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Mientras recibe: indicador animado */}
+            {!inventarioEntrante.ready && (
+              <Text style={styles.invEntranteWaitText}>
+                Por favor espera mientras se recibe el inventario completo...
+              </Text>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* Modal de Confirmación de Envío */}
       <Modal visible={modalConfirmarEnvio} animationType="fade" transparent>
@@ -2223,6 +2417,98 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // --- Estilos modal de búsqueda grande ---
+  searchModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+  },
+  searchModalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 24,
+    height: '85%',
+  },
+  searchModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  searchModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  searchModalClose: {
+    padding: 4,
+  },
+  searchBarBig: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+  },
+  searchInputBig: {
+    flex: 1,
+    fontSize: 18,
+    color: '#0f172a',
+    paddingVertical: 0,
+  },
+  searchCountText: {
+    fontSize: 13,
+    color: '#94a3b8',
+    marginBottom: 4,
+  },
+  searchResultList: {
+    flex: 1,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    gap: 12,
+  },
+  searchResultIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#eff6ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchResultNombre: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1e293b',
+    marginBottom: 2,
+  },
+  searchResultMeta: {
+    fontSize: 12,
+    color: '#94a3b8',
+  },
+  searchEmptyBox: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    gap: 10,
+  },
+  searchEmptyText: {
+    fontSize: 15,
+    color: '#94a3b8',
+    textAlign: 'center',
+  },
+  // --- Fin estilos búsqueda ---
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -2663,6 +2949,111 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     marginTop: 8,
   },
+  // ── Estilos: modal inventario entrante ──────────────────────────────────
+  invEntranteOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  invEntranteCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 28,
+    width: '100%',
+    maxWidth: 380,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  invEntranteHeader: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  invEntranteIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#eff6ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  invEntranteTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1e293b',
+    textAlign: 'center',
+  },
+  invEntranteSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  invEntranteProgressWrap: {
+    width: '100%',
+    marginBottom: 24,
+  },
+  invEntranteProgressBg: {
+    height: 12,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 6,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  invEntranteProgressFill: {
+    height: '100%',
+    borderRadius: 6,
+  },
+  invEntranteProgressText: {
+    fontSize: 13,
+    color: '#64748b',
+    textAlign: 'center',
+  },
+  invEntranteButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  invEntrCancelBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+  },
+  invEntrCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  invEntrAcceptBtn: {
+    flex: 2,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#22c55e',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  invEntrAcceptText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  invEntranteWaitText: {
+    fontSize: 13,
+    color: '#94a3b8',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  // ────────────────────────────────────────────────────────────────────────
+
   // Estilos para botón de flash en escáner
   flashToggleBtn: {
     flexDirection: 'row',

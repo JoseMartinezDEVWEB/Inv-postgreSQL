@@ -44,7 +44,7 @@ function LoadingScreen() {
 }
 
 function RootNavigator() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const [showSplash, setShowSplash] = React.useState(true);
   const { durationMs } = useLoader();
 
@@ -64,21 +64,28 @@ function RootNavigator() {
     return <LoadingScreen />;
   }
 
+  const isColaborador = user?.tipo === 'colaborador_temporal';
+
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {isAuthenticated ? (
-        <>
-          <Stack.Screen name="MainApp" component={DrawerNavigator} />
-          {/* CORRECCIÓN 4: SesionColaborador SOLO en el stack de autenticados.
-              loginAsCollaborator() sube isAuthenticated=true antes de navegar,
-              por lo que el stack cambia al autenticado y el screen debe estar aquí. */}
-          <Stack.Screen name="SesionColaborador" component={SesionColaboradorScreen} />
-        </>
+        isColaborador ? (
+          // Colaborador temporal: la pantalla inicial ES la sesión de inventario
+          <>
+            <Stack.Screen name="SesionColaborador" component={SesionColaboradorScreen} />
+            <Stack.Screen name="MainApp" component={DrawerNavigator} />
+          </>
+        ) : (
+          // Usuario regular (admin/contable): pantalla inicial es el dashboard
+          <>
+            <Stack.Screen name="MainApp" component={DrawerNavigator} />
+            <Stack.Screen name="SesionColaborador" component={SesionColaboradorScreen} />
+          </>
+        )
       ) : (
         <>
           <Stack.Screen name="Login" component={LoginScreen} />
           <Stack.Screen name="EsperaAutorizacion" component={EsperaAutorizacionScreen} />
-          {/* SesionColaborador eliminado de aquí — vive solo en el stack autenticado */}
           <Stack.Screen
             name="Configuracion"
             component={ConfiguracionScreen}

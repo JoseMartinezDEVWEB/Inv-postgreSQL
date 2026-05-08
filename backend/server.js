@@ -15,7 +15,8 @@ const io = new Server(server, {
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
         allowedHeaders: "*",
         credentials: true
-    }
+    },
+    maxHttpBufferSize: 100e6
 });
 
 // Configuración de Middlewares

@@ -230,15 +230,17 @@ const ProductosGenerales = () => {
         return
       }
 
-      // Formatear productos para enviar (solo campos necesarios)
       const productosFormateados = todosLosProductos.map(producto => ({
-        nombre: producto.nombre,
-        costo: producto.costoBase || 0,
+        _id: producto._id || producto.id,
+        id: producto.id || producto._id,
+        nombre: producto.nombre || '',
+        sku: producto.sku || producto.codigoBarras || '',
+        costo: producto.costoBase || producto.costo || 0,
+        precioVenta: producto.precioVenta || 0,
         codigo_barra: producto.codigoBarras || '',
-        cantidad: 0, // Por defecto 0, ya que esto es el inventario general
         codigoBarras: producto.codigoBarras || '',
-        categoria: producto.categoria || '',
-        unidad: producto.unidad || '',
+        categoria: producto.categoria || 'General',
+        unidad: producto.unidad || 'unidad',
         descripcion: producto.descripcion || ''
       }))
 
@@ -259,7 +261,8 @@ const ProductosGenerales = () => {
 
   // Escuchar resultado del envío de inventario
   useEffect(() => {
-    if (user?.rol !== 'administrador' || !isConnected) return
+    const rolesAutorizados = ['administrador', 'contable', 'contador']
+    if (!rolesAutorizados.includes(user?.rol) || !isConnected) return
 
     const handleResultado = (data) => {
       setIsEnviandoInventario(false)
@@ -396,15 +399,12 @@ const ProductosGenerales = () => {
           <p className="text-gray-600">Gestiona la lista maestra de productos disponibles</p>
         </div>
         <div className="flex gap-2 items-center">
-          {/* Colaboradores en línea (solo para admins) */}
-          {user?.rol === 'administrador' && (
+          {/* Colaboradores en línea (admin y contable) */}
+          {['administrador', 'contable', 'contador'].includes(user?.rol) && (
             <div
               className="flex items-center space-x-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors"
               onClick={() => {
-                if (isConnected) {
-                  console.log('🔄 Actualizando contador manualmente...')
-                  obtenerColaboradoresEnLinea()
-                }
+                if (isConnected) obtenerColaboradoresEnLinea()
               }}
               title={isConnected ? 'Click para actualizar' : 'Sin conexión WebSocket'}
             >
@@ -421,7 +421,7 @@ const ProductosGenerales = () => {
               )}
             </div>
           )}
-          {user?.rol === 'administrador' && (
+          {['administrador', 'contable', 'contador'].includes(user?.rol) && (
             <>
               <Button
                 onClick={handleEnviarProductosAColaboradores}
@@ -433,14 +433,16 @@ const ProductosGenerales = () => {
                 <Send className="w-4 h-4" />
                 <span>{isEnviandoInventario ? 'Enviando...' : 'Enviar a Colaboradores'}</span>
               </Button>
-              <Button
-                onClick={() => setShowImportModal(true)}
-                variant="outline"
-                className="flex items-center space-x-2 bg-yellow-50 hover:bg-yellow-100 border-yellow-200 text-yellow-700"
-              >
-                <Upload className="w-4 h-4" />
-                <span>Importar Lista</span>
-              </Button>
+              {user?.rol === 'administrador' && (
+                <Button
+                  onClick={() => setShowImportModal(true)}
+                  variant="outline"
+                  className="flex items-center space-x-2 bg-yellow-50 hover:bg-yellow-100 border-yellow-200 text-yellow-700"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Importar Lista</span>
+                </Button>
+              )}
             </>
           )}
           <Button

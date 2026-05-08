@@ -418,18 +418,45 @@ router.get('/estado/:solicitudId', async (req, res) => {
     try {
         const { solicitudId } = req.params;
         const solicitud = await db.SolicitudConexion.findByPk(solicitudId, {
-            include: [{ model: db.Usuario, as: 'colaborador', attributes: ['nombre', 'email', 'rol'] }]
+            include: [{ model: db.Usuario, as: 'colaborador', attributes: ['id', 'nombre', 'email', 'rol'] }]
         });
 
         if (!solicitud) return res.status(404).json({ ok: false, mensaje: 'Solicitud no encontrada' });
 
-        res.json({
+        const responseData = {
             ok: true,
             estado: solicitud.estado,
             estadoConexion: solicitud.estadoConexion,
             sesionInventario: solicitud.sesionInventarioId,
             colaborador: solicitud.colaborador
-        });
+        };
+
+        // Cuando la solicitud es aceptada, generar un JWT para que el móvil inicie sesión
+        if (solicitud.estado === 'aceptada') {
+            const jwt = require('jsonwebtoken');
+            const JWT_SECRET = process.env.JWT_SECRET;
+
+            const colab = solicitud.colaborador;
+            const tokenPayload = colab
+                ? { id: colab.id, rol: colab.rol || 'colaborador', nombre: colab.nombre }
+                : {
+                    id: `temp_${solicitudId}`,
+                    rol: 'colaborador',
+                    nombre: solicitud.metadata?.nombreSugerido || 'Colaborador',
+                    isTemporary: true,
+                    solicitudId
+                  };
+
+            responseData.sessionToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '8h' });
+
+            // Incluir info del admin (contable) para que el móvil la muestre
+            const admin = await db.Usuario.findByPk(solicitud.adminId, {
+                attributes: ['id', 'nombre', 'email']
+            });
+            responseData.contable = admin ? admin.toJSON() : null;
+        }
+
+        res.json(responseData);
     } catch (error) {
         res.status(500).json({ ok: false, mensaje: error.message });
     }

@@ -176,10 +176,16 @@ const ProductosGeneralesScreen = () => {
     onError: handleApiError,
   });
 
-  const handleOpenModal = (product = null) => {
+  const handleOpenModal = useCallback((product = null) => {
     setSelectedProduct(product);
     setModalVisible(true);
-  };
+  }, []);
+
+  // Definido aquí (nivel de componente) para cumplir las Reglas de Hooks —
+  // NO puede estar dentro de renderContent() ya que eso viola la regla de hooks condicionales.
+  const renderItem = useCallback(({ item }) => (
+    <ProductCard item={item} onEdit={handleOpenModal} />
+  ), [handleOpenModal]);
 
   const handleSaveProduct = (productData) => {
     if (selectedProduct) {
@@ -266,10 +272,6 @@ const ProductosGeneralesScreen = () => {
         </View>
       );
     }
-
-    const renderItem = useCallback(({ item }) => (
-      <ProductCard item={item} onEdit={handleOpenModal} />
-    ), [handleOpenModal]);
 
     return (
       <FlatList

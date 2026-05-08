@@ -370,6 +370,7 @@ const localDb = {
     obtenerProductos: async (params = {}) => {
         try {
             const busqueda = params.buscar || '';
+            const limite = params.limite || 100;
             const database = await getDatabase();
             let query = 'SELECT * FROM productos WHERE deleted = 0 AND activo = 1';
             let sqlParams = [];
@@ -379,7 +380,7 @@ const localDb = {
                 sqlParams = [`%${busqueda}%`, `%${busqueda}%`, `%${busqueda}%`];
             }
 
-            query += ' ORDER BY nombre LIMIT 100';
+            query += ` ORDER BY nombre LIMIT ${limite}`;
 
             const result = await database.getAllAsync(query, sqlParams);
             return result.map(p => ({
@@ -394,87 +395,64 @@ const localDb = {
 
     // Sincronizar productos masivamente desde el servidor (para uso con send_inventory)
     sincronizarProductosMasivo: async (productos) => {
+        const database = await getDatabase();
+        console.log(`🔄 [localDb] Iniciando sincronización masiva de ${productos.length} productos...`);
+
+        let insertados = 0;
+        let errores = 0;
+        const timestamp = Date.now();
+
+        await database.execAsync('BEGIN TRANSACTION');
         try {
-            const database = await getDatabase();
-            console.log(`🔄 [localDb] Iniciando sincronización masiva de ${productos.length} productos...`);
+            await database.execAsync('DELETE FROM productos');
 
-            // Iniciar transacción
-            await database.execAsync('BEGIN TRANSACTION');
-
-            try {
-                // 1. Vaciar la tabla de productos actual
-                await database.execAsync('DELETE FROM productos');
-                console.log('✅ [localDb] Tabla de productos vaciada');
-
-                // 2. Insertar productos en bloques de 50
-                const BATCH_SIZE = 50;
-                const batches = [];
-
-                for (let i = 0; i < productos.length; i += BATCH_SIZE) {
-                    batches.push(productos.slice(i, i + BATCH_SIZE));
-                }
-
-                console.log(`📦 [localDb] Insertando ${productos.length} productos en ${batches.length} lotes...`);
-
-                for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-                    const batch = batches[batchIndex];
-
-                    // Insertar cada producto del lote
-                    for (const producto of batch) {
-                        // Validación básica: El producto debe tener al menos un nombre o SKU
-                        if (!producto.nombre && !producto.sku) {
-                            console.warn('⚠️ [localDb] Omitiendo producto sin nombre ni SKU');
-                            continue;
-                        }
-
-                        const id = producto._id || producto.id || `prod_${Date.now()}_${Math.random()}`;
-                        const uuid = producto.id_uuid || id;
-                        const timestamp = Date.now();
-
-                        try {
-                            await database.runAsync(
-                                `INSERT INTO productos(
-                                    _id, id_uuid, nombre, codigoBarras, precioVenta, stock,
-                                    descripcion, categoria, unidad, costo, sku,
-                                    imagen, activo, is_dirty, last_updated, deleted
-                                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, 0)`,
-                                [
-                                    id,
-                                    uuid,
-                                    producto.nombre || '',
-                                    producto.codigoBarras || producto.codigo_barra || '',
-                                    producto.precioVenta || 0,
-                                    0, // stock
-                                    producto.descripcion || '',
-                                    producto.categoria || '',
-                                    producto.unidad || '',
-                                    producto.costo || 0,
-                                    producto.sku || '',
-                                    '', // imagen
-                                    timestamp
-                                ]
-                            );
-                        } catch (error) {
-                            console.warn(`⚠️ [localDb] Error insertando producto ${id}:`, error.message);
-                            // Continuar con el siguiente producto
-                        }
+            const BATCH_SIZE = 50;
+            for (let i = 0; i < productos.length; i += BATCH_SIZE) {
+                const batch = productos.slice(i, i + BATCH_SIZE);
+                for (const producto of batch) {
+                    if (!producto.nombre && !producto.sku) {
+                        errores++;
+                        continue;
                     }
-
-                    console.log(`✅ [localDb] Lote ${batchIndex + 1}/${batches.length} insertado`);
+                    const id = producto._id || producto.id || `prod_${timestamp}_${Math.random().toString(36).slice(2)}`;
+                    try {
+                        await database.runAsync(
+                            `INSERT OR REPLACE INTO productos(
+                                _id, id_uuid, nombre, codigoBarras, precioVenta, stock,
+                                descripcion, categoria, unidad, costo, sku,
+                                imagen, activo, is_dirty, last_updated, deleted
+                            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, 0)`,
+                            [
+                                id,
+                                producto.id_uuid || id,
+                                producto.nombre || '',
+                                producto.codigoBarras || producto.codigo_barra || '',
+                                producto.precioVenta || 0,
+                                0,
+                                producto.descripcion || '',
+                                producto.categoria || '',
+                                producto.unidad || '',
+                                producto.costo || 0,
+                                producto.sku || '',
+                                '',
+                                timestamp
+                            ]
+                        );
+                        insertados++;
+                    } catch (err) {
+                        errores++;
+                        console.warn(`⚠️ [localDb] Error en producto "${producto.nombre}":`, err.message);
+                    }
                 }
-
-                // Commit transacción
-                await database.execAsync('COMMIT');
-                console.log('✅ [localDb] Sincronización masiva completada exitosamente');
-                return { success: true, total: productos.length };
-            } catch (error) {
-                // Rollback en caso de error
-                await database.execAsync('ROLLBACK');
-                console.error('❌ [localDb] Error en transacción, haciendo rollback:', error);
-                throw error;
+                console.log(`📦 [localDb] Lote ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(productos.length / BATCH_SIZE)}: ${insertados} insertados`);
             }
+
+            await database.execAsync('COMMIT');
+            console.log(`✅ [localDb] Sync completada: ${insertados} ok, ${errores} errores de ${productos.length} total`);
+            return { success: true, insertados, errores, total: productos.length };
         } catch (error) {
-            console.error('❌ [localDb] Error en sincronización masiva:', error);
+            await database.execAsync('ROLLBACK');
+            console.error('❌ [localDb] Rollback por error crítico:', error.message);
             throw error;
         }
     },

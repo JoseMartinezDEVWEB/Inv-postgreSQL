@@ -15,12 +15,12 @@ export const useSocket = () => {
 
   // Obtener contador de colaboradores en línea
   const obtenerColaboradoresEnLinea = useCallback(() => {
-    const rolesAutorizados = ['administrador', 'contable', 'contable']
-    if (isConnected && rolesAutorizados.includes(user?.rol)) {
+    const rolesAutorizados = ['administrador', 'contable', 'contador']
+    if (webSocketService.isConnected && rolesAutorizados.includes(user?.rol)) {
       console.log('📡 [useSocket] Solicitando contador de colaboradores...')
       webSocketService.emit('get_online_colaborators')
     }
-  }, [isConnected, user?.rol])
+  }, [user?.rol])
 
   // Efecto para suscribirse a eventos de Socket.io (solo una vez)
   useEffect(() => {
@@ -59,7 +59,7 @@ export const useSocket = () => {
       console.log('✅ [useSocket] WebSocket conectado, usuario:', user?.rol)
       setIsConnected(true)
 
-      const rolesAutorizados = ['administrador', 'contable', 'contable']
+      const rolesAutorizados = ['administrador', 'contable', 'contador']
       if (rolesAutorizados.includes(user?.rol)) {
         console.log('👑 [useSocket] Usuario autorizado, solicitando sincronización inicial...')
         // Solicitar inmediatamente
@@ -89,7 +89,7 @@ export const useSocket = () => {
     const status = webSocketService.getConnectionStatus()
     setIsConnected(status.isConnected)
 
-    const rolesAutorizados = ['administrador', 'contable', 'contable']
+    const rolesAutorizados = ['administrador', 'contable', 'contador']
     if (status.isConnected && rolesAutorizados.includes(user?.rol)) {
       obtenerColaboradoresEnLinea()
       setTimeout(obtenerColaboradoresEnLinea, 1000)
@@ -144,18 +144,17 @@ export const useSocket = () => {
 
   // Función para enviar inventario a colaboradores
   const enviarInventarioAColaboradores = useCallback((productos) => {
-    if (!isConnected) {
+    if (!webSocketService.isConnected) {
       throw new Error('No hay conexión con el servidor')
     }
 
-    const rolesAutorizados = ['administrador', 'contable']
+    const rolesAutorizados = ['administrador', 'contable', 'contador']
     if (!rolesAutorizados.includes(user?.rol)) {
       throw new Error('No tienes permisos para enviar inventario')
     }
 
-    // Emitir evento de envío de inventario (nuevo evento send_inventory)
     webSocketService.emit('send_inventory', { productos })
-  }, [isConnected, user?.rol])
+  }, [user?.rol])
 
   // Memoizar el objeto retornado para evitar re-renders innecesarios en componentes que usan el hook
   return useMemo(() => ({

@@ -122,29 +122,6 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
   const [hasPermission, setHasPermission] = useState(null)
   const [isQuickScanMode, setIsQuickScanMode] = useState(false)
 
-  // Validar sesionId
-  if (!sesionId) {
-    return (
-      <View style={styles.container}>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Ionicons name="alert-circle" size={64} color="#ef4444" />
-          <Text style={{ fontSize: 20, fontWeight: 'bold', marginTop: 20, marginBottom: 10, color: '#1e293b' }}>
-            Sesión no válida
-          </Text>
-          <Text style={{ fontSize: 16, textAlign: 'center', color: '#64748b', marginBottom: 20 }}>
-            No se encontró el ID de la sesión. Por favor, vuelve a la lista de sesiones.
-          </Text>
-          <TouchableOpacity
-            style={{ backgroundColor: '#3b82f6', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 }}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={{ color: '#ffffff', fontWeight: 'bold' }}>Volver</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    )
-  }
-
   // Estados de temporizador  // Componente de Temporizador Memoizado para evitar re-renders innecesarios en Mobile
   const TimerDisplay = useMemo(() => {
     const TimerComponent = ({ sesionData, sesionId }) => {
@@ -1667,6 +1644,29 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
   }
 
 
+
+  // Validar sesionId — AQUÍ (después de todos los hooks) para no romper el orden de hooks
+  if (!sesionId) {
+    return (
+      <View style={styles.container}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <Ionicons name="alert-circle" size={64} color="#ef4444" />
+          <Text style={{ fontSize: 20, fontWeight: 'bold', marginTop: 20, marginBottom: 10, color: '#1e293b' }}>
+            Sesión no válida
+          </Text>
+          <Text style={{ fontSize: 16, textAlign: 'center', color: '#64748b', marginBottom: 20 }}>
+            No se encontró el ID de la sesión. Por favor, vuelve a la lista de sesiones.
+          </Text>
+          <TouchableOpacity
+            style={{ backgroundColor: '#3b82f6', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 }}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={{ color: '#ffffff', fontWeight: 'bold' }}>Volver</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    )
+  }
 
   // Manejar error de sesión
   if (errorLoadingSesion && !loadingSesion && !sesionData) {

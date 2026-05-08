@@ -2,7 +2,7 @@
   "expo": {
     "name": "Gestor de Inventario J4 Pro",
     "slug": "gestor-inventario-j4-pro",
-    "version": "2.0.2",
+    "version": "2.0.3",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -29,7 +29,6 @@
     },
     "android": {
       "package": "com.j4pro.gestorinventario",
-      "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
@@ -85,12 +84,14 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34,
+            "buildToolsVersion": "34.0.0",
+            "kotlinVersion": "1.7.20"
           }
         }
-      ],
-      "./plugins/withNetworkSecurityConfig.js",
-      "./plugins/withAndroidCleartextTraffic.js"
+      ]
     ],
     "owner": "jose19"
   }

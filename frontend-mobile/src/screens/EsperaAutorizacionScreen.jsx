@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -18,6 +18,8 @@ const EsperaAutorizacionScreen = ({ route }) => {
   const [sesionInventario, setSesionInventario] = useState(null)
   const [loading, setLoading] = useState(true)
   const [contable, setContable] = useState(null)
+  // Flag para evitar que el login se inicie múltiples veces (race condition con el polling)
+  const loginStartedRef = useRef(false)
 
   useEffect(() => {
     cargarSolicitudId()
@@ -69,26 +71,37 @@ const EsperaAutorizacionScreen = ({ route }) => {
 
       // Si fue aceptada: llamar loginAsCollaborator() ANTES de navegar
       if (datos.estado === 'aceptada') {
-        // DETENER POLLING INMEDIATAMENTE
+        // DETENER POLLING INMEDIATAMENTE (previene que el useEffect re-arranque el interval)
         setEstado('aceptada')
 
-        // CORRECCIÓN 3: Autenticar al colaborador antes de cambiar de pantalla
+        // Evitar mostrar el alert y llamar loginAsCollaborator múltiples veces
+        // si el polling llama a verificarEstado varias veces antes de que el estado se actualice
+        if (loginStartedRef.current) return
+        loginStartedRef.current = true
+
+        // Capturar los datos de sesión en variables locales antes de llamadas asíncronas
+        const sessionToken = datos.sessionToken || datos.token
+        const contableData = datos.contable || null
+        const sesionInventarioData = datos.sesionInventario || null
+
+        // Autenticar al colaborador — RootNavigator redirige automáticamente a SesionColaborador
         const onContinuar = async () => {
           const result = await loginAsCollaborator({
-            sessionToken: datos.sessionToken || datos.token,
+            sessionToken,
             rol: 'colaborador',
-            contable: datos.contable,
+            contable: contableData,
             invitacionId: solicitudId,
+            solicitudId: solicitudId,
+            sesionInventario: sesionInventarioData,
+            nombreColaborador: datos.nombreSugerido || undefined,
           })
 
-          if (result.success) {
-            navigation.replace('SesionColaborador', {
-              solicitudId: solicitudId,
-              sesionInventario: datos.sesionInventario || null,
-            })
-          } else {
-            Alert.alert('Error', 'No se pudo iniciar sesión como colaborador')
+          if (!result.success) {
+            // Permitir reintentar si falló
+            loginStartedRef.current = false
+            Alert.alert('Error', 'No se pudo iniciar sesión como colaborador. Intenta de nuevo.')
           }
+          // La redirección la maneja RootNavigator al detectar tipo === 'colaborador_temporal'
         }
 
         Alert.alert(

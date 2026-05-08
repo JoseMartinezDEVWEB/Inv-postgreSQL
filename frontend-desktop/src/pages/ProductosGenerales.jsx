@@ -45,7 +45,10 @@ const ProductosGenerales = () => {
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage] = useState(5)
   const [isEnviandoInventario, setIsEnviandoInventario] = useState(false)
+  const [sendProgress, setSendProgress] = useState(0)
+  const [sendChunkInfo, setSendChunkInfo] = useState({ current: 0, total: 0 })
   const searchInputRef = useRef(null)
+  const envioToastIdRef = useRef(null)
 
   // Hotkeys
   useHotkeys('mod+n', (e) => {
@@ -253,10 +256,55 @@ const ProductosGenerales = () => {
     setCurrentPage(1)
   }
 
-  // Función para enviar productos a colaboradores
+  // Envío chunkeado: divide los productos en lotes para no superar el buffer Socket.io
+  const enviarEnChunks = async (productos) => {
+    const CHUNK_SIZE = 500
+    const totalChunks = Math.ceil(productos.length / CHUNK_SIZE)
+    const sessionId = `inv_${Date.now()}`
+
+    setSendProgress(0)
+    setSendChunkInfo({ current: 0, total: totalChunks })
+
+    webSocketService.emit('send_inventory_start', {
+      sessionId,
+      total: productos.length,
+      totalChunks
+    })
+
+    for (let i = 0; i < totalChunks; i++) {
+      const chunk = productos.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+      webSocketService.emit('send_inventory_chunk', {
+        sessionId,
+        chunkIndex: i,
+        totalChunks,
+        productos: chunk
+      })
+
+      const progreso = Math.round(((i + 1) / totalChunks) * 100)
+      setSendProgress(progreso)
+      setSendChunkInfo({ current: i + 1, total: totalChunks })
+
+      if (envioToastIdRef.current) {
+        toast.loading(
+          `Enviando... ${progreso}% (lote ${i + 1} de ${totalChunks})`,
+          { id: envioToastIdRef.current }
+        )
+      }
+
+      // Pausa breve entre chunks para no saturar el socket
+      await new Promise(r => setTimeout(r, 30))
+    }
+
+    webSocketService.emit('send_inventory_end', {
+      sessionId,
+      total: productos.length
+    })
+  }
+
+  // Función para enviar productos a colaboradores via WebSocket al backend local
   const handleEnviarProductosAColaboradores = async () => {
     if (!isConnected) {
-      toast.error('No hay conexión con el servidor')
+      toast.error('No hay conexión con el servidor local')
       return
     }
 
@@ -266,24 +314,26 @@ const ProductosGenerales = () => {
     }
 
     setIsEnviandoInventario(true)
-    const toastId = toast.loading('Obteniendo productos...')
+    setSendProgress(0)
+    const toastId = toast.loading('Obteniendo productos del inventario...')
+    envioToastIdRef.current = toastId
 
     try {
+      // Traer TODOS los productos (sin límite de paginación)
       const response = await productosApi.getAllGenerales({
         pagina: 1,
-        limite: 10000,
+        limite: 99999,
         buscar: '',
         categoria: ''
       })
 
       const data = handleApiResponse(response)
-      
-      // Manejo robusto de la respuesta (puede ser un array directo o un objeto con datos/productos/rows)
-      let todosLosProductos = [];
+
+      let todosLosProductos = []
       if (Array.isArray(data)) {
-        todosLosProductos = data;
+        todosLosProductos = data
       } else if (data && typeof data === 'object') {
-        todosLosProductos = data.datos || data.productos || data.rows || [];
+        todosLosProductos = data.datos || data.productos || data.rows || []
       }
 
       if (todosLosProductos.length === 0) {
@@ -293,46 +343,70 @@ const ProductosGenerales = () => {
         return
       }
 
-      console.log(`📦 [Desktop] Procesando ${todosLosProductos.length} productos para enviar al móvil`)
-
+      // Formato compacto: excluye campos pesados (unidadesInternas, etc.)
       const productosFormateados = todosLosProductos.map(p => ({
-        _id: p._id || p.id,
-        id: p.id || p._id,
+        _id: String(p._id || p.id || ''),
+        id: String(p.id || p._id || ''),
         nombre: p.nombre || '',
         sku: p.sku || '',
         codigoBarras: p.codigoBarras || '',
         codigo_barra: p.codigoBarras || '',
-        costo: p.costo || p.costoBase || 0,
-        precioVenta: p.precioVenta || 0,
+        costo: Number(p.costo || p.costoBase || 0),
+        precioVenta: Number(p.precioVenta || 0),
         unidad: p.unidad || 'unidad',
         categoria: p.categoria || 'General',
         descripcion: p.descripcion || ''
       }))
 
-      toast.dismiss(toastId)
-      toast.loading(`Enviando inventario a ${onlineColaboradores} colaborador(es)...`, { id: toastId })
-      enviarInventarioAColaboradores(productosFormateados)
+      toast.loading(
+        `Preparando ${productosFormateados.length} productos para ${onlineColaboradores} colaborador(es)...`,
+        { id: toastId }
+      )
 
-      setTimeout(() => {
-        toast.dismiss(toastId)
-        toast.success(`Inventario enviado a ${onlineColaboradores} colaborador(es)`)
+      // Enviar en chunks para superar el límite de buffer Socket.io
+      await enviarEnChunks(productosFormateados)
+
+      // Timeout de seguridad: si sync_finished_ok no llega en 2 minutos, desbloquear botón
+      const safetyTimer = setTimeout(() => {
+        if (envioToastIdRef.current) {
+          toast.dismiss(envioToastIdRef.current)
+          envioToastIdRef.current = null
+        }
         setIsEnviandoInventario(false)
-      }, 500)
+        setSendProgress(0)
+        setSendChunkInfo({ current: 0, total: 0 })
+        toast.error('Tiempo de espera agotado. Verifica que el colaborador esté conectado.')
+      }, 120000)
+
+      // Guardar el timer para cancelarlo si sync_finished_ok llega antes
+      envioToastIdRef._safetyTimer = safetyTimer
 
     } catch (error) {
-      toast.dismiss(toastId)
+      if (envioToastIdRef.current) toast.dismiss(envioToastIdRef.current)
+      envioToastIdRef.current = null
       handleApiError(error)
       setIsEnviandoInventario(false)
+      setSendProgress(0)
     }
   }
 
   // Escuchar resultado del envío de inventario
   useEffect(() => {
-    const allowedRoles = ['administrador', 'contable']
+    const allowedRoles = ['administrador', 'contable', 'contador']
     if (!allowedRoles.includes(user?.rol) || !isConnected) return
 
     const handleResultado = (data) => {
+      if (envioToastIdRef._safetyTimer) {
+        clearTimeout(envioToastIdRef._safetyTimer)
+        envioToastIdRef._safetyTimer = null
+      }
+      if (envioToastIdRef.current) {
+        toast.dismiss(envioToastIdRef.current)
+        envioToastIdRef.current = null
+      }
       setIsEnviandoInventario(false)
+      setSendProgress(0)
+      setSendChunkInfo({ current: 0, total: 0 })
       if (data.success) {
         toast.success(data.message || `Inventario enviado a ${data.count} colaborador(es)`)
       } else {
@@ -348,7 +422,7 @@ const ProductosGenerales = () => {
 
   // Debug: Log del estado de colaboradores
   useEffect(() => {
-    const allowedRoles = ['administrador', 'contable']
+    const allowedRoles = ['administrador', 'contable', 'contador']
     if (allowedRoles.includes(user?.rol)) {
       console.log('🔍 [ProductosGenerales] Estado:', {
         isConnected,
@@ -477,8 +551,8 @@ const ProductosGenerales = () => {
           <p className="text-gray-600">Gestiona la lista maestra de productos disponibles</p>
         </div>
         <div className="flex gap-2 items-center">
-          {/* Colaboradores en línea (admin y contable) */}
-          {['administrador', 'contable'].includes(user?.rol) && (
+          {/* Colaboradores en línea (admin, contable y contador) */}
+          {['administrador', 'contable', 'contador'].includes(user?.rol) && (
             <div
               className="flex items-center space-x-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors"
               onClick={() => {
@@ -498,7 +572,7 @@ const ProductosGenerales = () => {
               </span>
             </div>
           )}
-          {['administrador', 'contable'].includes(user?.rol) && (
+          {['administrador', 'contable', 'contador'].includes(user?.rol) && (
             <>
               {user?.rol === 'administrador' && (
                 <Button
@@ -512,16 +586,35 @@ const ProductosGenerales = () => {
                   <span>{deleteAllMutation.isLoading ? 'Eliminando...' : 'Eliminar Todo'}</span>
                 </Button>
               )}
-              <Button
-                onClick={handleEnviarProductosAColaboradores}
-                disabled={!isConnected || onlineColaboradores === 0 || isEnviandoInventario}
-                variant="outline"
-                className="flex items-center space-x-2 bg-green-50 hover:bg-green-100 border-green-200 text-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                title={onlineColaboradores === 0 ? 'No hay colaboradores en línea' : 'Enviar inventario'}
-              >
-                <Send className="w-4 h-4" />
-                <span>{isEnviandoInventario ? 'Enviando...' : 'Enviar a Colabs'}</span>
-              </Button>
+              <div className="flex flex-col gap-1">
+                <Button
+                  onClick={handleEnviarProductosAColaboradores}
+                  disabled={!isConnected || onlineColaboradores === 0 || isEnviandoInventario}
+                  variant="outline"
+                  className="flex items-center space-x-2 bg-green-50 hover:bg-green-100 border-green-200 text-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={onlineColaboradores === 0 ? 'No hay colaboradores en línea' : 'Enviar inventario'}
+                >
+                  <Send className={`w-4 h-4 ${isEnviandoInventario ? 'animate-bounce' : ''}`} />
+                  <span>
+                    {isEnviandoInventario
+                      ? `Enviando ${sendProgress}%`
+                      : `Enviar a Colabs (${onlineColaboradores})`}
+                  </span>
+                </Button>
+                {isEnviandoInventario && (
+                  <div className="w-full h-1.5 bg-green-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-500 rounded-full transition-all duration-300"
+                      style={{ width: `${sendProgress}%` }}
+                    />
+                  </div>
+                )}
+                {isEnviandoInventario && sendChunkInfo.total > 0 && (
+                  <span className="text-xs text-gray-400 text-center">
+                    Lote {sendChunkInfo.current}/{sendChunkInfo.total}
+                  </span>
+                )}
+              </div>
               {user?.rol === 'administrador' && (
                 <Button
                   onClick={() => setShowImportModal(true)}

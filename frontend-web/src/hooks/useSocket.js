@@ -9,16 +9,18 @@ import webSocketService from '../services/websocket'
 export const useSocket = () => {
   const { token, user, isAuthenticated } = useAuth()
   const [onlineColaboradores, setOnlineColaboradores] = useState(0)
+  const [onlineColaboradoresDetalles, setOnlineColaboradoresDetalles] = useState([])
   const [isConnected, setIsConnected] = useState(false)
   const listenersSetupRef = useRef(false)
 
   // Obtener contador de colaboradores en línea
   const obtenerColaboradoresEnLinea = useCallback(() => {
-    if (isConnected && user?.rol === 'administrador') {
+    const rolesAutorizados = ['administrador', 'contable', 'contador']
+    if (webSocketService.isConnected && rolesAutorizados.includes(user?.rol)) {
       console.log('📡 [useSocket] Solicitando contador de colaboradores...')
       webSocketService.emit('get_online_colaborators')
     }
-  }, [isConnected, user?.rol])
+  }, [user?.rol])
 
   // Efecto para suscribirse a eventos de Socket.io (solo una vez)
   useEffect(() => {
@@ -28,32 +30,28 @@ export const useSocket = () => {
 
     // Escuchar actualizaciones de contador de colaboradores
     const handleOnlineCount = (data) => {
-      console.log('📊 [useSocket] Recibido contador de colaboradores:', data.count, data)
-      if (data.detalles) {
-        console.log('📋 [useSocket] Detalles de colaboradores recibidos:', data.detalles)
-      }
       setOnlineColaboradores(data.count || 0)
+      setOnlineColaboradoresDetalles(data.detalles || [])
     }
 
     // Escuchar cuando un colaborador se conecta
     const handleColaboradorConectado = (data) => {
-      console.log('👥 [useSocket] Colaborador conectado, total:', data.totalColaboradores, data)
       setOnlineColaboradores(data.totalColaboradores || 0)
+      obtenerColaboradoresEnLinea()
     }
 
     // Escuchar cuando un colaborador se desconecta
     const handleColaboradorDesconectado = (data) => {
-      console.log('👥 [useSocket] Colaborador desconectado, total:', data.totalColaboradores, data)
       setOnlineColaboradores(data.totalColaboradores || 0)
+      obtenerColaboradoresEnLinea()
     }
 
     // Escuchar cambios de conexión
     const handleConnected = () => {
       console.log('✅ [useSocket] WebSocket conectado, usuario:', user?.rol)
       setIsConnected(true)
-      // Si es admin, obtener el contador inicial después de un pequeño delay
-      if (user?.rol === 'administrador') {
-        console.log('👑 [useSocket] Usuario es admin, solicitando contador en 1 segundo...')
+      const rolesAutorizados = ['administrador', 'contable', 'contador']
+      if (rolesAutorizados.includes(user?.rol)) {
         setTimeout(() => {
           obtenerColaboradoresEnLinea()
         }, 1000)
@@ -84,25 +82,22 @@ export const useSocket = () => {
     })
     
     setIsConnected(status.isConnected)
-    if (status.isConnected && user?.rol === 'administrador') {
-      // Solicitar contador inicial inmediatamente y luego periódicamente
-      console.log('👑 [useSocket] Admin ya conectado, solicitando contador inicial...')
-      // Solicitar inmediatamente
+    const rolesAutorizados = ['administrador', 'contable', 'contador']
+    if (status.isConnected && rolesAutorizados.includes(user?.rol)) {
       obtenerColaboradoresEnLinea()
-      // Y también después de un pequeño delay para asegurar que el servidor responda
       setTimeout(() => {
         obtenerColaboradoresEnLinea()
       }, 1000)
     }
 
-    // Polling periódico para actualizar contador si es admin (cada 3 segundos)
+    // Polling periódico para actualizar contador (cada 5 segundos)
     let intervalId = null
-    if (user?.rol === 'administrador' && status.isConnected) {
-      console.log('⏰ [useSocket] Iniciando polling cada 3 segundos...')
+    if (rolesAutorizados.includes(user?.rol)) {
       intervalId = setInterval(() => {
-        console.log('🔄 [useSocket] Polling: solicitando contador...')
-        obtenerColaboradoresEnLinea()
-      }, 3000) // Actualizar cada 3 segundos
+        if (webSocketService.isConnected) {
+          obtenerColaboradoresEnLinea()
+        }
+      }, 5000)
     }
 
     // Cleanup
@@ -144,27 +139,28 @@ export const useSocket = () => {
 
   // Función para enviar inventario a colaboradores
   const enviarInventarioAColaboradores = useCallback((productos) => {
-    if (!isConnected) {
+    if (!webSocketService.isConnected) {
       throw new Error('No hay conexión con el servidor')
     }
 
-    if (user?.rol !== 'administrador') {
-      throw new Error('Solo los administradores pueden enviar inventario')
+    const rolesAutorizados = ['administrador', 'contable', 'contador']
+    if (!rolesAutorizados.includes(user?.rol)) {
+      throw new Error('No tienes permisos para enviar inventario')
     }
 
-    // Emitir evento de envío de inventario (nuevo evento send_inventory)
     webSocketService.emit('send_inventory', { productos })
-  }, [isConnected, user?.rol])
+  }, [user?.rol])
 
   // Memoizar el objeto retornado para evitar re-renders innecesarios en componentes que usan el hook
   return useMemo(() => ({
     isConnected,
     onlineColaboradores,
+    onlineColaboradoresDetalles,
     obtenerColaboradoresEnLinea,
     enviarInventarioAColaboradores,
     emit: webSocketService.emit.bind(webSocketService),
     on: webSocketService.on.bind(webSocketService),
     off: webSocketService.off.bind(webSocketService)
-  }), [isConnected, onlineColaboradores, obtenerColaboradoresEnLinea, enviarInventarioAColaboradores])
+  }), [isConnected, onlineColaboradores, onlineColaboradoresDetalles, obtenerColaboradoresEnLinea, enviarInventarioAColaboradores])
 }
 

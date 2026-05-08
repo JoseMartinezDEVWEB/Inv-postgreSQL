@@ -200,4 +200,41 @@ router.post('/sincronizar', authenticateToken, async (req, res) => {
     }
 });
 
+/**
+ * Endpoint para que Desktop/Web envíen inventario a colaboradores mobile vía WebSocket
+ * Autenticación: header x-broadcast-key (clave pre-compartida, no JWT)
+ */
+router.post('/broadcast-inventory', async (req, res) => {
+    const key = req.headers['x-broadcast-key'];
+    if (!key || key !== process.env.BROADCAST_API_KEY) {
+        return res.status(401).json({ error: 'No autorizado' });
+    }
+
+    const { productos, enviadoPor } = req.body;
+    if (!Array.isArray(productos) || productos.length === 0) {
+        return res.status(400).json({ error: 'Sin productos para enviar' });
+    }
+
+    if (!io) {
+        return res.status(503).json({ error: 'Socket.io no disponible' });
+    }
+
+    const sala = io.sockets.adapter.rooms.get('sala_colaboradores');
+    const count = sala?.size || 0;
+
+    const payload = {
+        productos,
+        enviadoPor: enviadoPor || { id: 0, nombre: 'Sistema' },
+        timestamp: new Date().toISOString()
+    };
+
+    io.to('sala_colaboradores').emit('send_inventory', payload);
+
+    return res.json({
+        success: true,
+        count,
+        message: `Inventario de ${productos.length} productos enviado a ${count} colaborador(es)`
+    });
+});
+
 module.exports = router;

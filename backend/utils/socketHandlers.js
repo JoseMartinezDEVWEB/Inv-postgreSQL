@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 let colaboradoresActivos = new Map();
+const inventorySessions = new Map();
 
 const traceSocket = (msg) => {
     const timestamp = new Date().toISOString();
@@ -171,7 +172,7 @@ const setupSockets = (io) => {
         socket.on('join_session', handleJoin);
 
         socket.on('get_online_colaborators', () => {
-            traceSocket(`📡 Petición manual de conteo recibida de: ${socket.id}`);
+            traceSocket(`📡 Petición de conteo de: ${socket.user?.nombre} (${socket.user?.rol})`);
             emitirConteoColaboradores();
         });
 
@@ -224,27 +225,22 @@ const setupSockets = (io) => {
             
             traceSocket(`📦 Procesando envío de ${countNum} productos a ${countColabs} colaboradores registrados.`);
             
-            // Payload para el móvil
+            // Payload para el móvil - timestamp fijo para evitar doble procesamiento
             const payload = {
                 productos: data.productos,
                 enviadoPor: {
                     id: socket.user.id,
                     nombre: socket.user.nombre || 'Administrador'
                 },
-                timestamp: new Date()
+                timestamp: new Date().toISOString()
             };
 
-            // Obtener información de las salas para depuración
             const room1 = io.sockets.adapter.rooms.get('sala_colaboradores');
-            const room2 = io.sockets.adapter.rooms.get('colaboradores_room');
-            const inRoom1 = room1 ? room1.size : 0;
-            const inRoom2 = room2 ? room2.size : 0;
-            
-            traceSocket(`📊 Estado de salas: 'sala_colaboradores': ${inRoom1}, 'colaboradores_room': ${inRoom2}`);
+            traceSocket(`📊 Colaboradores en 'sala_colaboradores': ${room1?.size || 0}`);
 
-            // Emitir a las salas específicas
-            io.to('sala_colaboradores').to('colaboradores_room').emit('send_inventory', payload);
-            traceSocket(`🚀 Inventario emitido a salas de colaboradores.`);
+            // Una sola emisión a sala_colaboradores (evita doble evento en mobile)
+            io.to('sala_colaboradores').emit('send_inventory', payload);
+            traceSocket(`🚀 Inventario emitido a sala_colaboradores.`);
 
             // Confirmar al emisor (Dashboard Desktop)
             socket.emit('sync_finished_ok', {
@@ -252,6 +248,59 @@ const setupSockets = (io) => {
                 count: countColabs,
                 message: `Inventario de ${countNum} productos enviado a ${countColabs} colaborador(es)`
             });
+        });
+
+        // --- Protocolo de envío por chunks ---
+
+        socket.on('send_inventory_start', (data) => {
+            const rolesAutorizados = ['administrador', 'contable', 'contador'];
+            if (!socket.user || !rolesAutorizados.includes(socket.user.rol)) return;
+
+            const { sessionId, total, totalChunks } = data;
+            const countColabs = colaboradoresActivos.size;
+
+            if (countColabs === 0) {
+                socket.emit('sync_finished_ok', { success: false, count: 0, message: 'No hay colaboradores en línea' });
+                return;
+            }
+
+            inventorySessions.set(sessionId, { total, totalChunks, received: 0 });
+            io.to('sala_colaboradores').emit('send_inventory_start', { sessionId, total, totalChunks });
+            traceSocket(`📦 [Chunk] Inicio sesión ${sessionId}: ${total} productos en ${totalChunks} chunks → ${countColabs} colabs`);
+        });
+
+        socket.on('send_inventory_chunk', (data) => {
+            const rolesAutorizados = ['administrador', 'contable', 'contador'];
+            if (!socket.user || !rolesAutorizados.includes(socket.user.rol)) return;
+
+            const { sessionId, chunkIndex, totalChunks, productos } = data;
+            const session = inventorySessions.get(sessionId);
+            if (session) session.received++;
+
+            io.to('sala_colaboradores').emit('send_inventory_chunk', { sessionId, chunkIndex, totalChunks, productos });
+            traceSocket(`📦 [Chunk] Reenviado ${chunkIndex + 1}/${totalChunks} (sesión ${sessionId})`);
+        });
+
+        socket.on('send_inventory_end', (data) => {
+            const rolesAutorizados = ['administrador', 'contable', 'contador'];
+            if (!socket.user || !rolesAutorizados.includes(socket.user.rol)) return;
+
+            const { sessionId, total } = data;
+            inventorySessions.delete(sessionId);
+            const countColabs = colaboradoresActivos.size;
+
+            io.to('sala_colaboradores').emit('send_inventory_complete', {
+                sessionId,
+                total,
+                timestamp: new Date().toISOString()
+            });
+
+            socket.emit('sync_finished_ok', {
+                success: true,
+                count: countColabs,
+                message: `Inventario de ${total} productos enviado a ${countColabs} colaborador(es)`
+            });
+            traceSocket(`✅ [Chunk] Completo sesión ${sessionId}: ${total} productos → ${countColabs} colabs`);
         });
     });
 };

@@ -2180,7 +2180,7 @@ const InventarioDetalleNuevo = () => {
     }
   }, [id, sesion?.timerEnMarcha])
 
-  // Escuchar actualizaciones remotas de inventario y refrescar automáticamente
+  // Escuchar actualizaciones remotas de inventario y colaboradores en tiempo real
   const { on, off } = useSocket()
   useEffect(() => {
     const handleRemoteUpdate = (data) => {
@@ -2189,9 +2189,18 @@ const InventarioDetalleNuevo = () => {
         toast.success('Inventario actualizado remotamente')
       }
     }
+    const handleColaboradorUpdate = () => {
+      cargarColaboradoresConectados()
+    }
     if (on && off) {
       on('update_session_inventory', handleRemoteUpdate)
-      return () => off('update_session_inventory', handleRemoteUpdate)
+      on('colaborador_conectado', handleColaboradorUpdate)
+      on('colaborador_desconectado', handleColaboradorUpdate)
+      return () => {
+        off('update_session_inventory', handleRemoteUpdate)
+        off('colaborador_conectado', handleColaboradorUpdate)
+        off('colaborador_desconectado', handleColaboradorUpdate)
+      }
     }
   }, [id, on, off, refetch])
 

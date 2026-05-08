@@ -5,33 +5,37 @@
     "requireCommit": false
   },
   "build": {
-    "production": {
+    "preview": {
+      "distribution": "internal",
       "android": {
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease"
+        "gradleCommand": ":app:assembleDebug"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://appj4-hlqj.onrender.com/api",
-        "EAS_BUILD_GRADLE_UNIVERSAL_APK": "true"
+        "EXPO_PUBLIC_API_URL": "http://localhost:4501/api",
+        "EAS_BUILD_GRADLE_UNIVERSAL_APK": "1"
+      }
+    },
+    "production": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://localhost:4501/api",
+        "EAS_BUILD_GRADLE_UNIVERSAL_APK": "1"
       }
     },
     "production-local": {
+      "distribution": "internal",
       "android": {
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease"
+        "gradleCommand": ":app:assembleDebug"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://appj4-hlqj.onrender.com/api",
-        "EAS_BUILD_GRADLE_UNIVERSAL_APK": "true"
-      }
-    },
-    "preview": {
-      "android": {
-        "buildType": "apk"
-      },
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://appj4-hlqj.onrender.com/api",
-        "EAS_BUILD_GRADLE_UNIVERSAL_APK": "true"
+        "EXPO_PUBLIC_API_URL": "http://localhost:4501/api",
+        "EAS_BUILD_GRADLE_UNIVERSAL_APK": "1"
       }
     }
   },

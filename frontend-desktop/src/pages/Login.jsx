@@ -72,7 +72,7 @@ const Login = () => {
     
     if (result.success) {
       // Redirigir según el rol del usuario
-      const userRole = result.user.rol
+      const userRole = result.user?.rol
       switch (userRole) {
         case 'administrador':
           navigate('/admin/dashboard')

@@ -119,7 +119,7 @@ const InventarioDetalleNuevo = () => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { user, hasRole } = useAuth()
-  const { onlineColaboradoresDetalles } = useSocket()
+  const { onlineColaboradoresDetalles, on, off } = useSocket()
   // Referencias para inputs de búsqueda y formularios
   const searchInputRef = useRef(null)
   const cantidadInputRef = useRef(null)
@@ -2444,7 +2444,6 @@ const InventarioDetalleNuevo = () => {
   // ✅ FIX #4: Socket handler mejorado para manejar todos los tipos de eventos
   // - action='add'/'update'/'delete': actualización quirurgica del caché (bajo latencia)
   // - action='batch' o sin action: refetch completo de la sesión (datos frescos garantizados)
-  const { on, off } = useSocket()
   useEffect(() => {
     const handleUpdate = (data) => {
       if (!data || String(data.sesionId) !== String(id)) return
@@ -2494,9 +2493,19 @@ const InventarioDetalleNuevo = () => {
       }
     }
 
+    const handleColaboradorUpdate = () => {
+      cargarColaboradoresConectados()
+    }
+
     if (on && off) {
       on('update_session_inventory', handleUpdate)
-      return () => off('update_session_inventory', handleUpdate)
+      on('colaborador_conectado', handleColaboradorUpdate)
+      on('colaborador_desconectado', handleColaboradorUpdate)
+      return () => {
+        off('update_session_inventory', handleUpdate)
+        off('colaborador_conectado', handleColaboradorUpdate)
+        off('colaborador_desconectado', handleColaboradorUpdate)
+      }
     }
   }, [id, on, off, refetch, queryClient])
 

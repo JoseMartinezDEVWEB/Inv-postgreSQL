@@ -160,7 +160,8 @@ export const AuthProvider = ({ children }) => {
       dispatch({ type: AUTH_ACTIONS.LOGIN_START })
 
       const response = await authApi.login(credentials)
-      const { usuario, accessToken, refreshToken } = handleApiResponse(response)
+      const rawData = handleApiResponse(response)
+      const { usuario, accessToken, refreshToken } = rawData.datos || rawData
 
       // Guardar en localStorage
       localStorage.setItem('accessToken', accessToken)

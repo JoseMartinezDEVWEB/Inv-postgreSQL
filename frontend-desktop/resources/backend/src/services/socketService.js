@@ -5,8 +5,8 @@ import Usuario from '../models/Usuario.js'
 import logger from '../utils/logger.js'
 
 let io = null
-// Estado en memoria para colaboradores conectados
 const colaboradoresConectados = new Map() // socketId -> { usuarioId, nombre, timestamp }
+const inventorySessions = new Map()        // sessionId -> { total, totalChunks, received }
 
 const isLocalNetworkOrigin = (origin) => {
   if (!origin || typeof origin !== 'string') return false
@@ -42,7 +42,7 @@ export const initializeSocket = (server) => {
     pingTimeout: 60000, // 60 segundos
     pingInterval: 25000, // 25 segundos
     upgradeTimeout: 30000, // 30 segundos
-    maxHttpBufferSize: 1e6, // 1MB
+    maxHttpBufferSize: 100e6, // 100MB — necesario para inventarios grandes
     transports: ['websocket', 'polling'],
     allowUpgrades: true,
   })
@@ -234,10 +234,10 @@ export const initializeSocket = (server) => {
       }, 100)
     }
 
-    // Si es admin o contable, unirse a la sala de admin para recibir notificaciones
+    // Si es admin, contable o contador, unirse a la sala de admin para recibir notificaciones
     const esAdminRelacionado = socket.usuario.rol === 'administrador' ||
       socket.usuario.rol === 'contable' ||
-      socket.usuario.rol === 'contable'
+      socket.usuario.rol === 'contador'
 
     if (esAdminRelacionado) {
       socket.join('sala_admins')
@@ -368,9 +368,11 @@ export const initializeSocket = (server) => {
     socket.on('get_online_colaborators', () => {
       if (esAdminRelacionado) {
         const count = colaboradoresConectados.size
-        logger.info(`📊 Admin/Contable ${socket.usuario.nombre} consultó colaboradores (get_online_colaborators): ${count}`)
+        const detalles = Array.from(colaboradoresConectados.values())
+        logger.info(`📊 ${socket.usuario.nombre} (${socket.usuario.rol}) consultó colaboradores: ${count}`)
         socket.emit('online_colaboradores_count', {
           count,
+          detalles,
           timestamp: new Date().toISOString()
         })
       }
@@ -399,27 +401,18 @@ export const initializeSocket = (server) => {
         return
       }
 
-      logger.info(`📦 Admin/Contable ${socket.usuario.nombre} enviando inventario a ${count} colaborador(es) en sala_colaboradores`)
+      logger.info(`📦 ${socket.usuario.nombre} (${socket.usuario.rol}) enviando inventario a ${count} colaborador(es)`)
 
-      // Enviar inventario a todos los colaboradores en la sala
-      io.to('sala_colaboradores').emit('send_inventory', {
+      // Un solo timestamp fijo para toda la emisión (evita doble procesamiento en mobile)
+      const emitTimestamp = new Date().toISOString()
+      const payload = {
         productos,
-        enviadoPor: {
-          id: socket.usuario.id,
-          nombre: socket.usuario.nombre
-        },
-        timestamp: new Date().toISOString()
-      })
+        enviadoPor: { id: socket.usuario.id, nombre: socket.usuario.nombre },
+        timestamp: emitTimestamp
+      }
 
-      // También enviar a colaboradores_room por compatibilidad
-      io.to('colaboradores_room').emit('send_inventory', {
-        productos,
-        enviadoPor: {
-          id: socket.usuario.id,
-          nombre: socket.usuario.nombre
-        },
-        timestamp: new Date().toISOString()
-      })
+      // Emitir una sola vez a sala_colaboradores (todos los móviles están en ella)
+      io.to('sala_colaboradores').emit('send_inventory', payload)
 
       // Enviar confirmación de éxito al admin después de un pequeño delay
       setTimeout(() => {
@@ -432,6 +425,49 @@ export const initializeSocket = (server) => {
 
       logger.info(`✅ Inventario enviado a ${count} colaborador(es), confirmación enviada al admin`)
     })
+
+    // ── Protocolo chunked para inventarios grandes ──────────────────────────
+    socket.on('send_inventory_start', (data) => {
+      if (!esAdminRelacionado) return
+      const { sessionId, total, totalChunks } = data
+      const colabCount = colaboradoresConectados.size
+      if (colabCount === 0) {
+        socket.emit('sync_finished_ok', { success: false, count: 0, message: 'No hay colaboradores en línea' })
+        return
+      }
+      inventorySessions.set(sessionId, { total, totalChunks, received: 0 })
+      io.to('sala_colaboradores').emit('send_inventory_start', { sessionId, total, totalChunks })
+      logger.info(`📦 [Chunk] Iniciando transferencia: ${total} productos en ${totalChunks} chunks → ${colabCount} colaborador(es)`)
+    })
+
+    socket.on('send_inventory_chunk', (data) => {
+      if (!esAdminRelacionado) return
+      const { sessionId, chunkIndex, totalChunks, productos } = data
+      // Reenviar directamente sin requerir sesión activa (más robusto ante race conditions)
+      const session = inventorySessions.get(sessionId)
+      if (session) session.received++
+      io.to('sala_colaboradores').emit('send_inventory_chunk', { sessionId, chunkIndex, totalChunks, productos })
+      logger.info(`📦 [Chunk] ${chunkIndex + 1}/${totalChunks} reenviado (${productos?.length || 0} productos)`)
+    })
+
+    socket.on('send_inventory_end', (data) => {
+      if (!esAdminRelacionado) return
+      const { sessionId, total } = data
+      inventorySessions.delete(sessionId)
+      const count = colaboradoresConectados.size
+      io.to('sala_colaboradores').emit('send_inventory_complete', {
+        sessionId,
+        total,
+        timestamp: new Date().toISOString()
+      })
+      socket.emit('sync_finished_ok', {
+        success: true,
+        count,
+        message: `Inventario de ${total} productos enviado a ${count} colaborador(es)`
+      })
+      logger.info(`✅ [Chunk] Transferencia completa: ${total} productos → ${count} colaborador(es)`)
+    })
+    // ────────────────────────────────────────────────────────────────────────
 
     // Mantener compatibilidad con dispatch_inventory (deprecated)
     socket.on('dispatch_inventory', (data) => {

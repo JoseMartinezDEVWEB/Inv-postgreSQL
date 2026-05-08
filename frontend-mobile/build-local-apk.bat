@@ -74,7 +74,7 @@ if %ERRORLEVEL% neq 0 goto :error_gradle
 
 echo.
 echo ===========================================================
-echo    APK GENERADA EXITOSAMENTE!                        
+echo    APK GENERADA EXITOSAMENTE!
 echo ===========================================================
 echo.
 :: Abre la carpeta donde esta la APK

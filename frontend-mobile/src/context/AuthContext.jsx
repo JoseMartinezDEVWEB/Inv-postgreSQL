@@ -467,23 +467,32 @@ export const AuthProvider = ({ children }) => {
 
   // Adoptar sesión temporal de colaborador (QR)
   const loginAsCollaborator = useCallback(async (datos) => {
+    let savedToken = null
     try {
       const accessToken = datos?.sessionToken
-      if (!accessToken) throw new Error('Token de sesión inválido')
+      if (!accessToken) {
+        console.error('❌ [loginAsCollaborator] sessionToken ausente. datos recibidos:', JSON.stringify(datos))
+        throw new Error('Token de sesión inválido')
+      }
+      savedToken = accessToken
 
       const user = {
-        nombre: 'Colaborador',
+        nombre: datos?.nombreColaborador || 'Colaborador',
         rol: datos?.rol || 'colaborador',
         contablePrincipal: datos?.contable?.id || datos?.contable?._id || null,
         tipo: 'colaborador_temporal',
         invitacionId: datos?.invitacionId || null,
-        email: datos?.contable?.email || 'colaborador@temporal'
+        email: datos?.contable?.email || 'colaborador@temporal',
+        solicitudId: datos?.solicitudId || datos?.invitacionId || null,
+        sesionInventario: datos?.sesionInventario || null,
       }
 
+      console.log('💾 [loginAsCollaborator] Guardando credenciales en Keychain...')
       await Promise.all([
         setInternetCredentials('auth_token', 'token', accessToken),
         setInternetCredentials('user_data', 'user', JSON.stringify(user)),
       ])
+      console.log('✅ [loginAsCollaborator] Credenciales guardadas correctamente')
 
       dispatch({
         type: AUTH_ACTIONS.LOGIN_SUCCESS,
@@ -493,14 +502,7 @@ export const AuthProvider = ({ children }) => {
           refreshToken: null,
         },
       })
-
-      console.log(`🔌 [AuthContext loginAsCollaborator] Conectando WebSocket para colaborador temporal`)
-      console.log(`🔌 [AuthContext loginAsCollaborator] Token longitud: ${accessToken?.length}, isOffline: ${config.isOffline}`)
-      if (!config.isOffline) {
-        webSocketService.connect(accessToken)
-      } else {
-        console.warn('⚠️ [AuthContext loginAsCollaborator] Modo offline - no se conectará WebSocket')
-      }
+      console.log('✅ [loginAsCollaborator] Estado autenticado. Redirigiendo a SesionColaborador...')
 
       showMessage({
         message: '¡Conectado como colaborador!',
@@ -510,9 +512,21 @@ export const AuthProvider = ({ children }) => {
 
       return { success: true }
     } catch (e) {
+      console.error('❌ [loginAsCollaborator] Error:', e?.message, e)
       const msg = e?.message || 'No se pudo adoptar la sesión temporal'
-      showMessage({ message: 'Error', description: msg, type: 'danger' })
+      showMessage({ message: 'Error de sesión', description: msg, type: 'danger' })
       return { success: false, error: msg }
+    } finally {
+      // Conectar WebSocket FUERA del try-catch principal para que un fallo de WS
+      // no cause que loginAsCollaborator devuelva { success: false }.
+      if (savedToken && !config.isOffline) {
+        try {
+          console.log(`🔌 [loginAsCollaborator] Conectando WebSocket, token longitud: ${savedToken.length}`)
+          webSocketService.connect(savedToken)
+        } catch (wsErr) {
+          console.warn('⚠️ [loginAsCollaborator] WebSocket connect error (no crítico):', wsErr?.message)
+        }
+      }
     }
   }, [])
 

@@ -260,15 +260,31 @@ class WebSocketService {
       this.emitLocal('colaborador_desconectado', data)
     })
 
-    // Escuchar evento de inventario recibido del admin (nuevo evento send_inventory)
+    // Inventario directo (compatibilidad con versiones anteriores)
     this.socket.on('send_inventory', (data) => {
-      console.log('📦 [WebSocket Mobile] Inventario recibido del admin:', data.productos?.length || 0, 'productos')
+      console.log('📦 [WebSocket Mobile] Inventario directo recibido:', data.productos?.length || 0, 'productos')
       this.emitLocal('send_inventory', data)
     })
 
-    // Mantener compatibilidad con evento anterior
+    // Protocolo chunked para inventarios grandes
+    this.socket.on('send_inventory_start', (data) => {
+      console.log('📦 [WebSocket Mobile] Inicio de transferencia chunked:', data.total, 'productos,', data.totalChunks, 'chunks')
+      this.emitLocal('send_inventory_start', data)
+    })
+
+    this.socket.on('send_inventory_chunk', (data) => {
+      console.log(`📦 [WebSocket Mobile] Chunk ${data.chunkIndex + 1}/${data.totalChunks} recibido`)
+      this.emitLocal('send_inventory_chunk', data)
+    })
+
+    this.socket.on('send_inventory_complete', (data) => {
+      console.log('✅ [WebSocket Mobile] Transferencia completa:', data.total, 'productos')
+      this.emitLocal('send_inventory_complete', data)
+    })
+
+    // Compatibilidad deprecated
     this.socket.on('dispatch_inventory', (data) => {
-      console.log('⚠️ [WebSocket Mobile] Uso de evento deprecated dispatch_inventory, redirigiendo a send_inventory')
+      console.log('⚠️ [WebSocket Mobile] Evento deprecated dispatch_inventory, redirigiendo')
       this.emitLocal('send_inventory', data)
     })
 
