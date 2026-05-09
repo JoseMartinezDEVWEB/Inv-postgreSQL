@@ -189,6 +189,36 @@ router.get('/cliente/:clienteId', authenticateToken, async (req, res) => {
     }
 });
 
+/**
+ * Obtener la sesión completada anterior a una sesión específica para un cliente
+ */
+router.get('/cliente/:clienteId/ultima-previa/:sesionIdActual', authenticateToken, async (req, res) => {
+    try {
+        const { clienteId, sesionIdActual } = req.params;
+
+        const sesionActual = await db.SesionInventario.findByPk(sesionIdActual);
+        if (!sesionActual) {
+            return res.status(404).json({ exito: false, mensaje: 'Sesión actual no encontrada' });
+        }
+
+        const sesionPrevia = await db.SesionInventario.findOne({
+            where: {
+                clienteNegocioId: clienteId,
+                estado: 'completada',
+                createdAt: { [db.Sequelize.Op.lt]: sesionActual.createdAt }
+            },
+            order: [['createdAt', 'DESC']]
+        });
+
+        res.json({
+            exito: true,
+            datos: sesionPrevia || null
+        });
+    } catch (error) {
+        res.status(500).json({ exito: false, mensaje: 'Error al obtener sesión previa: ' + error.message });
+    }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DETALLE DE UNA SESIÓN ESPECÍFICA (DEBE IR DESPUÉS DE LAS RUTAS ESPECÍFICAS)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,7 +342,7 @@ router.post('/', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const { estado, datosFinancieros, totales, configuracion } = req.body;
+            const { estado, datosFinancieros, totales, configuracion, fechaProximoInventario } = req.body;
 
         const sesionActualizada = await db.sequelize.transaction(async (t) => {
             const sesion = await db.SesionInventario.findByPk(id, { 
@@ -329,7 +359,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
                 estado: estado || sesion.estado, 
                 datosFinancieros: datosFinancieros || sesion.datosFinancieros, 
                 totales: totales || sesion.totales, 
-                configuracion: configuracion || sesion.configuracion 
+                configuracion: configuracion || sesion.configuracion,
+                fechaProximoInventario: fechaProximoInventario !== undefined ? fechaProximoInventario : sesion.fechaProximoInventario
             }, { transaction: t });
 
             // Auditoría: sesión actualizada (dentro de la transacción para consistencia)

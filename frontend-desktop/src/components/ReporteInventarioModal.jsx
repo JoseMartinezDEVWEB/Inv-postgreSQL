@@ -8,7 +8,10 @@ import {
     ShoppingCart,
     PieChart,
     Calculator,
-    ArrowLeft
+    ArrowLeft,
+    History,
+    ArrowRightLeft,
+    Calendar
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
@@ -56,6 +59,11 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
         telefono: '',
         email: ''
     })
+    
+    const [sesionPrevia, setSesionPrevia] = useState(null)
+    const [showComparativa, setShowComparativa] = useState(false)
+    const [tipoComparativa, setTipoComparativa] = useState('balance') // 'balance' o 'distribucion'
+    const [fechaProximoInventario, setFechaProximoInventario] = useState('')
 
     const [isEditable, setIsEditable] = useState(false)
     const [isSaving, setIsSaving] = useState(false)
@@ -117,10 +125,43 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
             } else if (sesion.contadorData) {
                 setContadorData(sesion.contadorData)
             }
+            if (sesion.fechaProximoInventario) {
+                setFechaProximoInventario(new Date(sesion.fechaProximoInventario).toISOString().split('T')[0])
+            } else {
+                setFechaProximoInventario('')
+            }
+
             setCurrentReportSection('portada')
             setCurrentReportPage(0)
+            
+            // Cargar sesión previa silenciosamente
+            cargarSesionPrevia()
         }
     }, [isOpen, sesion, initialContadorData])
+
+    const cargarSesionPrevia = async () => {
+        try {
+            const clienteId = cliente?.id || sesion?.clienteNegocioId
+            if (clienteId && sesion?.id) {
+                const response = await sesionesApi.getUltimaPrevia(clienteId, sesion.id)
+                const data = handleApiResponse(response)
+                setSesionPrevia(data)
+            }
+        } catch (error) {
+            console.error('Error al cargar sesión previa:', error)
+        }
+    }
+
+    const handleSaveProximaFecha = async (fecha) => {
+        setFechaProximoInventario(fecha)
+        try {
+            await sesionesApi.update(sesion.id, { fechaProximoInventario: fecha })
+            toast.success('Fecha de próximo inventario actualizada')
+        } catch (error) {
+            console.error('Error al guardar fecha próxima:', error)
+            toast.error('Error al guardar fecha')
+        }
+    }
 
     if (!isOpen) return null
 
@@ -706,9 +747,29 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
 
                                     {/* ABAJO: Fecha Inventario y Costo del Servicio pegado al fondo */}
                                     <div className="flex justify-between border-t-4 border-teal-600 pt-4 mt-4">
-                                        <div>
-                                            <div className="font-semibold text-gray-700 text-base">Fecha Inventario</div>
-                                            <div className="text-xl font-bold text-gray-900">{formatearFecha(sesion?.fecha)}</div>
+                                        <div className="flex gap-12">
+                                            <div>
+                                                <div className="font-semibold text-gray-700 text-base">Fecha Inventario</div>
+                                                <div className="text-xl font-bold text-gray-900">{formatearFecha(sesion?.fecha)}</div>
+                                            </div>
+                                            <div>
+                                                <div className="font-semibold text-gray-700 text-base flex items-center gap-2">
+                                                    Próximo Inventario
+                                                    {isEditable && <Calendar className="w-3 h-3 text-teal-600" />}
+                                                </div>
+                                                {isEditable ? (
+                                                    <input
+                                                        type="date"
+                                                        value={fechaProximoInventario}
+                                                        onChange={(e) => handleSaveProximaFecha(e.target.value)}
+                                                        className="text-lg font-bold text-teal-800 border rounded px-2 py-1 bg-teal-50 focus:outline-none focus:border-teal-500"
+                                                    />
+                                                ) : (
+                                                    <div className="text-xl font-bold text-teal-700">
+                                                        {fechaProximoInventario ? formatearFecha(fechaProximoInventario) : 'Pendiente'}
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                         <div className="text-right">
                                             <div className="font-semibold text-gray-700 text-base">Costo del Servicio</div>
@@ -770,7 +831,16 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
                                 <div>
                                     <div className="text-center mb-10">
                                         <h2 className="text-2xl font-bold uppercase text-gray-900 mb-1">{(cliente?.nombre || 'CLIENTE').toUpperCase()}</h2>
-                                        <h3 className="text-lg text-teal-700 font-semibold mb-2">Balance General</h3>
+                                        <div className="flex items-center justify-center gap-4 mb-2">
+                                            <h3 className="text-lg text-teal-700 font-semibold">Balance General</h3>
+                                            <button 
+                                                onClick={() => { setTipoComparativa('balance'); setShowComparativa(true) }}
+                                                className="p-1.5 bg-teal-50 text-teal-600 rounded-full hover:bg-teal-100 transition-colors shadow-sm no-print"
+                                                title="Comparar con balance anterior"
+                                            >
+                                                <ArrowRightLeft className="w-4 h-4" />
+                                            </button>
+                                        </div>
                                         <p className="text-sm text-gray-500">Al {formatearFecha(sesion?.fecha)}</p>
                                         <p className="text-xs text-gray-400">(En RD $)</p>
                                     </div>
@@ -938,7 +1008,16 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
                                 <div>
                                     <div className="text-center mb-8">
                                         <h2 className="text-2xl font-bold uppercase text-gray-900 mb-1">{(cliente?.nombre || 'CLIENTE').toUpperCase()}</h2>
-                                        <h3 className="text-lg text-teal-700 font-semibold mb-2">Distribución de Saldo</h3>
+                                        <div className="flex items-center justify-center gap-4 mb-2">
+                                            <h3 className="text-lg text-teal-700 font-semibold">Distribución de Saldo</h3>
+                                            <button 
+                                                onClick={() => { setTipoComparativa('distribucion'); setShowComparativa(true) }}
+                                                className="p-1.5 bg-teal-50 text-teal-600 rounded-full hover:bg-teal-100 transition-colors shadow-sm no-print"
+                                                title="Comparar con distribución anterior"
+                                            >
+                                                <History className="w-4 h-4" />
+                                            </button>
+                                        </div>
                                         <p className="text-sm text-gray-500">Al {formatearFecha(sesion?.fecha)}</p>
                                         <p className="text-xs text-gray-400">(En RD $)</p>
                                     </div>
@@ -1050,9 +1129,229 @@ const ReporteInventarioModal = ({ isOpen, onClose, sesion, cliente, contadorData
                             Imprimir esta página
                         </button>
                     </div>
+
+                    {/* MODAL DE COMPARATIVA LADO A LADO */}
+                    <AnimatePresence>
+                        {showComparativa && (
+                            <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
+                                <motion.div
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: 20 }}
+                                    className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden"
+                                >
+                                    <div className="bg-teal-800 text-white px-6 py-4 flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            <ArrowRightLeft className="w-6 h-6" />
+                                            <div>
+                                                <h3 className="font-bold text-lg">Comparativa Histórica</h3>
+                                                <p className="text-teal-100 text-xs uppercase tracking-widest">{tipoComparativa === 'balance' ? 'Balance General' : 'Distribución de Saldo'}</p>
+                                            </div>
+                                        </div>
+                                        <button onClick={() => setShowComparativa(false)} className="hover:bg-white/20 p-2 rounded-full transition-colors"><X className="w-6 h-6" /></button>
+                                    </div>
+
+                                    <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
+                                        {!sesionPrevia && (
+                                            <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg mb-6 flex items-center gap-3 text-sm font-medium">
+                                                <History className="w-5 h-5" />
+                                                No se encontró un inventario anterior completado. Se comparará con valores en cero.
+                                            </div>
+                                        )}
+
+                                        <div className="grid grid-cols-2 gap-8 h-full">
+                                            {/* PANEL ANTERIOR */}
+                                            <div className="flex flex-col">
+                                                <div className="bg-gray-200 text-gray-700 px-4 py-2 rounded-t-lg font-bold text-sm flex justify-between">
+                                                    <span>ANTERIOR: {sesionPrevia ? formatearFecha(sesionPrevia.fecha) : 'N/A'}</span>
+                                                    <span>INV: {sesionPrevia?.numeroSesion || '---'}</span>
+                                                </div>
+                                                <div className="flex-1 bg-white border-2 border-gray-100 p-6 rounded-b-lg shadow-sm">
+                                                    {tipoComparativa === 'balance' ? (
+                                                        <ComparativaBalanceContent 
+                                                            sesion={sesionPrevia} 
+                                                            valorInventario={sesionPrevia?.totales?.valorTotalInventario || 0}
+                                                            formatearMoneda={formatearMoneda}
+                                                        />
+                                                    ) : (
+                                                        <ComparativaDistribucionContent 
+                                                            sesion={sesionPrevia}
+                                                            formatearMoneda={formatearMoneda}
+                                                        />
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* PANEL ACTUAL */}
+                                            <div className="flex flex-col">
+                                                <div className="bg-teal-600 text-white px-4 py-2 rounded-t-lg font-bold text-sm flex justify-between">
+                                                    <span>ACTUAL: {formatearFecha(sesion?.fecha)}</span>
+                                                    <span>INV: {sesion?.numeroSesion || '---'}</span>
+                                                </div>
+                                                <div className="flex-1 bg-white border-2 border-teal-50 p-6 rounded-b-lg shadow-md">
+                                                    {tipoComparativa === 'balance' ? (
+                                                        <ComparativaBalanceContent 
+                                                            sesion={sesion} 
+                                                            valorInventario={valorTotal}
+                                                            formatearMoneda={formatearMoneda}
+                                                        />
+                                                    ) : (
+                                                        <ComparativaDistribucionContent 
+                                                            sesion={sesion}
+                                                            formatearMoneda={formatearMoneda}
+                                                        />
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="bg-gray-100 px-6 py-4 flex justify-end gap-3">
+                                        <button 
+                                            onClick={() => setShowComparativa(false)}
+                                            className="px-6 py-2 bg-white border border-gray-300 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors"
+                                        >
+                                            Cerrar Comparativa
+                                        </button>
+                                    </div>
+                                </motion.div>
+                            </div>
+                        )}
+                    </AnimatePresence>
                 </motion.div>
             </div>
         </AnimatePresence>
+    )
+}
+
+// --- COMPONENTES AUXILIARES PARA COMPARATIVA (Internos) ---
+
+const ComparativaBalanceContent = ({ sesion, valorInventario, formatearMoneda }) => {
+    if (!sesion) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-gray-400 italic">
+                <Calculator className="w-12 h-12 mb-2 opacity-20" />
+                No hay datos previos
+            </div>
+        )
+    }
+
+    const df = sesion.datosFinancieros || {}
+    const getSum = (key) => {
+        const data = df[key] || df[`${key}Detalle`] || []
+        if (Array.isArray(data)) return data.reduce((a, b) => a + (parseFloat(b.monto) || 0), 0)
+        return parseFloat(data) || 0
+    }
+
+    const efectivo = getSum('efectivoEnCajaYBanco')
+    const cobrar = getSum('cuentasPorCobrar')
+    const deuda = getSum('deudaANegocio')
+    const activosFijos = parseFloat(df.activosFijos) || 0
+    
+    const pagar = getSum('cuentasPorPagar')
+    
+    const totalActivos = efectivo + cobrar + valorInventario + deuda + activosFijos
+    const totalPasivos = pagar
+    const capital = totalActivos - totalPasivos
+
+    return (
+        <div className="space-y-6 text-sm">
+            <div className="space-y-2">
+                <h4 className="font-bold text-blue-600 border-b pb-1 text-xs uppercase tracking-wider">Activos</h4>
+                <div className="flex justify-between"><span>Efectivo:</span><span className="font-medium">{formatearMoneda(efectivo)}</span></div>
+                <div className="flex justify-between"><span>Cuentas por Cobrar:</span><span className="font-medium">{formatearMoneda(cobrar)}</span></div>
+                <div className="flex justify-between"><span>Inventario:</span><span className="font-medium">{formatearMoneda(valorInventario)}</span></div>
+                <div className="flex justify-between font-bold border-t pt-1 mt-2 text-gray-800">
+                    <span>TOTAL ACTIVOS:</span>
+                    <span>{formatearMoneda(totalActivos)}</span>
+                </div>
+            </div>
+
+            <div className="space-y-2">
+                <h4 className="font-bold text-red-600 border-b pb-1 text-xs uppercase tracking-wider">Pasivos y Capital</h4>
+                <div className="flex justify-between"><span>Cuentas por Pagar:</span><span className="font-medium">{formatearMoneda(pagar)}</span></div>
+                <div className="flex justify-between font-bold text-gray-800"><span>Capital:</span><span>{formatearMoneda(capital)}</span></div>
+                <div className="flex justify-between font-bold border-t pt-1 mt-2 text-teal-700">
+                    <span>PASIVO + CAPITAL:</span>
+                    <span>{formatearMoneda(pagar + capital)}</span>
+                </div>
+            </div>
+
+            <div className="mt-4 p-3 bg-teal-50 rounded-lg border border-teal-100">
+                <div className="text-[10px] uppercase font-bold text-teal-600 mb-1">Resultado</div>
+                <div className="flex justify-between items-end">
+                    <span className="font-bold text-gray-700">Utilidad Neta:</span>
+                    <span className="text-lg font-black text-teal-800">
+                        {formatearMoneda(capital - (parseFloat(df.capitalAnterior) || 0))}
+                    </span>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+const ComparativaDistribucionContent = ({ sesion, formatearMoneda }) => {
+    if (!sesion) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-gray-400 italic">
+                <PieChart className="w-12 h-12 mb-2 opacity-20" />
+                No hay datos previos
+            </div>
+        )
+    }
+
+    const df = sesion.datosFinancieros || {}
+    const distribucion = df.distribucionData || { socios: [] }
+    
+    // Función de utilidad para calcular utilidad neta de una sesión
+    const getUtilidadNeta = (s) => {
+        if (!s) return 0
+        const d = s.datosFinancieros || {}
+        const totalActivos = (s.totales?.valorTotalInventario || 0) + 
+            (Array.isArray(d.efectivoEnCajaYBancoDetalle) ? d.efectivoEnCajaYBancoDetalle.reduce((a, b) => a + (parseFloat(b.monto) || 0), 0) : (parseFloat(d.efectivoEnCajaYBanco) || 0)) +
+            (Array.isArray(d.cuentasPorCobrarDetalle) ? d.cuentasPorCobrarDetalle.reduce((a, b) => a + (parseFloat(b.monto) || 0), 0) : (parseFloat(d.cuentasPorCobrar) || 0)) +
+            (Array.isArray(d.deudaANegocioDetalle) ? d.deudaANegocioDetalle.reduce((a, b) => a + (parseFloat(b.monto) || 0), 0) : (parseFloat(d.deudaANegocio) || 0)) +
+            (parseFloat(d.activosFijos) || 0)
+        
+        const totalPasivos = Array.isArray(d.cuentasPorPagarDetalle) ? d.cuentasPorPagarDetalle.reduce((a, b) => a + (parseFloat(b.monto) || 0), 0) : (parseFloat(d.cuentasPorPagar) || 0)
+        
+        const capital = totalActivos - totalPasivos
+        return capital - (parseFloat(d.capitalAnterior) || 0)
+    }
+
+    const utilidadTotal = getUtilidadNeta(sesion)
+
+    return (
+        <div className="space-y-4">
+            <div className="bg-teal-50 p-3 rounded-lg flex justify-between items-center mb-4 border border-teal-100">
+                <span className="font-bold text-teal-800 text-sm">Utilidad Total:</span>
+                <span className="font-black text-teal-900 text-lg">{formatearMoneda(utilidadTotal)}</span>
+            </div>
+
+            <div className="space-y-3">
+                {distribucion.socios.map((socio, idx) => {
+                    const utilidadSocio = (utilidadTotal * (parseFloat(socio.porcentaje) || 0)) / 100
+                    return (
+                        <div key={idx} className="p-3 border rounded-lg hover:bg-gray-50 transition-colors">
+                            <div className="flex justify-between items-center mb-1">
+                                <span className="font-bold text-gray-800">{socio.nombre}</span>
+                                <span className="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 font-bold">{socio.porcentaje}%</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-gray-500">Distribución:</span>
+                                <span className="font-bold text-teal-700">{formatearMoneda(utilidadSocio)}</span>
+                            </div>
+                        </div>
+                    )
+                })}
+            </div>
+            
+            {distribucion.socios.length === 0 && (
+                <div className="text-center py-10 text-gray-400 italic text-sm">
+                    No se configuraron socios en esta sesión
+                </div>
+            )}
+        </div>
     )
 }
 

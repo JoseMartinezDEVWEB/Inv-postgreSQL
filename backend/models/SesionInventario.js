@@ -59,6 +59,10 @@ module.exports = (sequelize, DataTypes) => {
         timerUltimoInicio: {
             type: DataTypes.DATE,
             allowNull: true
+        },
+        fechaProximoInventario: {
+            type: DataTypes.DATE,
+            allowNull: true
         }
     }, {
         tableName: 'sesiones_inventario',

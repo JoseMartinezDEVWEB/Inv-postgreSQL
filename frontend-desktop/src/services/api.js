@@ -240,6 +240,8 @@ export const sesionesApi = {
   pauseTimer: (sesionId) => api.patch(`/sesiones_inventario/${sesionId}/timer/pause`),
   resumeTimer: (sesionId) => api.patch(`/sesiones_inventario/${sesionId}/timer/resume`),
   getByClient: (clienteId, params = {}) => api.get(`/sesiones_inventario/cliente/${clienteId}`, { params }),
+  update: (id, data) => api.put(`/sesiones_inventario/${id}`, data),
+  getUltimaPrevia: (clienteId, sesionIdActual) => api.get(`/sesiones_inventario/cliente/${clienteId}/ultima-previa/${sesionIdActual}`),
   // Agenda endpoints
   getAgendaResumen: (params = {}) => api.get('/sesiones_inventario/agenda/resumen', { params }),
   getAgendaDia: (params = {}) => api.get('/sesiones_inventario/agenda/dia', { params }),
