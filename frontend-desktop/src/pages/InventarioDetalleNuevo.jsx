@@ -16,6 +16,8 @@ import ProductoForm from '../components/ProductoForm'
 import ReporteInventarioModal from '../components/ReporteInventarioModal'
 import SearchProductModal from '../components/SearchProductModal'
 import SearchBarcodeModal from '../components/SearchBarcodeModal'
+import { jsPDF } from 'jspdf'
+import html2canvas from 'html2canvas'
 
 const PRODUCTOS_POR_PAGINA = 45
 
@@ -98,7 +100,11 @@ const TimerDisplay = ({ sesion, id }) => {
       onClick={async (e) => {
         e.stopPropagation();
         try {
-          await sesionesApi.toggleTimer(id || sesionId)
+          if (sesion?.timerEnMarcha) {
+            await sesionesApi.pauseTimer(id || sesionId)
+          } else {
+            await sesionesApi.resumeTimer(id || sesionId)
+          }
           queryClient.invalidateQueries(['sesion-inventario', id || sesionId])
         } catch (err) {
           console.error('Error changing timer state:', err)
@@ -561,19 +567,29 @@ const InventarioDetalleNuevo = () => {
   // Obtener sesión de inventario desde la API
   const { data: sesion, isLoading, refetch } = useQuery(
     ['sesion-inventario', id],
-    () => sesionesApi.getById(id).then((res) => {
-      // Backend SQLite devuelve: { exito: true, datos: sesion }
-      const sesionData = res.data.datos || res.data.sesion || res.data
-      console.log('📦 Sesión recibida:', sesionData)
-      console.log('📦 Timer datos:', {
+    async () => {
+      const res = await sesionesApi.getById(id)
+
+      // El backend PostgreSQL devuelve la sesión directamente como objeto (res.data),
+      // no encapsulada en { datos: sesion }. Soportamos ambos formatos por compatibilidad.
+      let sesionData = res.data
+
+      // Si viene encapsulado en { datos: ... } o { sesion: ... }, extraerlo
+      if (res.data && !res.data.productosContados && (res.data.datos || res.data.sesion)) {
+        sesionData = res.data.datos || res.data.sesion
+      }
+
+      // Log de debug para verificar qué recibe el frontend
+      console.log('[SESION] Datos recibidos del backend:', {
+        id: sesionData?.id,
+        numeroSesion: sesionData?.numeroSesion,
+        totalProductos: sesionData?.productosContados?.length ?? 'NO EXISTE LA PROPIEDAD',
         timerEnMarcha: sesionData?.timerEnMarcha,
-        timerAcumuladoSegundos: sesionData?.timerAcumuladoSegundos,
-        timerUltimoInicio: sesionData?.timerUltimoInicio
+        clienteNegocio: sesionData?.clienteNegocio?.nombre
       })
-      console.log('📦 clienteNegocio:', sesionData?.clienteNegocio)
-      console.log('📦 clienteNegocioId:', sesionData?.clienteNegocioId)
+
       return sesionData
-    }),
+    },
     {
       enabled: Boolean(id),
       onError: handleApiError,
@@ -985,18 +1001,37 @@ const InventarioDetalleNuevo = () => {
       setProductosParaRevisar([])
       setCantidadesEditadas({})
 
-      // Refrescar datos de la sesión (el socket event también dispara esto,
-      // pero hacemos refetch explícito como fallback de seguridad)
-      await queryClient.invalidateQueries(['sesion-inventario', id])
-      refetch()
-
       // Recargar colaboradores para actualizar estado de productos pendientes
       cargarColaboradoresConectados()
+
+      // Refrescar datos de la sesión con múltiples intentos para garantizar
+      // que los productos nuevos aparezcan en el listado.
+      // Se usa un pequeño delay para dar tiempo al backend de completar la transacción.
+      try {
+        // Intento 1: Inmediato
+        await queryClient.invalidateQueries(['sesion-inventario', id])
+        const result1 = await refetch()
+        console.log('[SYNC] Refetch inmediato — productos:', result1.data?.productosContados?.length)
+
+        // Intento 2: Tras 800ms (por si la transacción de BD tarda un poco)
+        setTimeout(async () => {
+          await queryClient.invalidateQueries(['sesion-inventario', id])
+          const result2 = await refetch()
+          console.log('[SYNC] Refetch diferido (800ms) — productos:', result2.data?.productosContados?.length)
+        }, 800)
+      } catch (refetchError) {
+        console.warn('[SYNC] Error en refetch post-sincronización:', refetchError)
+      }
 
     } catch (error) {
       console.error('❌ Error en batch sync de productos:', error)
       const mensaje = error.response?.data?.mensaje || error.message || 'Error al sincronizar productos'
       toast.error(`Error: ${mensaje}`, { id: toastId })
+    } finally {
+      // ✅ FIX #1: Siempre resetear isSyncing, sin importar si hubo éxito o error.
+      // Sin esto, el botón queda bloqueado en "Sincronizando..." indefinidamente
+      // y el admin no puede procesar al siguiente colaborador.
+      setIsSyncing(false)
     }
   }
 
@@ -2072,6 +2107,7 @@ const InventarioDetalleNuevo = () => {
       contenido.productos = productosContados.map(p => ({
         nombre: p.nombreProducto || 'Sin nombre',
         unidad: p.unidadProducto || 'unidad',
+        codigoBarras: p.skuProducto || p.codigoBarras || (p.producto ? p.producto.codigoBarras : '') || '',
         cantidad: p.cantidadContada || 0,
         costo: downloadData.incluirPrecios ? (Number(p.costoProducto) || 0) : null,
         total: downloadData.incluirPrecios ? ((Number(p.cantidadContada) || 0) * (Number(p.costoProducto) || 0)) : null
@@ -2336,54 +2372,88 @@ const InventarioDetalleNuevo = () => {
     document.body.removeChild(link)
   }
 
-  // Función para descargar en formato PDF proveniente del backend
+  // Función para descargar en formato PDF (Lado del cliente con jsPDF)
   const descargarPDF = async () => {
-    if (!sesion?._id) {
-      toast.error('No se encontró la sesión de inventario')
+    const contenido = generarContenidoInventario()
+    if (!contenido || !contenido.productos || contenido.productos.length === 0) {
+      toast.error('No hay productos para exportar a PDF')
       return
     }
 
     try {
-      // Preparar opciones para el PDF
-      const payload = {
-        contadorData: {
-          costoServicio: contadorData.costoServicio || 0,
-          nombre: user?.nombre || '',
-          cedula: user?.cedula || '',
-          telefono: user?.telefono || '',
-          email: user?.email || ''
-        },
-        distribucionData: {
-          utilidadesNetas: calculateUtilidadesNetas(),
-          numeroSocios: distribucionData.numeroSocios,
-          socios: distribucionData.socios,
-          fechaDesde: distribucionData.fechaDesde,
-          fechaHasta: distribucionData.fechaHasta,
-          comentarios: distribucionData.comentarios
-        },
-        tipoDocumento: downloadData.tipoDocumento,
-        incluirPrecios: downloadData.incluirPrecios,
-        incluirTotales: downloadData.incluirTotales,
-        incluirBalance: downloadData.incluirBalance,
-        incluirDistribucion: true,
-        formato: downloadData.formato
+      const doc = new jsPDF()
+      const pageWidth = doc.internal.pageSize.width
+      
+      // Título
+      doc.setFontSize(16)
+      doc.setFont("helvetica", "bold")
+      const title = `Listado de Inventario - ${sesion?.clienteNegocio?.nombre || 'Cliente'}`
+      doc.text(title, pageWidth / 2, 15, { align: 'center' })
+      
+      // Subtítulo
+      doc.setFontSize(10)
+      doc.setFont("helvetica", "normal")
+      doc.text(`Sesión: ${sesion?.numeroSesion || ''} | Fecha: ${new Date().toLocaleDateString('es-ES')}`, pageWidth / 2, 22, { align: 'center' })
+
+      // Cabeceras de tabla
+      let startY = 35
+      doc.setFontSize(10)
+      doc.setFont("helvetica", "bold")
+      doc.setFillColor(200, 200, 200)
+      doc.rect(14, startY - 5, 182, 7, 'F')
+      
+      doc.text("Nombre", 15, startY)
+      doc.text("Código Barra", 80, startY)
+      doc.text("Cant.", 125, startY)
+      doc.text("Costo", 145, startY)
+      doc.text("Total", 175, startY)
+
+      doc.setFont("helvetica", "normal")
+      startY += 7
+
+      let totalInventario = 0
+
+      // Filas
+      contenido.productos.forEach((p) => {
+        if (startY > 280) {
+          doc.addPage()
+          startY = 20
+        }
+        
+        const costo = p.costo || 0
+        const total = p.total || 0
+        totalInventario += total
+
+        // Truncar nombre si es muy largo
+        let nombreCto = p.nombre
+        if (nombreCto.length > 30) nombreCto = nombreCto.substring(0, 27) + "..."
+
+        doc.text(nombreCto, 15, startY)
+        doc.text(p.codigoBarras || '-', 80, startY)
+        doc.text(p.cantidad.toString(), 125, startY)
+        doc.text(formatearMoneda(costo), 145, startY)
+        doc.text(formatearMoneda(total), 175, startY)
+
+        startY += 6
+      })
+
+      // Total general
+      if (startY > 280) {
+        doc.addPage()
+        startY = 20
       }
+      doc.line(14, startY - 4, 196, startY - 4)
+      doc.setFont("helvetica", "bold")
+      doc.text("TOTAL GENERAL:", 135, startY + 2)
+      doc.text(formatearMoneda(totalInventario), 175, startY + 2)
 
-      const respuesta = await reportesApi.downloadInventoryPDF(sesion.id || sesion._id, payload)
-      const blob = new Blob([respuesta.data], { type: 'application/pdf' })
-      const url = URL.createObjectURL(blob)
-
-      const enlace = document.createElement('a')
-      enlace.href = url
-      enlace.download = generarNombreArchivoSeguro(`Reporte_${sesion?.nombreCliente}_${sesion?.numeroSesion}.pdf`)
-      document.body.appendChild(enlace)
-      enlace.click()
-      enlace.remove()
-      URL.revokeObjectURL(url)
+      const nombreArchivo = `${sesion?.clienteNegocio?.nombre || 'Cliente'}_Listado_${new Date().toISOString().split('T')[0]}.pdf`
+      doc.save(generarNombreArchivoSeguro(nombreArchivo))
+      
+      toast.success('PDF descargado exitosamente')
     } catch (error) {
-      console.error('Error descargando PDF desde el backend:', error)
-      toast.error('No se pudo descargar el PDF de inventario')
-      throw error
+      console.error('Error generando PDF:', error)
+      toast.error('Ocurrió un error al generar el PDF')
     }
   }
 
@@ -2487,9 +2557,12 @@ const InventarioDetalleNuevo = () => {
           }
         })
       } else {
-        // action='batch': el colaborador envió productos → requiere revisión del admin
-        // NO agregamos automáticamente — el admin debe revisar y aprobar
-        console.log('🔔 [Socket] Productos de colaborador listos para revisión (sin auto-apply)')
+        // ✅ FIX #2: action='batch' significa que el backend terminó de guardar los productos.
+        // Es necesario invalidar el caché de la sesión Y hacer refetch para que
+        // los productos aparezcan en el listado del admin inmediatamente.
+        console.log('🔄 [Socket] Batch de productos completado → invalidando caché y recargando sesión')
+        queryClient.invalidateQueries(['sesion-inventario', id])
+        refetch()
         cargarColaboradoresConectados()
         toast('🔔 Hay productos nuevos de un colaborador listos para revisar', {
           duration: 7000,

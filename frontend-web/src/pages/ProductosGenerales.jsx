@@ -5,15 +5,21 @@ import {
   Plus,
   Search,
   Filter,
-  Edit,
+  Pencil,
   Trash2,
   Package,
   DollarSign,
   Tag,
   ShoppingCart,
-  Upload,
   Users,
-  Send
+  Send,
+  Download,
+  Upload,
+  RefreshCw,
+  AlertTriangle,
+  Settings,
+  MoreVertical,
+  Menu
 } from 'lucide-react'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
@@ -37,25 +43,36 @@ const ProductosGenerales = () => {
   const [showImportModal, setShowImportModal] = useState(false)
   const [editingProduct, setEditingProduct] = useState(null)
   const [searchTerm, setSearchTerm] = useState('')
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage] = useState(5)
   const [isEnviandoInventario, setIsEnviandoInventario] = useState(false)
 
+  // Debounce para la búsqueda
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm)
+      setCurrentPage(1)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [searchTerm])
+
   // Consulta de productos generales
   const { data: productosData, isLoading, error } = useQuery(
-    ['productos-generales', currentPage, itemsPerPage, searchTerm, selectedCategory],
+    ['productos-generales', currentPage, itemsPerPage, debouncedSearchTerm, selectedCategory],
     async () => {
       const response = await productosApi.getAllGenerales({
         pagina: currentPage,
         limite: itemsPerPage,
-        buscar: searchTerm,
+        buscar: debouncedSearchTerm,
         categoria: selectedCategory
       })
       return handleApiResponse(response)
     },
     {
-      onError: handleApiError
+      keepPreviousData: true,
+      staleTime: 5000,
     }
   )
 
@@ -188,7 +205,7 @@ const ProductosGenerales = () => {
 
   const handleSearch = (e) => {
     setSearchTerm(e.target.value)
-    setCurrentPage(1)
+    // No reseteamos la página aquí, lo hace el debounce
   }
 
   const handleCategoryFilter = (categoria) => {
@@ -361,14 +378,14 @@ const ProductosGenerales = () => {
         <div className="flex items-center space-x-2">
           <button
             onClick={() => handleEditProduct(producto)}
-            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
             title="Editar producto"
           >
-            <Edit className="w-4 h-4" />
+            <Pencil className="w-4 h-4" />
           </button>
           <button
             onClick={() => handleDeleteProduct(producto)}
-            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             title="Eliminar producto"
           >
             <Trash2 className="w-4 h-4" />

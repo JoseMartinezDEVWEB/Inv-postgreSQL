@@ -663,8 +663,8 @@ router.post('/:id/productos-offline', async (req, res) => {
 
         // --- FALLBACK MODO OFFLINE ---
         // Si no está asignada a sesión o falló la inyección, lo guardamos en la cola offline para revisión manual
-        // Registrar UUID como procesado también aquí
-        procesados.push(nuevoProducto.id);
+        // IMPORTANTE: NO registrar en 'procesados' aquí, porque 'procesados' significa que ya fue insertado
+        // en la base de datos (ProductoContado). Si lo agregamos aquí, batchSyncProductos lo ignorará.
         const existentes = metadata.productosOffline || [];
         const nuevaLista = [...existentes, nuevoProducto];
 
@@ -672,7 +672,7 @@ router.post('/:id/productos-offline', async (req, res) => {
             metadata: {
                 ...metadata,
                 productosOffline: nuevaLista,
-                procesados
+                procesados // Mantener intacto el array anterior
             }
         });
 
@@ -761,7 +761,9 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
                     if (!productoData) continue;
 
                     // Validación anti-duplicados por UUID (temporalId)
+                    console.log(`[DEBUG-SYNC] Evaluando item ${temporalId}: procesados incluye? ${procesados.includes(temporalId)}`);
                     if (procesados.includes(temporalId)) {
+                        console.log(`[DEBUG-SYNC] Saltando item ${temporalId} porque ya está en procesados`);
                         temporalIdsExitosos.push(temporalId);
                         continue;
                     }
@@ -770,6 +772,7 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
                     const finalSku = String(codigoBarras || sku || '').trim();
                     const finalCantidad = Number(cantidad) || 1;
                     const finalCosto = Number(costo) || 0;
+                    console.log(`[DEBUG-SYNC] Procesando nuevo producto: ${nombre} | cant: ${finalCantidad} | costo: ${finalCosto}`);
 
                     // A. Buscar/Crear en ProductoGeneral
                     let productoGeneral = await db.ProductoGeneral.findOne({
@@ -822,48 +825,57 @@ router.post('/:id/batch-sync-productos', authenticateToken, async (req, res) => 
                             unidad: unidad || 'unidad',
                             activo: true
                         }, { transaction: t });
+                        console.log(`[DEBUG-SYNC] ProductoCliente creado con ID:`, productoCliente.id);
+                    } else {
+                        console.log(`[DEBUG-SYNC] ProductoCliente encontrado con ID:`, productoCliente.id);
                     }
 
-                    // C. Crear o actualizar registro en ProductoContado
-                    const [productoContado, created] = await db.ProductoContado.findOrCreate({
+                    console.log(`[DEBUG-SYNC] Intentando buscar ProductoContado para:`, nombre.trim(), `en sesion:`, sesionInventarioId);
+                    
+                    // C. Crear o actualizar registro en ProductoContado (Lógica Explícita)
+                    let productoContado = await db.ProductoContado.findOne({
                         where: {
                             sesionInventarioId: sesionInventarioId,
                             nombreProducto: nombre.trim()
                         },
-                        defaults: {
+                        transaction: t
+                    });
+
+                    if (!productoContado) {
+                        console.log(`[DEBUG-SYNC] No existe, creando nuevo ProductoContado...`);
+                        productoContado = await db.ProductoContado.create({
                             sesionInventarioId: sesionInventarioId,
-                            productoClienteId: productoCliente.id,
+                            productoClienteId: productoCliente ? productoCliente.id : null,
                             cantidadContada: finalCantidad,
                             costoProducto: finalCosto,
                             nombreProducto: nombre.trim(),
                             skuProducto: codigoBarras || sku || '',
                             valorTotal: finalCantidad * finalCosto,
                             agregadoPorId: req.user.id
-                        },
-                        transaction: t
-                    });
-
-                    if (!created) {
-                        // ✅ FIX #2B: SUMAR cantidades es el comportamiento correcto para
-                        // conteos parciales. La idempotencia se garantiza por `procesados[]`:
-                        // si el mismo temporalId ya fue procesado, el bloque de arriba
-                        // hace `continue` y nunca llega aquí, por lo que NO hay doble suma.
+                        }, { transaction: t });
+                        console.log(`[DEBUG-SYNC] ProductoContado CREADO con ID:`, productoContado.id);
+                    } else {
+                        console.log(`[DEBUG-SYNC] Ya existe, actualizando ProductoContado ID:`, productoContado.id);
+                        // ✅ FIX #2B: SUMAR cantidades es el comportamiento correcto para conteos parciales.
                         const nuevaCantidad = Number(productoContado.cantidadContada) + finalCantidad;
                         await productoContado.update({
                             cantidadContada: nuevaCantidad,
                             costoProducto: finalCosto,
                             valorTotal: nuevaCantidad * finalCosto
                         }, { transaction: t });
+                        console.log(`[DEBUG-SYNC] ProductoContado ACTUALIZADO. Nueva cantidad:`, nuevaCantidad);
                     }
 
                     // Registrar UUID como procesado para evitar futuros duplicados
                     procesados.push(temporalId);
                     temporalIdsExitosos.push(temporalId);
+                    console.log(`[DEBUG-SYNC] Éxito para ${temporalId}. Añadido a temporalIdsExitosos. Total éxitos: ${temporalIdsExitosos.length}`);
                 } catch (prodError) {
-                    console.error(`⚠️ Error al sincronizar producto individual:`, prodError.message);
+                    console.error(`⚠️ [DEBUG-SYNC] Error al sincronizar producto individual ${item.temporalId}:`, prodError);
                 }
             }
 
+            console.log(`[DEBUG-SYNC] Loop finalizado. Exitosos: ${temporalIdsExitosos.length}`);
             // 4. Marcar en la solicitud como sincronizados
             const existentes = metadata.productosOffline || [];
             const actualizados = existentes.map(prod => {

@@ -30,12 +30,17 @@ router.post('/sincronizar', authenticateToken, async (req, res) => {
             };
             let totalProcesados = 0;
 
-            const solicitud = await db.SolicitudConexion.findOne({
-                where: { colaboradorId: req.user.id, estado: 'aceptada' },
-                transaction: t
-            });
+            let solicitud = null;
+            // Evitar error 22P02 en PostgreSQL si req.user.id es un string 'temp_...'
+            if (!isNaN(parseInt(req.user.id))) {
+                solicitud = await db.SolicitudConexion.findOne({
+                    where: { colaboradorId: req.user.id, estado: 'aceptada' },
+                    transaction: t
+                });
+            }
 
-            const businessId = solicitud ? solicitud.adminId : req.user.id;
+            const parsedUserId = isNaN(parseInt(req.user.id)) ? null : parseInt(req.user.id);
+            const businessId = solicitud ? solicitud.adminId : parsedUserId;
 
             // 1. Resolver y Sincronizar Clientes
             for (const cl of clientes) {
@@ -60,7 +65,7 @@ router.post('/sincronizar', authenticateToken, async (req, res) => {
                         notas: cl.notas || '',
                         contadorAsignadoId: businessId,
                         business_id: businessId,
-                        created_by: req.user.id
+                        created_by: parsedUserId
                     }, { transaction: t });
                 } else {
                     await dbCliente.update({
@@ -172,7 +177,7 @@ router.post('/sincronizar', authenticateToken, async (req, res) => {
                     skuProducto: ct.skuProducto || '',
                     cantidadContada: ct.cantidad || 0,
                     costoProducto: ct.costo || 0,
-                    agregadoPorId: req.user.id
+                    agregadoPorId: parsedUserId
                 }, { transaction: t });
                 totalProcesados++;
             }
