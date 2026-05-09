@@ -12,7 +12,7 @@ router.setIo = (socketIoInstance) => {
 
 const getSesionesInventario = async (req, res) => {
     try {
-        const { limite = 20, pagina = 1 } = req.query;
+        const { limite = 20, pagina = 1, buscar = '' } = req.query;
         const offset = (pagina - 1) * limite;
 
         const where = {};
@@ -20,29 +20,178 @@ const getSesionesInventario = async (req, res) => {
             where.contadorId = req.user.id;
         }
 
+        // Búsqueda por número de sesión si se especifica
+        if (buscar) {
+            where.numeroSesion = { [db.Sequelize.Op.iLike]: `%${buscar}%` };
+        }
+
         const { count, rows } = await db.SesionInventario.findAndCountAll({
             where,
-            include: [{ model: db.ClienteNegocio, as: 'clienteNegocio' }],
+            include: [{ 
+                model: db.ClienteNegocio, 
+                as: 'clienteNegocio',
+                attributes: ['id', 'nombre', 'telefono', 'direccion']
+            }],
             limit: parseInt(limite),
             offset: parseInt(offset),
             order: [['createdAt', 'DESC']]
         });
 
         res.json({
-            sesiones: rows,
-            paginacion: {
-                total: count,
-                pagina: parseInt(pagina),
-                limite: parseInt(limite),
-                totalPaginas: Math.ceil(count / limite)
+            exito: true,
+            datos: {
+                sesiones: rows,
+                paginacion: {
+                    total: count,
+                    totalRegistros: count,
+                    pagina: parseInt(pagina),
+                    limite: parseInt(limite),
+                    totalPaginas: Math.ceil(count / limite)
+                }
             }
         });
     } catch (error) {
-        res.status(500).json({ mensaje: 'Error al obtener sesiones: ' + error.message });
+        res.status(500).json({ exito: false, mensaje: 'Error al obtener sesiones: ' + error.message });
     }
 };
 
 router.get('/', authenticateToken, getSesionesInventario);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RUTAS ESPECÍFICAS - Deben registrarse ANTES de la ruta /:id para evitar
+// que Express interprete 'agenda', 'cliente', etc. como IDs
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AGENDA - Rutas de calendario
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/agenda/resumen', authenticateToken, async (req, res) => {
+    try {
+        const { mes } = req.query;
+
+        let where = {};
+        if (mes) {
+            const [year, month] = mes.split('-');
+            const startDate = new Date(`${year}-${month.padStart(2,'0')}-01T00:00:00.000Z`);
+            const nextMonth = month === '12' ? `${parseInt(year)+1}-01` : `${year}-${String(parseInt(month)+1).padStart(2,'0')}`;
+            const endDate = new Date(`${nextMonth}-01T00:00:00.000Z`);
+            where.fecha = {
+                [db.Sequelize.Op.gte]: startDate,
+                [db.Sequelize.Op.lt]: endDate
+            };
+        }
+
+        const sesiones = await db.SesionInventario.findAll({
+            where,
+            attributes: ['id', 'fecha'],
+            order: [['fecha', 'ASC']]
+        });
+
+        // Agrupar por fecha YYYY-MM-DD
+        const byDate = {};
+        sesiones.forEach(s => {
+            if (!s.fecha) return;
+            const dateKey = new Date(s.fecha).toISOString().slice(0, 10);
+            byDate[dateKey] = (byDate[dateKey] || 0) + 1;
+        });
+
+        const resumen = Object.entries(byDate).map(([fecha, total]) => ({ fecha, total }));
+
+        res.json({ exito: true, datos: { resumen } });
+    } catch (error) {
+        res.status(500).json({ exito: false, mensaje: 'Error al obtener agenda: ' + error.message });
+    }
+});
+
+router.get('/agenda/dia', authenticateToken, async (req, res) => {
+    try {
+        const { fecha } = req.query;
+        if (!fecha) return res.status(400).json({ exito: false, mensaje: 'Falta el parámetro fecha' });
+
+        const startDate = new Date(fecha + 'T00:00:00.000Z');
+        const endDate = new Date(fecha + 'T23:59:59.999Z');
+
+        const sesiones = await db.SesionInventario.findAll({
+            where: {
+                fecha: { [db.Sequelize.Op.between]: [startDate, endDate] }
+            },
+            include: [{ model: db.ClienteNegocio, as: 'clienteNegocio', attributes: ['id', 'nombre', 'telefono'] }],
+            order: [['fecha', 'ASC']]
+        });
+
+        const result = sesiones.map(s => ({
+            id: s.id,
+            numeroSesion: s.numeroSesion,
+            estado: s.estado,
+            fecha: s.fecha,
+            totales: s.totales,
+            clienteNegocio: s.clienteNegocio ? { 
+                id: s.clienteNegocio.id, 
+                nombre: s.clienteNegocio.nombre,
+                telefono: s.clienteNegocio.telefono
+            } : null
+        }));
+
+        res.json({ exito: true, datos: { sesiones: result } });
+    } catch (error) {
+        res.status(500).json({ exito: false, mensaje: 'Error al obtener sesiones del día: ' + error.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESIONES POR CLIENTE
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/cliente/:clienteId', authenticateToken, async (req, res) => {
+    try {
+        const { clienteId } = req.params;
+        const { limite = 50, pagina = 1, estado, fechaDesde, fechaHasta } = req.query;
+        const offset = (pagina - 1) * limite;
+
+        const where = { clienteNegocioId: clienteId };
+        if (estado && estado !== 'todos') {
+            where.estado = estado;
+        }
+        if (fechaDesde || fechaHasta) {
+            where.fecha = {};
+            if (fechaDesde) where.fecha[db.Sequelize.Op.gte] = new Date(fechaDesde + 'T00:00:00.000Z');
+            if (fechaHasta) where.fecha[db.Sequelize.Op.lte] = new Date(fechaHasta + 'T23:59:59.999Z');
+        }
+
+        const { count, rows } = await db.SesionInventario.findAndCountAll({
+            where,
+            include: [{ 
+                model: db.ClienteNegocio, 
+                as: 'clienteNegocio',
+                attributes: ['id', 'nombre', 'telefono', 'direccion']
+            }],
+            limit: parseInt(limite),
+            offset: parseInt(offset),
+            order: [['createdAt', 'DESC']]
+        });
+
+        res.json({
+            exito: true,
+            datos: {
+                sesiones: rows,
+                paginacion: {
+                    total: count,
+                    totalRegistros: count,
+                    pagina: parseInt(pagina),
+                    limite: parseInt(limite),
+                    totalPaginas: Math.ceil(count / limite)
+                }
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ exito: false, mensaje: 'Error al obtener sesiones del cliente: ' + error.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DETALLE DE UNA SESIÓN ESPECÍFICA (DEBE IR DESPUÉS DE LAS RUTAS ESPECÍFICAS)
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Obtener detalles de una sesión específica
@@ -286,109 +435,7 @@ router.patch('/:id/cancelar', authenticateToken, async (req, res) => {
     }
 });
 
-router.get('/agenda/resumen', authenticateToken, async (req, res) => {
-    try {
-        const { mes } = req.query;
 
-        let where = {};
-        if (mes) {
-            const [year, month] = mes.split('-');
-            const startDate = new Date(`${year}-${month.padStart(2,'0')}-01T00:00:00.000Z`);
-            const nextMonth = month === '12' ? `${parseInt(year)+1}-01` : `${year}-${String(parseInt(month)+1).padStart(2,'0')}`;
-            const endDate = new Date(`${nextMonth}-01T00:00:00.000Z`);
-            where.fecha = {
-                [db.Sequelize.Op.gte]: startDate,
-                [db.Sequelize.Op.lt]: endDate
-            };
-        }
-
-        const sesiones = await db.SesionInventario.findAll({
-            where,
-            attributes: ['id', 'fecha'],
-            order: [['fecha', 'ASC']]
-        });
-
-        // Group by date YYYY-MM-DD
-        const byDate = {};
-        sesiones.forEach(s => {
-            if (!s.fecha) return;
-            const dateKey = new Date(s.fecha).toISOString().slice(0, 10);
-            byDate[dateKey] = (byDate[dateKey] || 0) + 1;
-        });
-
-        const resumen = Object.entries(byDate).map(([fecha, total]) => ({ fecha, total }));
-
-        res.json({ exito: true, datos: { resumen } });
-    } catch (error) {
-        res.status(500).json({ mensaje: 'Error al obtener agenda: ' + error.message });
-    }
-});
-
-router.get('/agenda/dia', authenticateToken, async (req, res) => {
-    try {
-        const { fecha } = req.query;
-        if (!fecha) return res.status(400).json({ mensaje: 'Falta el parámetro fecha' });
-
-        const startDate = new Date(fecha + 'T00:00:00.000Z');
-        const endDate = new Date(fecha + 'T23:59:59.999Z');
-
-        const sesiones = await db.SesionInventario.findAll({
-            where: {
-                fecha: { [db.Sequelize.Op.between]: [startDate, endDate] }
-            },
-            include: [{ model: db.ClienteNegocio, as: 'clienteNegocio', attributes: ['id', 'nombre'] }],
-            order: [['fecha', 'ASC']]
-        });
-
-        const result = sesiones.map(s => ({
-            id: s.id,
-            numeroSesion: s.numeroSesion,
-            estado: s.estado,
-            fecha: s.fecha,
-            clienteNegocio: s.clienteNegocio ? { id: s.clienteNegocio.id, nombre: s.clienteNegocio.nombre } : null
-        }));
-
-        res.json({ exito: true, datos: { sesiones: result } });
-    } catch (error) {
-        res.status(500).json({ mensaje: 'Error al obtener sesiones del día: ' + error.message });
-    }
-});
-
-/**
- * Obtener sesiones por cliente ID
- */
-router.get('/cliente/:clienteId', authenticateToken, async (req, res) => {
-    try {
-        const { clienteId } = req.params;
-        const { limite = 20, pagina = 1, estado } = req.query;
-        const offset = (pagina - 1) * limite;
-
-        const where = { clienteNegocioId: clienteId };
-        if (estado) {
-            where.estado = estado;
-        }
-
-        const { count, rows } = await db.SesionInventario.findAndCountAll({
-            where,
-            include: [{ model: db.ClienteNegocio, as: 'clienteNegocio' }],
-            limit: parseInt(limite),
-            offset: parseInt(offset),
-            order: [['createdAt', 'DESC']]
-        });
-
-        res.json({
-            sesiones: rows,
-            paginacion: {
-                total: count,
-                pagina: parseInt(pagina),
-                limite: parseInt(limite),
-                totalPaginas: Math.ceil(count / limite)
-            }
-        });
-    } catch (error) {
-        res.status(500).json({ mensaje: 'Error al obtener sesiones del cliente: ' + error.message });
-    }
-});
 
 /**
  * Gestión de productos dentro de una sesión

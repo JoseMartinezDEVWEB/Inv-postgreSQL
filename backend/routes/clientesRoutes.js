@@ -37,7 +37,10 @@ const getClientesNegocios = async (req, res) => {
         }
 
         if (buscar) {
-            where.nombre = { [db.Sequelize.Op.iLike]: `%${buscar}%` };
+            where[db.Sequelize.Op.or] = [
+                { nombre: { [db.Sequelize.Op.iLike]: `%${buscar}%` } },
+                { telefono: { [db.Sequelize.Op.iLike]: `%${buscar}%` } }
+            ];
         }
 
         const { count, rows } = await db.ClienteNegocio.findAndCountAll({
@@ -47,8 +50,36 @@ const getClientesNegocios = async (req, res) => {
             order: [['nombre', 'ASC']]
         });
 
+        // Enriquecer cada cliente con estadísticas de inventarios
+        const clientesConEstadisticas = await Promise.all(rows.map(async (cliente) => {
+            const clienteJson = cliente.toJSON();
+
+            try {
+                // Contar total de sesiones de inventario para este cliente
+                const totalInventarios = await db.SesionInventario.count({
+                    where: { clienteNegocioId: cliente.id }
+                });
+
+                // Obtener la fecha del último inventario
+                const ultimaSesion = await db.SesionInventario.findOne({
+                    where: { clienteNegocioId: cliente.id },
+                    attributes: ['fecha', 'createdAt'],
+                    order: [['createdAt', 'DESC']]
+                });
+
+                clienteJson.estadisticas = {
+                    totalInventarios,
+                    ultimoInventario: ultimaSesion ? (ultimaSesion.fecha || ultimaSesion.createdAt) : null
+                };
+            } catch (statError) {
+                clienteJson.estadisticas = { totalInventarios: 0, ultimoInventario: null };
+            }
+
+            return clienteJson;
+        }));
+
         res.json({
-            datos: rows,
+            datos: clientesConEstadisticas,
             paginacion: {
                 total: count,
                 totalRegistros: count,

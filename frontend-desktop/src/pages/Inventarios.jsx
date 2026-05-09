@@ -44,6 +44,8 @@ const Inventarios = () => {
     ['sesiones', searchTerm],
     async () => {
       const response = await sesionesApi.getAll({ buscar: searchTerm, limite: 50, pagina: 1 })
+      // El backend ahora devuelve { exito: true, datos: { sesiones, paginacion } }
+      // handleApiResponse extrae 'datos', devolviendo { sesiones, paginacion }
       return handleApiResponse(response)
     },
     {
@@ -80,8 +82,8 @@ const Inventarios = () => {
     {
       enabled: !!selectedClientForInventories?.id,
       select: (response) => {
-        // La estructura es: { data: { exito: true, datos: { sesiones } } }
-        return response?.data?.datos
+        // La estructura nueva es: { data: { exito: true, datos: { sesiones, paginacion } } }
+        return response?.data?.datos || response?.data || null
       },
     }
   )

@@ -17,7 +17,9 @@ const ClienteHistorialModal = ({ isOpen, onClose, cliente }) => {
         async () => {
             if (!cliente?.id) return { sesiones: [] }
             const response = await sesionesApi.getByClient(cliente.id)
-            return response.data
+            // El backend ahora devuelve { exito: true, datos: { sesiones, paginacion } }
+            const datos = response?.data?.datos || response?.data || {}
+            return { sesiones: datos.sesiones || [] }
         },
         {
             enabled: !!cliente?.id && isOpen,
