@@ -52,8 +52,8 @@ db.Usuario.hasMany(db.SesionInventario, { foreignKey: 'contadorId' });
 db.SesionInventario.belongsTo(db.Usuario, { foreignKey: 'contadorId' });
 
 // Clientes y Sesiones
-db.ClienteNegocio.hasMany(db.SesionInventario, { foreignKey: 'clienteNegocioId' });
-db.SesionInventario.belongsTo(db.ClienteNegocio, { foreignKey: 'clienteNegocioId' });
+db.ClienteNegocio.hasMany(db.SesionInventario, { foreignKey: 'clienteNegocioId', as: 'sesiones' });
+db.SesionInventario.belongsTo(db.ClienteNegocio, { foreignKey: 'clienteNegocioId', as: 'clienteNegocio' });
 
 db.ClienteNegocio.hasMany(db.Producto, { foreignKey: 'clienteNegocioId' });
 db.Producto.belongsTo(db.ClienteNegocio, { foreignKey: 'clienteNegocioId' });

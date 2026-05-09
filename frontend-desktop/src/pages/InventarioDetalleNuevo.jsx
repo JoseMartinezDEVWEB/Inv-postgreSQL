@@ -206,6 +206,8 @@ const InventarioDetalleNuevo = () => {
   const [lastScannedTime, setLastScannedTime] = useState(0)
   const [lastScannedProduct, setLastScannedProduct] = useState(null)
 
+  // Estado para ordenar la tabla de productos
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: null })
 
   // Estados para atajos de teclado
   const [shortcutsActive, setShortcutsActive] = useState(false)
@@ -2485,11 +2487,14 @@ const InventarioDetalleNuevo = () => {
           }
         })
       } else {
-        // action='batch', sin action, o cualquier otro: refetch completo
-        // Esto garantiza datos frescos y consistentes desde el backend
-        console.log('🔄 [Socket] Refetch completo de sesión por evento batch/genérico')
-        queryClient.invalidateQueries(['sesion-inventario', id])
-        refetch()
+        // action='batch': el colaborador envió productos → requiere revisión del admin
+        // NO agregamos automáticamente — el admin debe revisar y aprobar
+        console.log('🔔 [Socket] Productos de colaborador listos para revisión (sin auto-apply)')
+        cargarColaboradoresConectados()
+        toast('🔔 Hay productos nuevos de un colaborador listos para revisar', {
+          duration: 7000,
+          style: { background: '#f59e0b', color: '#fff', fontWeight: '600' }
+        })
       }
     }
 
@@ -2783,7 +2788,16 @@ const InventarioDetalleNuevo = () => {
         producto: p?.producto, // mantener referencia original por si se necesita mostrar
         updatedAt: p?.updatedAt || new Date(0).toISOString()
       }))
-      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+      .sort((a, b) => {
+        if (sortConfig.key === 'costo') {
+          return b.costoProducto - a.costoProducto
+        }
+        if (sortConfig.key === 'nombre') {
+          const cmp = a.nombreProducto.localeCompare(b.nombreProducto, 'es', { sensitivity: 'base' })
+          return sortConfig.direction === 'desc' ? -cmp : cmp
+        }
+        return new Date(b.updatedAt) - new Date(a.updatedAt)
+      })
     : []
 
   const valorTotal = productosContados.reduce((sum, p) => {
@@ -3938,13 +3952,47 @@ const InventarioDetalleNuevo = () => {
             <table className="w-full" style={{ fontFamily: 'Arial, sans-serif', borderCollapse: 'collapse' }}>
               <thead className="sticky top-0">
                 <tr>
-                  {/* Columna Artículo */}
+                  {/* Columna Productos */}
                   <th
                     rowSpan={2}
                     className="px-3 py-2 text-left bg-gray-200 text-gray-800 font-semibold text-sm"
                     style={{ minWidth: '250px', borderBottom: '2px solid #9ca3af' }}
                   >
-                    Artículo
+                    <div className="flex items-center justify-between gap-1">
+                      <span>Productos</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setSortConfig(s =>
+                            s.key === 'nombre' && s.direction === 'asc'
+                              ? { key: 'nombre', direction: 'desc' }
+                              : s.key === 'nombre' && s.direction === 'desc'
+                                ? { key: null, direction: null }
+                                : { key: 'nombre', direction: 'asc' }
+                          )}
+                          className={`text-xs px-1 py-0.5 rounded border font-mono transition-colors ${
+                            sortConfig.key === 'nombre'
+                              ? 'bg-blue-500 text-white border-blue-500'
+                              : 'bg-gray-100 text-gray-500 border-gray-300 hover:bg-gray-200'
+                          }`}
+                          title="Ordenar alfabéticamente (A→Z / Z→A)"
+                        >
+                          {sortConfig.key === 'nombre' && sortConfig.direction === 'desc' ? 'Z↑A' : 'A↓Z'}
+                        </button>
+                        <button
+                          onClick={() => setSortConfig(s =>
+                            s.key === 'costo' ? { key: null, direction: null } : { key: 'costo', direction: 'desc' }
+                          )}
+                          className={`text-xs px-1 py-0.5 rounded border transition-colors ${
+                            sortConfig.key === 'costo'
+                              ? 'bg-blue-500 text-white border-blue-500'
+                              : 'bg-gray-100 text-gray-500 border-gray-300 hover:bg-gray-200'
+                          }`}
+                          title="Ordenar por costo (mayor a menor)"
+                        >
+                          $↓
+                        </button>
+                      </div>
+                    </div>
                   </th>
 
                   {/* Columna Cantidad */}
@@ -3984,6 +4032,13 @@ const InventarioDetalleNuevo = () => {
                     className="px-3 py-2 text-center bg-gray-200 text-gray-800 font-semibold text-sm"
                     style={{ width: '60px', borderBottom: '2px solid #9ca3af' }}
                   >
+                    <button
+                      onClick={() => refetch()}
+                      className="p-1 rounded hover:bg-gray-300 transition-colors text-gray-500 hover:text-gray-800"
+                      title="Refrescar listado"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
                   </th>
                 </tr>
                 <tr>
@@ -4027,7 +4082,7 @@ const InventarioDetalleNuevo = () => {
                   </tr>
                 ) : (
                   productosContados.map((producto, index) => (
-                    <tr key={producto._id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                    <tr key={producto.productoId} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                       {/* Artículo */}
                       <td className="px-3 py-2 text-gray-800 text-sm">
                         <input

@@ -22,7 +22,7 @@ const getSesionesInventario = async (req, res) => {
 
         const { count, rows } = await db.SesionInventario.findAndCountAll({
             where,
-            include: [{ model: db.ClienteNegocio }],
+            include: [{ model: db.ClienteNegocio, as: 'clienteNegocio' }],
             limit: parseInt(limite),
             offset: parseInt(offset),
             order: [['createdAt', 'DESC']]
@@ -52,7 +52,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
         const { id } = req.params;
         const sesion = await db.SesionInventario.findByPk(id, {
             include: [
-                { model: db.ClienteNegocio },
+                { model: db.ClienteNegocio, as: 'clienteNegocio' },
                 { 
                     model: db.ProductoContado,
                     as: 'productosContados'
@@ -141,7 +141,7 @@ router.post('/', authenticateToken, async (req, res) => {
 
             return await db.SesionInventario.findByPk(sesion.id, {
                 include: [
-                    { model: db.ClienteNegocio },
+                    { model: db.ClienteNegocio, as: 'clienteNegocio' },
                     { model: db.ProductoContado, as: 'productosContados' }
                 ],
                 order: [
@@ -200,7 +200,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
             return await db.SesionInventario.findByPk(id, {
                 include: [
-                    { model: db.ClienteNegocio },
+                    { model: db.ClienteNegocio, as: 'clienteNegocio' },
                     { model: db.ProductoContado, as: 'productosContados' }
                 ],
                 order: [
@@ -293,30 +293,64 @@ router.get('/agenda/resumen', authenticateToken, async (req, res) => {
         let where = {};
         if (mes) {
             const [year, month] = mes.split('-');
-            const startDate = new Date(year, month - 1, 1);
-            const endDate = new Date(year, month, 0);
+            const startDate = new Date(`${year}-${month.padStart(2,'0')}-01T00:00:00.000Z`);
+            const nextMonth = month === '12' ? `${parseInt(year)+1}-01` : `${year}-${String(parseInt(month)+1).padStart(2,'0')}`;
+            const endDate = new Date(`${nextMonth}-01T00:00:00.000Z`);
             where.fecha = {
-                [db.Sequelize.Op.between]: [startDate, endDate]
+                [db.Sequelize.Op.gte]: startDate,
+                [db.Sequelize.Op.lt]: endDate
             };
         }
 
         const sesiones = await db.SesionInventario.findAll({
             where,
-            include: [{ model: db.ClienteNegocio }],
+            attributes: ['id', 'fecha'],
             order: [['fecha', 'ASC']]
         });
 
-        const resumen = sesiones.map(s => ({
-            id: s.id,
-            fecha: s.fecha,
-            numeroSesion: s.numeroSesion,
-            estado: s.estado,
-            cliente: s.ClienteNegocio ? s.ClienteNegocio.nombre : 'Sin cliente'
-        }));
+        // Group by date YYYY-MM-DD
+        const byDate = {};
+        sesiones.forEach(s => {
+            if (!s.fecha) return;
+            const dateKey = new Date(s.fecha).toISOString().slice(0, 10);
+            byDate[dateKey] = (byDate[dateKey] || 0) + 1;
+        });
 
-        res.json(resumen);
+        const resumen = Object.entries(byDate).map(([fecha, total]) => ({ fecha, total }));
+
+        res.json({ exito: true, datos: { resumen } });
     } catch (error) {
         res.status(500).json({ mensaje: 'Error al obtener agenda: ' + error.message });
+    }
+});
+
+router.get('/agenda/dia', authenticateToken, async (req, res) => {
+    try {
+        const { fecha } = req.query;
+        if (!fecha) return res.status(400).json({ mensaje: 'Falta el parámetro fecha' });
+
+        const startDate = new Date(fecha + 'T00:00:00.000Z');
+        const endDate = new Date(fecha + 'T23:59:59.999Z');
+
+        const sesiones = await db.SesionInventario.findAll({
+            where: {
+                fecha: { [db.Sequelize.Op.between]: [startDate, endDate] }
+            },
+            include: [{ model: db.ClienteNegocio, as: 'clienteNegocio', attributes: ['id', 'nombre'] }],
+            order: [['fecha', 'ASC']]
+        });
+
+        const result = sesiones.map(s => ({
+            id: s.id,
+            numeroSesion: s.numeroSesion,
+            estado: s.estado,
+            fecha: s.fecha,
+            clienteNegocio: s.clienteNegocio ? { id: s.clienteNegocio.id, nombre: s.clienteNegocio.nombre } : null
+        }));
+
+        res.json({ exito: true, datos: { sesiones: result } });
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al obtener sesiones del día: ' + error.message });
     }
 });
 
@@ -336,7 +370,7 @@ router.get('/cliente/:clienteId', authenticateToken, async (req, res) => {
 
         const { count, rows } = await db.SesionInventario.findAndCountAll({
             where,
-            include: [{ model: db.ClienteNegocio }],
+            include: [{ model: db.ClienteNegocio, as: 'clienteNegocio' }],
             limit: parseInt(limite),
             offset: parseInt(offset),
             order: [['createdAt', 'DESC']]

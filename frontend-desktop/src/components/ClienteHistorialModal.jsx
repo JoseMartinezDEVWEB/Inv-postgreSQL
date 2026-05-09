@@ -13,15 +13,14 @@ const ClienteHistorialModal = ({ isOpen, onClose, cliente }) => {
 
     // Fetch sessions for this client
     const { data: sesionesData, isLoading } = useQuery(
-        ['sesiones-cliente', cliente?._id],
+        ['sesiones-cliente', cliente?.id],
         async () => {
-            if (!cliente?._id) return { datos: [] }
-            // Assuming endpoint: GET /sesiones/cliente/:id
-            const response = await sesionesApi.getByClient(cliente._id)
-            return response.data // Adjust based on actual API response structure
+            if (!cliente?.id) return { sesiones: [] }
+            const response = await sesionesApi.getByClient(cliente.id)
+            return response.data
         },
         {
-            enabled: !!cliente?._id && isOpen,
+            enabled: !!cliente?.id && isOpen,
         }
     )
 
@@ -98,7 +97,7 @@ const ClienteHistorialModal = ({ isOpen, onClose, cliente }) => {
             >
                 <div className="max-h-[60vh] overflow-y-auto">
                     <Table
-                        data={sesionesData?.datos || []}
+                        data={sesionesData?.sesiones || []}
                         columns={columns}
                         loading={isLoading}
                         emptyMessage="No hay inventarios registrados para este cliente"

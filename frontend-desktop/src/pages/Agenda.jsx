@@ -34,7 +34,7 @@ const Agenda = () => {
   const { data: resumenData, isLoading: resumenLoading } = useQuery(
     ['agenda-resumen', monthKey],
     () => sesionesApi.getAgendaResumen({ mes: monthKey, tz: getTz() }),
-    { select: (res) => res.data.datos }
+    { select: (res) => res.data.datos }  // backend returns { exito, datos: { resumen } }
   )
 
   const countsMap = useMemo(() => {
@@ -48,7 +48,7 @@ const Agenda = () => {
   const { data: diaData, isLoading: diaLoading } = useQuery(
     ['agenda-dia', selectedDate],
     () => sesionesApi.getAgendaDia({ fecha: selectedDate, tz: getTz() }),
-    { select: (res) => res.data.datos, enabled: !!selectedDate }
+    { select: (res) => res.data.datos, enabled: !!selectedDate }  // backend returns { exito, datos: { sesiones } }
   )
 
   const days = useMemo(() => {
@@ -155,12 +155,12 @@ const Agenda = () => {
         ) : diaData?.sesiones?.length ? (
           <div className="space-y-3">
             {diaData.sesiones.map((s) => (
-              <div key={s._id} className="flex items-center justify-between p-3 border rounded-lg">
+              <div key={s.id} className="flex items-center justify-between p-3 border rounded-lg">
                 <div>
                   <div className="text-sm font-semibold text-gray-900">{s.clienteNegocio?.nombre}</div>
                   <div className="text-xs text-gray-500">{s.numeroSesion}</div>
                 </div>
-                <Link to={`/inventarios/${s._id}`} className="text-primary-600 hover:text-primary-700 text-sm font-medium">
+                <Link to={`/inventarios/${s.id}`} className="text-primary-600 hover:text-primary-700 text-sm font-medium">
                   Ver detalle
                 </Link>
               </div>

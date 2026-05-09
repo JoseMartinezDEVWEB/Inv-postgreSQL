@@ -1,697 +1,650 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from 'react-query'
-import { Upload, FileText, X, CheckCircle, AlertCircle, Loader, Check } from 'lucide-react'
+import { Upload, FileText, X, CheckCircle, AlertCircle, Check } from 'lucide-react'
 import Modal from './ui/Modal'
 import Button from './ui/Button'
 import toast from 'react-hot-toast'
 import api from '../services/api'
 
 /**
- * Modal para importar inventarios desde archivos PDF con diseño de pasos
- * Paso 1: Seleccionar PDF
- * Paso 2: Procesar y Revisar (con animación de 3 segundos)
- * Paso 3: Confirmar Importación
+ * Modal de importación paso a paso:
+ *   1. Fecha del inventario
+ *   2. Archivo de Productos   (obligatorio — crea la sesión)
+ *   3. Archivo de Balance     (opcional)
+ *   4. Archivo de Distribución(opcional)
+ *   5. Resumen y confirmación
  */
+
+const fmt$ = (v) =>
+  v != null
+    ? `$${parseFloat(v).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '—'
+
+// ── Sub-componentes ─────────────────────────────────────────────────────────
+
+const StepDot = ({ num, label, done, active }) => (
+  <div className="flex flex-col items-center">
+    <div
+      className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white transition-all ${
+        done ? 'bg-green-500' : active ? 'bg-blue-600' : 'bg-gray-300'
+      }`}
+    >
+      {done ? <Check className="w-3.5 h-3.5" /> : num}
+    </div>
+    <span
+      className={`text-xs mt-0.5 text-center leading-tight ${
+        active ? 'text-blue-600 font-semibold' : done ? 'text-green-600' : 'text-gray-400'
+      }`}
+    >
+      {label}
+    </span>
+  </div>
+)
+
+const Connector = ({ done }) => (
+  <div className={`h-0.5 w-8 mb-3 transition-all flex-shrink-0 ${done ? 'bg-green-500' : 'bg-gray-300'}`} />
+)
+
+const ProgressBar = ({ progreso }) => (
+  <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+    <div
+      className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+      style={{ width: `${progreso}%` }}
+    />
+  </div>
+)
+
+const ResultRow = ({ label, value }) =>
+  value != null ? (
+    <div className="flex justify-between text-xs">
+      <span className="text-gray-500">{label}</span>
+      <span className="font-medium text-gray-800">{value}</span>
+    </div>
+  ) : null
+
+// ── Componente principal ─────────────────────────────────────────────────────
+
 const ImportarPDFModal = ({ isOpen, onClose, cliente }) => {
-  const [pasoActual, setPasoActual] = useState(1)
-  const [archivos, setArchivos] = useState([])
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const inputRef = useRef(null)
+
+  const [paso, setPaso] = useState(1)
+  const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
+  const [sesionId, setSesionId] = useState(null)
+  const [archivoActual, setArchivoActual] = useState(null)
   const [procesando, setProcesando] = useState(false)
   const [progreso, setProgreso] = useState(0)
-  const [resultado, setResultado] = useState(null)
   const [error, setError] = useState(null)
-  const [reintentoHecho, setReintentoHecho] = useState(false)
-  const [guardando, setGuardando] = useState(false)
-  const [fechaInventario, setFechaInventario] = useState(new Date().toISOString().split('T')[0]) // Fecha del inventario
-  const inputFileRef = useRef(null)
-  const queryClient = useQueryClient()
+  const [resumenProductos, setResumenProductos] = useState(null)
+  const [resumenBalance, setResumenBalance] = useState(null)
+  const [resumenDistribucion, setResumenDistribucion] = useState(null)
 
-  // Resetear al abrir/cerrar
   useEffect(() => {
     if (isOpen) {
-      setPasoActual(1)
-      setArchivos([])
-      setResultado(null)
-      setError(null)
+      setPaso(1)
+      setFecha(new Date().toISOString().split('T')[0])
+      setSesionId(null)
+      setArchivoActual(null)
       setProcesando(false)
       setProgreso(0)
-      setReintentoHecho(false)
-      setFechaInventario(new Date().toISOString().split('T')[0])
+      setError(null)
+      setResumenProductos(null)
+      setResumenBalance(null)
+      setResumenDistribucion(null)
     }
   }, [isOpen])
 
-  /**
-   * Maneja la selección de archivos PDF
-   */
+  const handleClose = () => {
+    setArchivoActual(null)
+    onClose()
+  }
+
+  // ── Selección de archivo ─────────────────────────────────────────────────
+
   const handleFileSelect = (e) => {
-    const files = Array.from(e.target.files)
-    
-    // Validar que sean PDFs o Excel
-    const archivosValidos = files.filter(file => 
-      file.type === 'application/pdf' || 
-      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-      file.type === 'application/vnd.ms-excel' ||
-      file.name?.endsWith('.pdf') ||
-      file.name?.endsWith('.xlsx') ||
-      file.name?.endsWith('.xls')
-    )
-    
-    if (archivosValidos.length !== files.length) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const ext = file.name.split('.').pop().toLowerCase()
+    if (!['pdf', 'xlsx', 'xls'].includes(ext)) {
       toast.error('Solo se permiten archivos PDF, XLSX o XLS')
-    }
-    
-    if (archivosValidos.length > 10) {
-      toast.error('Máximo 10 archivos permitidos')
       return
     }
-    
-    setArchivos(archivosValidos)
+    setArchivoActual(file)
     setError(null)
+    if (inputRef.current) inputRef.current.value = ''
   }
 
-  /**
-   * Avanza al siguiente paso
-   */
-  const handleSiguientePaso = () => {
-    if (pasoActual === 1 && archivos.length > 0) {
-      setPasoActual(2)
-      // Iniciar procesamiento automáticamente
-      setTimeout(() => {
-        handleImportar()
-      }, 500)
-    }
+  const handleDrop = (e) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files?.[0]
+    if (file) handleFileSelect({ target: { files: [file] } })
   }
 
-  /**
-   * Elimina un archivo de la lista
-   */
-  const handleRemoveFile = (index) => {
-    setArchivos(prev => prev.filter((_, i) => i !== index))
-  }
-
-  /**
-   * Formatea el tamaño del archivo
-   */
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
-  }
-
-  // Preflight: verificar que el procesador de PDF esté listo en el servidor
-  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-  const getParserEstado = async () => {
-    try {
-      const resp = await api.get('/clientes-negocios/importar-pdf/estado', { 
-        headers: { 'X-Client-Type': 'web' },
-        timeout: 5000 // Timeout corto para el preflight
-      })
-      return resp?.data?.datos || { ready: false }
-    } catch (err) {
-      console.warn('⚠️ Error al verificar estado del parser:', err.message)
-      // Si el error es 404, puede que la ruta haya cambiado o el servidor esté desactualizado
-      if (err.response?.status === 404) {
-        console.error('❌ Ruta de estado no encontrada (404). Verifique la configuración del backend.')
-        // En este caso, asumimos ready: true pero registramos el error para depuración
-        return { ready: true, warning: 'Endpoint ignore 404' }
+  // ── Config para peticiones multipart/form-data ─────────────────────────
+  // El axios instance tiene Content-Type: application/json por defecto.
+  // transformRequest lo borra para que axios ponga el boundary correcto al enviar FormData.
+  const multipartConfig = (extra = {}) => ({
+    ...extra,
+    headers: { 'X-Client-Type': 'web', ...(extra.headers || {}) },
+    transformRequest: [(data, headers) => {
+      if (headers) {
+        delete headers['Content-Type']
+        delete headers['content-type']
       }
-      return { ready: false, error: err.message }
-    }
-  }
-  const ensureServidorListo = async () => {
-    // Hasta 5 intentos, respetando cooldown si viene informado
-    for (let intento = 0; intento < 5; intento++) {
-      const estado = await getParserEstado()
-      if (estado.ready) return true
-      const cooldownMs = typeof estado.cooldownMs === 'number' ? estado.cooldownMs : 0
-      const espera = Math.min(8000, Math.max(1500, cooldownMs || 2000))
-      toast.loading(`Preparando procesador de PDF en el servidor. Intento ${intento + 1}/5...`, { id: 'preflight' })
-      await wait(espera)
-    }
-    toast.dismiss('preflight')
-    return false
+      return data
+    }],
+  })
+
+  // ── Helpers de progreso ─────────────────────────────────────────────────
+
+  const startProgress = (step = 8) => {
+    let iv
+    iv = setInterval(() => setProgreso((p) => Math.min(p + step, 85)), 400)
+    return iv
   }
 
-  /**
-   * Procesa los archivos con animación de 3 segundos adicionales
-   */
-  const handleImportar = async () => {
+  const finishProgress = (iv) => {
+    clearInterval(iv)
+    setProgreso(100)
+  }
+
+  const resetProgress = () => setProgreso(0)
+
+  // ── Paso 2: Procesar productos ───────────────────────────────────────────
+
+  const procesarProductos = async () => {
+    if (!archivoActual) return
     setProcesando(true)
     setError(null)
-    setProgreso(0)
+    resetProgress()
 
-    let intervalo
+    const formData = new FormData()
+    formData.append('file', archivoActual)
+    formData.append('fechaInventario', fecha)
+
+    const iv = startProgress(8)
     try {
-      // Preflight: evitar 503s repetidos si el servidor está inicializando
-      const listo = await ensureServidorListo()
-      if (!listo) {
-        setProcesando(false)
-        setError('El procesador de PDF se está preparando en el servidor. Intente de nuevo en unos segundos.')
-        toast.error('El procesador de PDF aún se está preparando. Vuelva a intentar en breve.')
-        return
-      }
-
-      // Crear FormData con los archivos
-      const formData = new FormData()
-      archivos.forEach(archivo => {
-        formData.append('files', archivo)
-      })
-      
-      // Agregar fecha del inventario si está disponible
-      if (fechaInventario) {
-        formData.append('fechaInventario', fechaInventario)
-      }
-
-      // Simular progreso inicial (animación)
-      let progresoSimulado = 0
-      intervalo = setInterval(() => {
-        progresoSimulado += 10
-        if (progresoSimulado <= 30) {
-          setProgreso(progresoSimulado)
-        }
-      }, 300)
-
-      // Realizar petición
-      const response = await api.post(
-        `/clientes-negocios/${cliente.id}/importar-pdf`,
+      const resp = await api.post(
+        `/clientes-negocios/${cliente.id}/importar/productos`,
         formData,
-        {
-          headers: {
-            'X-Client-Type': 'web'
-          },
-          transformRequest: [(data, headers) => {
-            if (headers) {
-              if (headers['Content-Type']) delete headers['Content-Type']
-              if (headers['content-type']) delete headers['content-type']
-            }
-            return data
-          }],
-          onUploadProgress: (progressEvent) => {
-            if (intervalo) clearInterval(intervalo)
-            const total = progressEvent?.total || progressEvent?.target?.getResponseHeader?.('Content-Length') || 0
-            if (total > 0) {
-              const percentCompleted = Math.round((progressEvent.loaded * 100) / total)
-              setProgreso(Math.max(30, Math.min(99, percentCompleted)))
-            } else {
-              // Si no hay total, avanzar suavemente hasta 90%
-              setProgreso(prev => Math.min(90, prev + 5))
-            }
-          },
-          timeout: 180000 // 3 minutos para dar tiempo a la IA
-        }
+        multipartConfig({ timeout: 180000 })
       )
+      finishProgress(iv)
+      if (!resp.data.exito) throw new Error(resp.data.mensaje || 'Error al procesar')
 
-      if (intervalo) clearInterval(intervalo)
+      setSesionId(resp.data.datos.sesionId)
+      setResumenProductos(resp.data.datos)
+      queryClient.invalidateQueries(['sesiones', cliente.id])
+      queryClient.invalidateQueries(['sesiones-cliente', cliente.id])
+      queryClient.invalidateQueries(['clientInventories', cliente.id])
+      queryClient.invalidateQueries(['agenda-resumen'])
+      toast.success(`${resp.data.datos.totalProductos} productos importados`)
 
-      if (response.data.exito) {
-        setProgreso(100)
-        // Espera extra para UX según cantidad de archivos
-        const extraDelayMs = 1500 + Math.min(10, archivos.length) * 500
-        await new Promise((r) => setTimeout(r, extraDelayMs))
-        setResultado(response.data.datos)
-        setPasoActual(3)
-        queryClient.invalidateQueries('clientes')
-        queryClient.invalidateQueries(['sesiones', cliente.id])
-      } else {
-        throw new Error(response.data.mensaje || 'Error al procesar PDFs')
-      }
-    } catch (error) {
-      console.error('Error al importar PDFs:', error)
-      const mensaje = error.response?.data?.mensaje || error.message || 'Error al importar PDFs'
-      const headers = error?.response?.headers || {}
-      const msgLower = (mensaje || '').toLowerCase()
-      const es503 = error?.response?.status === 503
-      const parserInit = es503 && (headers['x-parser-initializing'] === 'true' || msgLower.includes('procesador de pdf'))
-      const retryAfterHeader = headers['retry-after']
-      const cooldownMsHeader = headers['x-parser-cooldown']
-      const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : undefined
-      const espera = typeof retryAfterMs === 'number' && !Number.isNaN(retryAfterMs)
-        ? Math.max(1500, Math.min(10000, retryAfterMs))
-        : (typeof cooldownMsHeader === 'string' ? Math.max(1500, Math.min(10000, Number(cooldownMsHeader))) : 1800)
-
-      if (!reintentoHecho && (parserInit || msgLower.includes('pdfplumber'))) {
-        setReintentoHecho(true)
-        if (intervalo) clearInterval(intervalo)
-        toast.loading(`Preparando procesador de PDF en el servidor. Reintentando en ${Math.ceil(espera/1000)}s...`, { id: 'pdf-retry' })
-        await wait(espera)
-        toast.dismiss('pdf-retry')
-        return await handleImportar()
-      }
-      setProgreso(0)
-      setError(mensaje)
-      toast.error(mensaje)
+      setTimeout(() => { setArchivoActual(null); resetProgress(); setPaso(3) }, 700)
+    } catch (e) {
+      clearInterval(iv)
+      const msg = e.response?.data?.mensaje || e.message || 'Error al procesar productos'
+      setError(msg)
+      toast.error(msg)
+      resetProgress()
     } finally {
-      if (intervalo) clearInterval(intervalo)
       setProcesando(false)
     }
   }
 
-  /**
-   * Confirma la importación y cierra el modal
-   */
-  const handleConfirmarImportacion = () => {
-    toast.success('Inventario importado exitosamente')
-    handleClose()
-  }
+  // ── Paso 3: Procesar balance ─────────────────────────────────────────────
 
-  const handleGuardarCambios = async () => {
+  const procesarBalance = async () => {
+    if (!archivoActual || !sesionId) return
+    setProcesando(true)
+    setError(null)
+    resetProgress()
+
+    const formData = new FormData()
+    formData.append('file', archivoActual)
+
+    const iv = startProgress(12)
     try {
-      const id = resultado?.sesion?.id
-      if (!id) return
-      setGuardando(true)
-      const resp = await api.patch(`/sesiones-inventario/${id}/completar`)
-      if (resp.data?.exito) {
-        toast.success('Sesión guardada')
-        setResultado((prev) => ({
-          ...prev,
-          sesion: resp.data?.datos?.sesion || prev?.sesion
-        }))
-        queryClient.invalidateQueries(['sesiones', cliente.id])
-      } else {
-        throw new Error(resp.data?.mensaje || 'No se pudo guardar la sesión')
-      }
+      const resp = await api.patch(
+        `/clientes-negocios/${cliente.id}/sesiones/${sesionId}/importar-balance`,
+        formData,
+        multipartConfig({ timeout: 60000 })
+      )
+      finishProgress(iv)
+      if (!resp.data.exito) throw new Error(resp.data.mensaje || 'Error al procesar balance')
+
+      setResumenBalance(resp.data.datos.balance)
+      toast.success('Balance General importado')
+
+      setTimeout(() => { setArchivoActual(null); resetProgress(); setPaso(4) }, 700)
     } catch (e) {
-      const msg = e.response?.data?.mensaje || e.message || 'Error al guardar cambios'
+      clearInterval(iv)
+      const msg = e.response?.data?.mensaje || e.message || 'Error al procesar balance'
+      setError(msg)
       toast.error(msg)
+      resetProgress()
     } finally {
-      setGuardando(false)
+      setProcesando(false)
     }
   }
 
-  /**
-   * Resetea el modal
-   */
-  const handleClose = () => {
-    setArchivos([])
-    setResultado(null)
-    setProgreso(0)
-    setProcesando(false)
-    setReintentoHecho(false)
-    onClose()
+  // ── Paso 4: Procesar distribución ────────────────────────────────────────
+
+  const procesarDistribucion = async () => {
+    if (!archivoActual || !sesionId) return
+    setProcesando(true)
+    setError(null)
+    resetProgress()
+
+    const formData = new FormData()
+    formData.append('file', archivoActual)
+
+    const iv = startProgress(12)
+    try {
+      const resp = await api.patch(
+        `/clientes-negocios/${cliente.id}/sesiones/${sesionId}/importar-distribucion`,
+        formData,
+        multipartConfig({ timeout: 60000 })
+      )
+      finishProgress(iv)
+      if (!resp.data.exito) throw new Error(resp.data.mensaje || 'Error al procesar distribución')
+
+      setResumenDistribucion(resp.data.datos.distribucion)
+      toast.success('Distribución de Saldo importada')
+
+      setTimeout(() => { setArchivoActual(null); resetProgress(); setPaso(5) }, 700)
+    } catch (e) {
+      clearInterval(iv)
+      const msg = e.response?.data?.mensaje || e.message || 'Error al procesar distribución'
+      setError(msg)
+      toast.error(msg)
+      resetProgress()
+    } finally {
+      setProcesando(false)
+    }
   }
+
+  const saltar = () => { setArchivoActual(null); setError(null); setPaso(paso + 1) }
+
+  // ── Drop Zone ──────────────────────────────────────────────────────────
+
+  const DropZone = ({ label }) => (
+    <div
+      className={`border-2 border-dashed rounded-lg p-5 text-center cursor-pointer transition-colors ${
+        archivoActual
+          ? 'border-blue-400 bg-blue-50'
+          : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+      }`}
+      onClick={() => inputRef.current?.click()}
+      onDrop={handleDrop}
+      onDragOver={(e) => e.preventDefault()}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf,.xlsx,.xls"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+      {archivoActual ? (
+        <div className="flex items-center justify-center gap-2">
+          <FileText className="w-5 h-5 text-blue-500 flex-shrink-0" />
+          <span className="text-sm font-medium text-blue-700 truncate max-w-[300px]">
+            {archivoActual.name}
+          </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); setArchivoActual(null) }}
+            className="text-gray-400 hover:text-red-500 flex-shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      ) : (
+        <>
+          <Upload className="w-7 h-7 mx-auto text-gray-400 mb-1" />
+          <p className="text-sm text-gray-600">{label}</p>
+          <p className="text-xs text-gray-400 mt-0.5">PDF, XLSX o XLS · máx. 50 MB</p>
+        </>
+      )}
+    </div>
+  )
+
+  // ── Render ─────────────────────────────────────────────────────────────
+
+  const STEPS = [
+    { id: 1, label: 'Fecha' },
+    { id: 2, label: 'Productos' },
+    { id: 3, label: 'Balance' },
+    { id: 4, label: 'Distribución' },
+    { id: 5, label: 'Listo' },
+  ]
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={handleClose}
       title="Importar Inventario desde Archivo"
-      size="lg"
+      size="xl"
     >
-      <div className="space-y-6">
-        {/* Indicador de pasos */}
-        <div className="flex items-center justify-center space-x-4 mb-8">
-          {/* Paso 1 */}
-          <div className="flex flex-col items-center">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-white transition-all ${
-              pasoActual >= 1 ? 'bg-blue-600' : 'bg-gray-300'
-            }`}>
-              {pasoActual > 1 ? <Check className="w-6 h-6" /> : '1'}
-            </div>
-            <span className={`text-sm mt-2 font-medium ${
-              pasoActual >= 1 ? 'text-blue-600' : 'text-gray-400'
-            }`}>
-              Seleccionar PDF
-            </span>
-          </div>
+      <div className="space-y-4">
 
-          {/* Línea conectora */}
-          <div className={`h-1 w-16 transition-all ${
-            pasoActual >= 2 ? 'bg-blue-600' : 'bg-gray-300'
-          }`} />
-
-          {/* Paso 2 */}
-          <div className="flex flex-col items-center">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-white transition-all ${
-              pasoActual >= 2 ? 'bg-blue-600' : 'bg-gray-300'
-            }`}>
-              {pasoActual > 2 ? <Check className="w-6 h-6" /> : '2'}
-            </div>
-            <span className={`text-sm mt-2 font-medium ${
-              pasoActual >= 2 ? 'text-blue-600' : 'text-gray-400'
-            }`}>
-              Procesar y Revisar
-            </span>
-          </div>
-
-          {/* Línea conectora */}
-          <div className={`h-1 w-16 transition-all ${
-            pasoActual >= 3 ? 'bg-blue-600' : 'bg-gray-300'
-          }`} />
-
-          {/* Paso 3 */}
-          <div className="flex flex-col items-center">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-white transition-all ${
-              pasoActual >= 3 ? 'bg-blue-600' : 'bg-gray-300'
-            }`}>
-              3
-            </div>
-            <span className={`text-sm mt-2 font-medium ${
-              pasoActual >= 3 ? 'text-blue-600' : 'text-gray-400'
-            }`}>
-              Confirmar Importación
-            </span>
-          </div>
+        {/* ── Indicador de pasos ─────────────────────────────────────────── */}
+        <div className="flex items-center justify-center gap-0">
+          {STEPS.map((s, i) => (
+            <React.Fragment key={s.id}>
+              <StepDot
+                num={s.id}
+                label={s.label}
+                done={paso > s.id}
+                active={paso === s.id}
+              />
+              {i < STEPS.length - 1 && <Connector done={paso > s.id} />}
+            </React.Fragment>
+          ))}
         </div>
 
-        {/* Mensaje de error */}
+        {/* ── Error ──────────────────────────────────────────────────────── */}
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start">
-            <AlertCircle className="w-5 h-5 text-red-600 mr-3 mt-0.5 flex-shrink-0" />
-            <div className="text-sm text-red-800">
-              <p className="font-semibold">Error al procesar archivos</p>
-              <p className="mt-1">{error}</p>
-            </div>
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-red-800">{error}</p>
           </div>
         )}
 
-        {/* Contenido según el paso actual */}
-        <div className="min-h-[300px]">
-          {/* PASO 1: Seleccionar PDF */}
-          {pasoActual === 1 && (
-            <div className="space-y-4">
-              <div
-                className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 transition-colors"
-                onClick={() => inputFileRef.current?.click()}
-              >
-                <Upload className="w-12 h-12 mx-auto text-gray-400 mb-4" />
-                <p className="text-gray-600 mb-2">
-                  Haga clic para seleccionar archivos (PDF, XLSX, XLS)
-                </p>
-                <p className="text-sm text-gray-500">
-                  Máximo 10 archivos, 50MB cada uno
-                </p>
-                <input
-                  ref={inputFileRef}
-                  type="file"
-                  accept=".pdf,.xlsx,.xls,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                  multiple
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-              </div>
+        {/* ── Contenido del paso ─────────────────────────────────────────── */}
+        <div className="min-h-[200px] max-h-[52vh] overflow-y-auto pr-1 space-y-3">
 
-              {/* Campo de fecha del inventario */}
-              <div className="bg-blue-50 border-2 border-blue-500 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                  <label className="text-sm font-bold text-blue-900">
-                    Fecha del Inventario Original *
-                  </label>
-                </div>
-                <p className="text-xs text-gray-600 mb-3">
-                  Especifique la fecha en que se realizó originalmente este inventario
+          {/* PASO 1 — Fecha */}
+          {paso === 1 && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-1">¿Cuál es la fecha de este inventario?</h3>
+                <p className="text-sm text-gray-500 mb-3">
+                  Se usará como fecha de la sesión que se creará al importar.
                 </p>
                 <input
                   type="date"
-                  value={fechaInventario}
-                  onChange={(e) => setFechaInventario(e.target.value)}
-                  className="w-full px-4 py-2 border-2 border-blue-500 rounded-lg text-gray-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
+                  value={fecha}
+                  onChange={(e) => setFecha(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <p className="text-xs text-gray-500 mt-2 italic">
-                  Formato: Año-Mes-Día (ej: 2026-01-15)
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+                <p className="font-semibold text-blue-900 mb-2">¿Cómo funciona la importación?</p>
+                <ol className="list-decimal list-inside space-y-1 text-blue-700">
+                  <li>Sube el archivo de <strong>Productos</strong> — reporte de inventario (obligatorio)</li>
+                  <li>Sube el archivo de <strong>Balance General</strong> — datos financieros (opcional)</li>
+                  <li>Sube el archivo de <strong>Distribución de Saldo</strong> (opcional)</li>
+                </ol>
+                <p className="text-xs text-blue-600 mt-2">
+                  Cada archivo se procesa por separado para mayor precisión.
                 </p>
               </div>
+            </div>
+          )}
 
-              {/* Lista de archivos seleccionados */}
-              {archivos.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="font-semibold text-gray-900">
-                    Archivos seleccionados ({archivos.length})
-                  </h4>
-                  {archivos.map((archivo, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center justify-between bg-gray-50 p-3 rounded-lg"
-                    >
-                      <div className="flex items-center space-x-3">
-                        <FileText className="w-5 h-5 text-red-500" />
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">
-                            {archivo.name}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {formatFileSize(archivo.size)}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleRemoveFile(index)}
-                        className="text-gray-400 hover:text-red-500 transition-colors"
-                      >
-                        <X className="w-5 h-5" />
-                      </button>
-                    </div>
-                  ))}
+          {/* PASO 2 — Productos */}
+          {paso === 2 && (
+            <div className="space-y-3">
+              <div>
+                <h3 className="font-semibold text-gray-900">
+                  Archivo de Productos <span className="text-red-500">*</span>
+                </h3>
+                <p className="text-sm text-gray-500">
+                  Reporte de inventario con lista de productos, cantidades y costos.
+                </p>
+              </div>
+              <DropZone label="Haz clic o arrastra el reporte de inventario de productos" />
+              {procesando && (
+                <div>
+                  <div className="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>Extrayendo productos...</span>
+                    <span>{progreso}%</span>
+                  </div>
+                  <ProgressBar progreso={progreso} />
+                </div>
+              )}
+              {resumenProductos && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-3">
+                  <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-green-900">
+                      {resumenProductos.totalProductos} productos extraídos
+                    </p>
+                    <p className="text-xs text-green-700">
+                      Total Inventario: {fmt$(resumenProductos.totalGeneral)}
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
           )}
 
-          {/* PASO 2: Procesar y Revisar */}
-          {pasoActual === 2 && (
-            <div className="flex flex-col items-center justify-center py-12">
-              <div className="relative mb-6">
-                <div className="w-24 h-24 border-8 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <FileText className="w-10 h-10 text-blue-600" />
-                </div>
+          {/* PASO 3 — Balance General */}
+          {paso === 3 && (
+            <div className="space-y-3">
+              <div>
+                <h3 className="font-semibold text-gray-900">
+                  Archivo de Balance General{' '}
+                  <span className="text-gray-400 font-normal text-sm">(opcional)</span>
+                </h3>
+                <p className="text-sm text-gray-500">
+                  Sube el PDF con el Balance General del negocio para incluir los datos financieros.
+                  Si no tienes este archivo, haz clic en <strong>Saltar</strong>.
+                </p>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                Procesando archivos PDF...
-              </h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Analizando y extrayendo datos del inventario
-              </p>
-              <div className="w-full max-w-md">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">
-                    Progreso
+              <DropZone label="Haz clic o arrastra el archivo de Balance General" />
+              {procesando && (
+                <div>
+                  <div className="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>Extrayendo balance...</span>
+                    <span>{progreso}%</span>
+                  </div>
+                  <ProgressBar progreso={progreso} />
+                </div>
+              )}
+              {resumenBalance && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                    <span className="text-sm font-semibold text-green-900">Balance General importado</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                    <ResultRow label="Efectivo / Caja / Banco" value={fmt$(resumenBalance.efectivo_caja_banco)} />
+                    <ResultRow label="Cuentas por Cobrar" value={fmt$(resumenBalance.cuentas_por_cobrar)} />
+                    <ResultRow label="Inventario" value={fmt$(resumenBalance.valor_inventario)} />
+                    <ResultRow label="Activos Fijos" value={fmt$(resumenBalance.activos_fijos)} />
+                    <ResultRow label="Total Activos" value={fmt$(resumenBalance.total_activos)} />
+                    <ResultRow label="Total Pasivos" value={fmt$(resumenBalance.total_pasivos)} />
+                    <ResultRow label="Capital Contable" value={fmt$(resumenBalance.capital_contable)} />
+                    <ResultRow label="Ventas del Mes" value={fmt$(resumenBalance.ventas_del_mes)} />
+                    <ResultRow label="Utilidad Bruta" value={fmt$(resumenBalance.utilidad_bruta)} />
+                    <ResultRow label="Gastos Generales" value={fmt$(resumenBalance.gastos_generales)} />
+                    <ResultRow label="Utilidad Neta" value={fmt$(resumenBalance.utilidad_neta)} />
+                    <ResultRow
+                      label="% Neto"
+                      value={resumenBalance.porcentaje_neto != null ? `${resumenBalance.porcentaje_neto}%` : null}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* PASO 4 — Distribución de Saldo */}
+          {paso === 4 && (
+            <div className="space-y-3">
+              <div>
+                <h3 className="font-semibold text-gray-900">
+                  Archivo de Distribución de Saldo{' '}
+                  <span className="text-gray-400 font-normal text-sm">(opcional)</span>
+                </h3>
+                <p className="text-sm text-gray-500">
+                  Sube el PDF con la Distribución de Saldo para visualizar el desglose de activos.
+                  Si no tienes este archivo, haz clic en <strong>Saltar</strong>.
+                </p>
+              </div>
+              <DropZone label="Haz clic o arrastra el archivo de Distribución de Saldo" />
+              {procesando && (
+                <div>
+                  <div className="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>Extrayendo distribución...</span>
+                    <span>{progreso}%</span>
+                  </div>
+                  <ProgressBar progreso={progreso} />
+                </div>
+              )}
+              {resumenDistribucion && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                    <span className="text-sm font-semibold text-green-900">Distribución de Saldo importada</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                    <ResultRow label="Efectivo / Caja / Banco" value={fmt$(resumenDistribucion.efectivo_caja_banco)} />
+                    <ResultRow label="Inventario" value={fmt$(resumenDistribucion.inventario_mercancia)} />
+                    <ResultRow label="Activos Fijos" value={fmt$(resumenDistribucion.activos_fijos)} />
+                    <ResultRow label="Cuentas por Cobrar" value={fmt$(resumenDistribucion.cuentas_por_cobrar)} />
+                    <ResultRow label="Cuentas por Pagar" value={fmt$(resumenDistribucion.cuentas_por_pagar)} />
+                    <ResultRow label="Total Utilidades Netas" value={fmt$(resumenDistribucion.total_utilidades_netas)} />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* PASO 5 — Resumen final */}
+          {paso === 5 && (
+            <div className="space-y-3">
+              <div className="text-center py-2">
+                <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-2" />
+                <h3 className="font-semibold text-gray-900 text-lg">¡Importación completada!</h3>
+                <p className="text-sm text-gray-500 mt-1">El inventario fue guardado como nueva sesión.</p>
+              </div>
+
+              {/* Resumen general */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-1.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Cliente:</span>
+                  <span className="font-medium">{cliente?.nombre}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Fecha:</span>
+                  <span className="font-medium">
+                    {new Date(fecha + 'T12:00:00').toLocaleDateString('es-DO')}
                   </span>
-                  <span className="text-sm font-medium text-blue-600">
-                    {progreso}%
+                </div>
+                {resumenProductos && (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Productos:</span>
+                      <span className="font-medium">{resumenProductos.totalProductos}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Total Inventario:</span>
+                      <span className="font-medium">{fmt$(resumenProductos.totalGeneral)}</span>
+                    </div>
+                  </>
+                )}
+                {resumenBalance?.ventas_del_mes != null && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Ventas del Mes:</span>
+                    <span className="font-medium">{fmt$(resumenBalance.ventas_del_mes)}</span>
+                  </div>
+                )}
+                {resumenBalance?.utilidad_neta != null && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Utilidad Neta:</span>
+                    <span className="font-medium">{fmt$(resumenBalance.utilidad_neta)}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Tags de archivos importados */}
+              <div className="flex flex-wrap gap-2">
+                <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-1 rounded-full">
+                  ✅ Productos importados
+                </span>
+                {resumenBalance && (
+                  <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-1 rounded-full">
+                    ✅ Balance General
                   </span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-3">
-                  <div
-                    className="bg-blue-600 h-3 rounded-full transition-all duration-500 ease-out"
-                    style={{ width: `${progreso}%` }}
-                  />
-                </div>
+                )}
+                {resumenDistribucion && (
+                  <span className="bg-purple-100 text-purple-800 text-xs font-medium px-2.5 py-1 rounded-full">
+                    ✅ Distribución de Saldo
+                  </span>
+                )}
               </div>
             </div>
           )}
 
-          {/* PASO 3: Confirmar Importación */}
-          {pasoActual === 3 && resultado && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-center text-green-600 mb-4">
-                <CheckCircle className="w-16 h-16" />
-              </div>
-              
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <h4 className="font-semibold text-green-900 mb-3">
-                  ✅ Importación Exitosa
-                </h4>
-                
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-green-700">Cliente:</span>
-                    <span className="font-medium text-green-900">
-                      {resultado.resumen?.cliente}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-green-700">Fecha:</span>
-                    <span className="font-medium text-green-900">
-                      {new Date(resultado.resumen?.fecha).toLocaleDateString()}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-green-700">Productos:</span>
-                    <span className="font-medium text-green-900">
-                      {resultado.resumen?.totalProductos}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-green-700">Total General:</span>
-                    <span className="font-medium text-green-900">
-                      ${resultado.resumen?.totalGeneral?.toLocaleString('es-DO', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                      })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-green-700">Archivos procesados:</span>
-                    <span className="font-medium text-green-900">{resultado.resumen?.archivosProcesados ?? resultado.resumen?.archivosProcessados}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-green-700">Sesión:</span>
-                    <span className="font-medium text-green-900">
-                      {resultado.sesion?.numeroSesion}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Balance General */}
-              {resultado.resumen?.balanceGeneral && (
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                  <h4 className="font-semibold text-gray-900 mb-3">
-                    Balance General
-                  </h4>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
-                    <div>
-                      <span className="text-gray-600">Efectivo:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.efectivo_caja_banco?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Ctas. por Cobrar:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.cuentas_por_cobrar?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Inventario:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.valor_inventario?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Activos Fijos:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.activos_fijos?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Deuda a Negocio:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.deuda_a_negocio?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Total Corrientes:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.total_corrientes?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Total Fijos:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.total_fijos?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Total Activos:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.total_activos?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Ctas. por Pagar:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.cuentas_por_pagar?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Total Pasivos:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.total_pasivos?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Capital Contable:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.capital_contable?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Pasivos + Capital:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.total_pasivos_mas_capital?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Ventas del Mes:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.ventas_del_mes?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Gastos Generales:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.gastos_generales?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Utilidad Neta:</span>
-                      <span className="ml-2 font-medium">${resultado.resumen.balanceGeneral.utilidad_neta?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">% Neto:</span>
-                      <span className="ml-2 font-medium">{resultado.resumen.balanceGeneral.porcentaje_neto ?? 0}%</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">% Bruto:</span>
-                      <span className="ml-2 font-medium">{resultado.resumen.balanceGeneral.porcentaje_bruto ?? 0}%</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Distribución de saldo */}
-              {resultado.resumen?.distribucionSaldo && (
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                  <h4 className="font-semibold text-gray-900 mb-3">Distribución de saldo</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
-                    <div><span className="text-gray-600">Efectivo/Caja/Banco:</span><span className="ml-2 font-medium">${resultado.resumen.distribucionSaldo.efectivo_caja_banco?.toLocaleString()}</span></div>
-                    <div><span className="text-gray-600">Inventario:</span><span className="ml-2 font-medium">${resultado.resumen.distribucionSaldo.inventario_mercancia?.toLocaleString()}</span></div>
-                    <div><span className="text-gray-600">Activos Fijos:</span><span className="ml-2 font-medium">${resultado.resumen.distribucionSaldo.activos_fijos?.toLocaleString()}</span></div>
-                    <div><span className="text-gray-600">Ctas. por Cobrar:</span><span className="ml-2 font-medium">${resultado.resumen.distribucionSaldo.cuentas_por_cobrar?.toLocaleString()}</span></div>
-                    <div><span className="text-gray-600">Ctas. por Pagar:</span><span className="ml-2 font-medium">${resultado.resumen.distribucionSaldo.cuentas_por_pagar?.toLocaleString()}</span></div>
-                    <div><span className="text-gray-600">Otros:</span><span className="ml-2 font-medium">${resultado.resumen.distribucionSaldo.otros?.toLocaleString()}</span></div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
-      </div>
 
-      {/* Footer con botones según el paso */}
-      <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
-        {pasoActual === 1 && (
-          <>
-            <Button
-              variant="outline"
-              onClick={handleClose}
-            >
-              Cancelar
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleSiguientePaso}
-              disabled={archivos.length === 0}
-            >
-              Siguiente
-            </Button>
-          </>
-        )}
-
-        {pasoActual === 2 && (
-          <Button
-            variant="outline"
-            onClick={handleClose}
-            disabled={procesando}
-          >
-            Cancelar
+        {/* ── Footer de botones ──────────────────────────────────────────── */}
+        <div className="flex items-center justify-between pt-3 border-t border-gray-200">
+          <Button variant="outline" onClick={handleClose} disabled={procesando}>
+            {paso === 5 ? 'Cerrar' : 'Cancelar'}
           </Button>
-        )}
 
-        {pasoActual === 3 && (
-          <>
-            <Button
-              variant="primary"
-              onClick={handleGuardarCambios}
-              disabled={!resultado?.sesion?._id || guardando}
-            >
-              {guardando ? 'Guardando...' : 'Guardar cambios'}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                const id = resultado?.sesion?.id
-                if (id) {
-                  onClose?.()
-                  navigate(`/inventarios/${id}`)
-                }
-              }}
-              disabled={!resultado?.sesion?.id}
-            >
-              Ver sesión
-            </Button>
-            <Button variant="primary" onClick={handleConfirmarImportacion}>Cerrar</Button>
-          </>
-        )}
+          <div className="flex gap-2">
+            {/* Saltar pasos opcionales */}
+            {(paso === 3 || paso === 4) && !procesando && (
+              <Button variant="outline" onClick={saltar}>
+                Saltar
+              </Button>
+            )}
+
+            {/* Acción principal por paso */}
+            {paso === 1 && (
+              <Button variant="primary" onClick={() => { setError(null); setPaso(2) }} disabled={!fecha}>
+                Continuar →
+              </Button>
+            )}
+
+            {paso === 2 && (
+              <Button
+                variant="primary"
+                onClick={procesarProductos}
+                disabled={!archivoActual || procesando}
+              >
+                {procesando ? 'Procesando...' : 'Procesar Productos'}
+              </Button>
+            )}
+
+            {paso === 3 && (
+              <Button
+                variant="primary"
+                onClick={procesarBalance}
+                disabled={!archivoActual || procesando}
+              >
+                {procesando ? 'Procesando...' : 'Procesar Balance'}
+              </Button>
+            )}
+
+            {paso === 4 && (
+              <Button
+                variant="primary"
+                onClick={procesarDistribucion}
+                disabled={!archivoActual || procesando}
+              >
+                {procesando ? 'Procesando...' : 'Procesar Distribución'}
+              </Button>
+            )}
+
+            {paso === 5 && sesionId && (
+              <Button
+                variant="primary"
+                onClick={() => { onClose?.(); navigate(`/inventarios/${sesionId}`) }}
+              >
+                Ver Sesión →
+              </Button>
+            )}
+          </div>
+        </div>
+
       </div>
     </Modal>
   )
