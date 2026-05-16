@@ -1,0 +1,52 @@
+{
+  "appId": "com.j4pro.tech-stock-sqlite",
+  "productName": "TECH STOCK J4-PRO",
+  "copyright": "Copyright © 2026 J4 Pro",
+  "directories": {
+    "output": "dist-installer/sqlite",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "resources/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "resources/backend",
+      "to": "backend",
+      "filter": [
+        "**/*",
+        "!database/inventario.db",
+        "!database/backups/**",
+        "!logs/**"
+      ]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "icon": "build/icon.ico",
+    "artifactName": "TECH-STOCK-J4PRO-SQLite-Setup-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "TECH STOCK J4-PRO",
+    "installerIcon": "build/icon.ico",
+    "uninstallerIcon": "build/icon.ico",
+    "language": "1034",
+    "warningsAsErrors": false
+  }
+}

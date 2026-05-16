@@ -1,0 +1,53 @@
+{
+  "appId": "com.j4pro.tech-stock",
+  "productName": "TECH STOCK J4-PRO",
+  "copyright": "Copyright © 2026 J4 Pro",
+  "directories": {
+    "output": "C:/Users/ASUS/Desktop/instalador-inv/postgresql",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "resources/backend-pg",
+      "to": "backend",
+      "filter": [
+        "**/*",
+        "!uploads/**",
+        "!*.log",
+        "!error_debug.log",
+        "!request_debug.log",
+        "!socket_trace.log"
+      ]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "icon": "build/icon.ico",
+    "artifactName": "TECH-STOCK-J4PRO-PostgreSQL-Setup-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "TECH STOCK J4-PRO",
+    "installerIcon": "build/icon.ico",
+    "uninstallerIcon": "build/icon.ico",
+    "language": "1034",
+    "warningsAsErrors": false
+  }
+}
