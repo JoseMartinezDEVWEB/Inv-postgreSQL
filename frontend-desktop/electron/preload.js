@@ -18,6 +18,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Limpiar listeners
   removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel),
   
+  // Notificaciones de actualización de la app
+  onAppUpdate: (callback) => ipcRenderer.on('app-update-available', (_, info) => callback(info)),
+
+  // Backup de base de datos
+  backup: {
+    crear   : (etiqueta) => ipcRenderer.invoke('backup-crear', etiqueta),
+    listar  : ()         => ipcRenderer.invoke('backup-listar'),
+    exportar: (filename) => ipcRenderer.invoke('backup-exportar', filename),
+    importar: ()         => ipcRenderer.invoke('backup-importar'),
+    eliminar: (filename) => ipcRenderer.invoke('backup-eliminar', filename),
+  },
+
   // Información del sistema
   platform: process.platform,
   isElectron: true

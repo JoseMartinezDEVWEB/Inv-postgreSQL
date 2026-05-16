@@ -1,5 +1,7 @@
 import { randomBytes } from 'crypto'
+import jwt from 'jsonwebtoken'
 import dbManager from '../config/database.js'
+import config from '../config/env.js'
 
 // Estados de conexión posibles
 const ESTADOS_CONEXION = {
@@ -120,17 +122,46 @@ class SolicitudConexion {
     }))
   }
 
-  // Aceptar solicitud
+  // Generar JWT de sesión para el colaborador mobile
+  static generarSessionToken(solicitud) {
+    const payload = {
+      id           : solicitud.id,
+      solicitudId  : solicitud.id,
+      nombre       : solicitud.nombreColaborador,
+      contableId   : solicitud.contableId,
+      rol          : 'colaborador_temporal',
+      tipo         : 'colaborador_temporal',
+    }
+    return jwt.sign(payload, config.jwt.secret, { expiresIn: '365d' })
+  }
+
+  // Aceptar solicitud — genera y persiste el sessionToken para el colaborador
   static aceptar(id) {
     const db = dbManager.getDatabase()
-    const stmt = db.prepare(`
+
+    // Actualizar estado primero
+    db.prepare(`
       UPDATE solicitudes_conexion
       SET estado = 'aceptada', aceptadaEn = CURRENT_TIMESTAMP
       WHERE id = ?
-    `)
-    stmt.run(id)
+    `).run(id)
 
-    return SolicitudConexion.buscarPorId(id)
+    const solicitud = SolicitudConexion.buscarPorId(id)
+
+    // Generar token JWT para el colaborador
+    const sessionToken = SolicitudConexion.generarSessionToken(solicitud)
+
+    // Persistir el token para que verificarEstado lo devuelva en el polling
+    try {
+      db.prepare(`
+        UPDATE solicitudes_conexion SET sessionToken = ? WHERE id = ?
+      `).run(sessionToken, id)
+    } catch (e) {
+      // Si la columna aún no existe (primera vez antes de migración), continuar sin crash
+      console.warn('⚠️ No se pudo guardar sessionToken (migración pendiente):', e.message)
+    }
+
+    return { ...solicitud, sessionToken }
   }
 
   // Rechazar solicitud

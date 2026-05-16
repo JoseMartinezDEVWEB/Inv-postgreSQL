@@ -1,375 +1,327 @@
-import { exec } from 'child_process'
-import { promisify } from 'util'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import fs from 'fs/promises'
-import { existsSync } from 'fs'
-import ProductoGeneral from '../models/ProductoGeneral.js'
+import { existsSync, readFileSync } from 'fs'
+import XLSX from 'xlsx'
+import { PDFParse } from 'pdf-parse'
+import dbManager from '../config/database.js'
 import { respuestaExito } from '../utils/helpers.js'
 import { AppError } from '../middlewares/errorHandler.js'
 
-const execAsync = promisify(exec)
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-/**
- * Detecta qué comando de Python está disponible en el sistema
- * Intenta: python, python3, py (en Windows)
- */
-async function detectarComandoPython() {
-  const comandos = process.platform === 'win32' 
-    ? ['py', 'python', 'python3'] 
-    : ['python3', 'python']
-  
-  for (const comando of comandos) {
-    try {
-      await execAsync(`${comando} --version`, { timeout: 3000 })
-      return comando
-    } catch (error) {
-      // Continuar con el siguiente comando
-      continue
-    }
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+function limpiarTexto(valor) {
+  if (valor === null || valor === undefined) return ''
+  return String(valor).trim()
+}
+
+function parsearNumero(valor) {
+  if (valor === null || valor === undefined || valor === '') return 0
+  if (typeof valor === 'number') return isNaN(valor) ? 0 : valor
+  const s = String(valor).replace(/[$€RD,\s]/g, '').replace(/[^0-9.-]/g, '')
+  const n = parseFloat(s)
+  return isNaN(n) ? 0 : n
+}
+
+const HEADERS_IGNORAR = new Set([
+  'nombre','descripcion','articulo','producto','item','cantidad',
+  'costo','precio','total','codigo','barcode','subtotal','sku',
+  'unidad','categoria','ref','referencia','0',
+])
+
+// ─── EXCEL ───────────────────────────────────────────────────────────────────
+
+const COL_MAPS = {
+  nombre:   ['articulo', 'artículo', 'nombre', 'producto', 'descripcion', 'descripción', 'item', 'description'],
+  cantidad: ['cantidad', 'cant', 'qty', 'unidades', 'stock', 'existencia'],
+  costo:    ['costo', 'precio', 'pvp', 'cost'],
+  total:    ['total', 'importe', 'monto'],
+  categoria:['categoria', 'categoría', 'grupo', 'familia', 'departamento', 'category'],
+  codigo:   ['sku', 'codigo', 'código', 'barcode', 'ref', 'referencia', 'cod', 'code'],
+}
+
+function identificarColumna(columnas, campo) {
+  for (const posible of COL_MAPS[campo]) {
+    const col = columnas.find(c => c.toLowerCase().trim().includes(posible))
+    if (col) return col
   }
-  
   return null
 }
 
-/**
- * Procesa un archivo XLSX o PDF usando el script Python
- */
-export const importarProductosDesdeArchivo = async (req, res) => {
-  try {
-    // Validar que se recibió un archivo
-    if (!req.file) {
-      // Validar también si el body está vacío o es null
-      if (!req.body || Object.keys(req.body).length === 0) {
-        return res.status(400).json({
-          exito: false,
-          mensaje: 'No se recibió ningún archivo. Asegúrese de enviar el archivo en el campo "archivo" con formato multipart/form-data'
-        })
+function procesarExcel(rutaArchivo) {
+  const workbook = XLSX.readFile(rutaArchivo, { type: 'file', cellDates: true })
+  const todosProductos = []
+
+  for (const nombreHoja of workbook.SheetNames) {
+    const hoja = workbook.Sheets[nombreHoja]
+    const filas = XLSX.utils.sheet_to_json(hoja, { defval: null, raw: false })
+    if (!filas || filas.length === 0) continue
+
+    const columnas = Object.keys(filas[0])
+    const colNombre   = identificarColumna(columnas, 'nombre')   || columnas[0]
+    const colCantidad = identificarColumna(columnas, 'cantidad')
+    const colCosto    = identificarColumna(columnas, 'costo')
+    const colTotal    = identificarColumna(columnas, 'total')
+    const colCategoria= identificarColumna(columnas, 'categoria')
+    const colCodigo   = identificarColumna(columnas, 'codigo')
+
+    for (const fila of filas) {
+      const nombre = limpiarTexto(fila[colNombre])
+      if (!nombre || nombre.length < 2) continue
+      if (HEADERS_IGNORAR.has(nombre.toLowerCase())) continue
+
+      let cantidad = 1
+      if (colCantidad) {
+        const v = parsearNumero(fila[colCantidad])
+        if (v > 0 && v <= 100000) cantidad = Math.round(v)
       }
-      
-      // Si hay body pero no file, puede ser que el campo no coincida
-      return res.status(400).json({
-        exito: false,
-        mensaje: 'No se recibió ningún archivo. Verifique que el campo del formulario se llame "archivo"'
-      })
-    }
 
-    const archivo = req.file
-    const extension = path.extname(archivo.originalname).toLowerCase().slice(1)
-    
-    // Validar extensión
-    if (!['xlsx', 'xls', 'pdf'].includes(extension)) {
-      throw new AppError('Formato de archivo no soportado. Use XLSX, XLS o PDF', 400)
-    }
+      let costo = 0
+      if (colCosto) costo = parsearNumero(fila[colCosto])
 
-    // Obtener API key de Gemini si está disponible (opcional para PDFs)
-    const apiKey = req.body.apiKey || process.env.GEMINI_API_KEY || null
-
-    // Ruta del script Python
-    const scriptPath = path.join(__dirname, '../utils/importProducts.py')
-    
-    // Verificar que el script existe
-    if (!existsSync(scriptPath)) {
-      throw new AppError('Script de importación no encontrado', 500)
-    }
-
-    // Detectar comando Python disponible
-    const pythonCommand = await detectarComandoPython()
-    if (!pythonCommand) {
-      throw new AppError(
-        'Python no está instalado o no está disponible en el PATH del sistema. ' +
-        'Por favor, instala Python 3.8 o superior desde https://www.python.org/downloads/ ' +
-        'y asegúrate de marcar la opción "Add Python to PATH" durante la instalación.',
-        500
-      )
-    }
-
-    // Ejecutar script Python
-    const comando = `${pythonCommand} "${scriptPath}" ${extension} "${archivo.path}" ${apiKey ? `"${apiKey}"` : ''}`
-    
-    console.log('Ejecutando comando:', comando.replace(apiKey || '', '***'))
-    
-    let stdout
-    let stderr = ''
-    try {
-      const result = await execAsync(comando, {
-        maxBuffer: 10 * 1024 * 1024, // 10MB
-        encoding: 'utf8'
-      })
-      stdout = result.stdout || ''
-      stderr = result.stderr || ''
-    } catch (execError) {
-      // Limpiar archivo temporal en caso de error
-      try {
-        if (archivo.path && existsSync(archivo.path)) {
-          await fs.unlink(archivo.path)
-        }
-      } catch (err) {
-        console.error('Error al eliminar archivo temporal:', err)
+      if (costo === 0 && colTotal) {
+        const total = parsearNumero(fila[colTotal])
+        if (total > 0 && cantidad > 0) costo = total / cantidad
       }
-      
-      // Capturar stdout y stderr del error
-      const errorStdout = execError.stdout || ''
-      const errorStderr = execError.stderr || ''
-      const errorMessage = execError.message || ''
-      
-      // Detectar si el error es porque Python no se encontró
-      const esErrorPythonNoEncontrado = 
-        errorMessage.includes('no se encontró') ||
-        errorMessage.includes('not found') ||
-        errorMessage.includes('no se reconoce') ||
-        errorMessage.includes('is not recognized') ||
-        errorStderr.includes('no se encontró') ||
-        errorStderr.includes('not found') ||
-        errorStderr.includes('no se reconoce') ||
-        errorStderr.includes('is not recognized')
-      
-      if (esErrorPythonNoEncontrado) {
-        return res.status(500).json({
-          exito: false,
-          mensaje: 'Python no está instalado o no está disponible en el PATH del sistema. ' +
-                   'Por favor, instala Python 3.8 o superior desde https://www.python.org/downloads/ ' +
-                   'y asegúrate de marcar la opción "Add Python to PATH" durante la instalación. ' +
-                   'Después de instalar, reinicia la aplicación.'
-        })
+
+      if (costo === 0) {
+        for (const col of columnas) {
+          if (col === colNombre || col === colCantidad || col === colTotal) continue
+          const v = parsearNumero(fila[col])
+          if (v > 0 && v < 1_000_000) { costo = v; break }
+        }
       }
-      
-      // Intentar parsear stdout como JSON para obtener mensaje de error del script
-      let mensajeError = 'Error al ejecutar el script de importación'
-      if (errorStdout) {
-        try {
-          const errorData = JSON.parse(errorStdout.trim())
-          if (errorData.mensaje) {
-            mensajeError = errorData.mensaje
-          } else if (errorData.error) {
-            mensajeError = errorData.error
-          }
-        } catch {
-          // Si no es JSON, usar el texto directo
-          mensajeError = errorStdout.substring(0, 200) || mensajeError
+
+      let codigoBarras = null
+      if (colCodigo) {
+        const raw = limpiarTexto(fila[colCodigo])
+        if (raw && raw !== '0' && raw.length > 1 && !['nan','none','null',''].includes(raw.toLowerCase())) {
+          codigoBarras = raw
         }
-      } else if (errorStderr) {
-        mensajeError = errorStderr.substring(0, 200)
-      } else {
-        mensajeError = errorMessage || mensajeError
       }
-      
-      console.error('Error ejecutando script Python:', {
-        message: mensajeError,
-        stdout: errorStdout.substring(0, 200),
-        stderr: errorStderr.substring(0, 200),
-        originalError: errorMessage
-      })
-      
-      return res.status(500).json({
-        exito: false,
-        mensaje: mensajeError
-      })
-    }
 
-    // Limpiar archivo temporal después de ejecutar
-    try {
-      if (archivo.path && existsSync(archivo.path)) {
-        await fs.unlink(archivo.path)
+      let categoria = 'General'
+      if (colCategoria) {
+        const cat = limpiarTexto(fila[colCategoria])
+        if (cat && cat.length > 1 && !HEADERS_IGNORAR.has(cat.toLowerCase())) categoria = cat
       }
-    } catch (err) {
-      console.error('Error al eliminar archivo temporal:', err)
+
+      todosProductos.push({ nombre, codigoBarras, cantidad, costoBase: costo, categoria, unidad: 'unidad' })
     }
+  }
 
-    // Validar que stdout no esté vacío o sea "null"
-    const stdoutTrimmed = (stdout || '').trim()
-    
-    // Verificar valores que indican error o respuesta inválida
-    if (!stdoutTrimmed || 
-        stdoutTrimmed === 'null' || 
-        stdoutTrimmed.toLowerCase() === 'null' ||
-        stdoutTrimmed === 'None' ||
-        stdoutTrimmed.toLowerCase() === 'none') {
-      console.error('Script Python devolvió respuesta vacía o inválida:', {
-        stdout: stdoutTrimmed,
-        stderr: stderr.substring(0, 500)
-      })
-      return res.status(400).json({
-        exito: false,
-        mensaje: 'El script de importación no devolvió datos válidos. Verifica que el archivo tenga el formato correcto y que Python esté instalado correctamente.'
-      })
+  return todosProductos
+}
+
+// ─── PDF ─────────────────────────────────────────────────────────────────────
+
+const RE_INVENTARIO = /^(.+?)\s+(\d+[.,]?\d*)\s+(\d+[.,]?\d*)\s+RD\$?\s*([\d\s,.]+)\s*$/i
+const UNIDADES_SUFIJO = new Set(['UDS','PAQ','LIB','UNI','UND','UNIDAD','UNIDADES','UNID'])
+
+function parsearLineasInventario(lineas) {
+  const productos = []
+  for (const linea of lineas) {
+    const l = linea.trim()
+    if (!l || l.length < 10) continue
+    const m = RE_INVENTARIO.exec(l)
+    if (!m) continue
+    const cantidad = parsearNumero(m[2])
+    const costo    = parsearNumero(m[3])
+    if (costo < 0 || costo >= 1_000_000) continue
+    const partes = m[1].trim().split(/\s+/)
+    while (partes.length > 0 && UNIDADES_SUFIJO.has(partes[partes.length - 1].toUpperCase())) partes.pop()
+    const nombre = partes.join(' ').trim()
+    if (!nombre || nombre.length < 2 || HEADERS_IGNORAR.has(nombre.toLowerCase())) continue
+    productos.push({ nombre, codigoBarras: null, cantidad: Math.max(1, Math.round(cantidad)), costoBase: costo, categoria: 'General', unidad: 'unidad' })
+  }
+  return productos
+}
+
+function parsearTextoPDF(texto) {
+  const lineas = texto.split('\n')
+  const productos = []
+  const nombresVistos = new Set()
+
+  const desdeReporte = parsearLineasInventario(lineas)
+  for (const p of desdeReporte) {
+    const clave = p.nombre.toLowerCase()
+    if (!nombresVistos.has(clave)) { nombresVistos.add(clave); productos.push(p) }
+  }
+  if (productos.length > 0) return productos
+
+  for (const linea of lineas) {
+    const l = linea.trim()
+    if (!l || l.length < 5 || HEADERS_IGNORAR.has(l.toLowerCase())) continue
+    const numeros = [...l.matchAll(/(\d+[.,]?\d*)/g)].map(m => parsearNumero(m[1])).filter(n => n > 0)
+    if (numeros.length === 0) continue
+    const primerNumPos = l.search(/\d/)
+    let nombre = primerNumPos > 5 ? l.substring(0, primerNumPos).replace(/[:|–\-\s]+$/, '').trim() : ''
+    if (!nombre || nombre.length < 3 || HEADERS_IGNORAR.has(nombre.toLowerCase())) continue
+    const clave = nombre.toLowerCase()
+    if (nombresVistos.has(clave)) continue
+    nombresVistos.add(clave)
+    const cantidad = numeros.length >= 2 && numeros[0] <= 100000 ? Math.round(numeros[0]) : 1
+    const costo    = numeros.length >= 2 ? numeros[1] : numeros[0]
+    productos.push({ nombre, codigoBarras: null, cantidad, costoBase: costo < 1_000_000 ? costo : 0, categoria: 'General', unidad: 'unidad' })
+  }
+  return productos
+}
+
+async function procesarPDF(rutaArchivo) {
+  const buffer = readFileSync(rutaArchivo)
+  const parser = new PDFParse({ data: buffer, verbosity: 0 })
+  const data = await parser.getText()
+  const texto = data.text || ''
+  if (!texto || texto.trim().length < 10) {
+    return { error: 'No se pudo extraer texto del PDF. El archivo podría estar escaneado o protegido.' }
+  }
+  const productos = parsearTextoPDF(texto)
+  if (productos.length === 0) {
+    return { error: 'No se encontraron productos en el PDF. Verifica que el archivo tenga un listado de productos con nombres y valores.' }
+  }
+  return productos
+}
+
+// ─── Bulk DB insert con transacción única ────────────────────────────────────
+
+function insertarEnBulk(productosRaw, usuarioId) {
+  const db = dbManager.getDatabase()
+
+  // 1 sola query para cargar TODOS los existentes en memoria
+  const existentes = db.prepare(
+    'SELECT id, nombre, codigoBarras FROM productos_generales WHERE activo = 1'
+  ).all()
+
+  const porCodigo = new Map()
+  const porNombre = new Map()
+  for (const p of existentes) {
+    if (p.codigoBarras && p.codigoBarras !== '0') porCodigo.set(p.codigoBarras.toLowerCase(), p.id)
+    porNombre.set(p.nombre.toLowerCase().trim(), p.id)
+  }
+
+  // Clasificar
+  const aCrear      = []
+  const aActualizar = []
+  const clavesProcesadas = new Set()
+
+  for (const prod of productosRaw) {
+    const nombre = limpiarTexto(prod.nombre)
+    if (!nombre || nombre.length < 2) continue
+    if (HEADERS_IGNORAR.has(nombre.toLowerCase())) continue
+
+    const clave = nombre.toLowerCase().trim()
+    if (clavesProcesadas.has(clave)) continue
+    clavesProcesadas.add(clave)
+
+    const codBarras = prod.codigoBarras ? String(prod.codigoBarras).trim() : null
+    const validCod  = codBarras && codBarras !== '0' && codBarras.length > 1 ? codBarras : null
+    const costoBase = parsearNumero(prod.costoBase ?? prod.precio ?? 0)
+    const categoria = prod.categoria || 'General'
+    const unidad    = prod.unidad    || 'unidad'
+
+    const existeId = (validCod && porCodigo.get(validCod.toLowerCase())) || porNombre.get(clave)
+
+    if (existeId) {
+      aActualizar.push({ id: existeId, costoBase, categoria })
+    } else {
+      aCrear.push({ nombre, codigoBarras: validCod, costoBase, categoria, unidad })
     }
+  }
 
-    // Verificar que stdout parezca JSON válido (debe empezar con { o [)
-    if (!stdoutTrimmed.startsWith('{') && !stdoutTrimmed.startsWith('[')) {
-      console.error('Script Python devolvió respuesta que no es JSON:', {
-        stdout: stdoutTrimmed.substring(0, 500),
-        stderr: stderr.substring(0, 500)
-      })
-      return res.status(400).json({
-        exito: false,
-        mensaje: `El script de importación devolvió una respuesta inválida. Respuesta: ${stdoutTrimmed.substring(0, 200)}`
-      })
-    }
+  // 1 transacción para todo
+  const stmtIns = db.prepare(`
+    INSERT INTO productos_generales
+      (nombre, codigoBarras, costoBase, categoria, unidad, creadoPorId, tipoCreacion,
+       activo, unidadesInternas, estadisticas, tipoContenedor, tieneUnidadesInternas, tipoPeso, esProductoSecundario)
+    VALUES (?, ?, ?, ?, ?, ?, 'importacion', 1, '{}', '{}', 'ninguno', 0, 'ninguno', 0)
+  `)
+  const stmtUpd = db.prepare(
+    'UPDATE productos_generales SET costoBase = ?, categoria = ? WHERE id = ?'
+  )
 
-    // Parsear respuesta del script
-    let resultado
-    try {
-      resultado = JSON.parse(stdoutTrimmed)
-    } catch (parseError) {
-      console.error('Error al parsear respuesta del script:', {
-        error: parseError.message,
-        stdout: stdoutTrimmed.substring(0, 500),
-        stderr: stderr.substring(0, 500)
-      })
-      return res.status(500).json({
-        exito: false,
-        mensaje: `Error al procesar respuesta del script: ${parseError.message}. La respuesta recibida no es JSON válido.`
-      })
-    }
+  db.transaction(() => {
+    for (const p of aCrear)     stmtIns.run(p.nombre, p.codigoBarras, p.costoBase, p.categoria, p.unidad, usuarioId)
+    for (const p of aActualizar) stmtUpd.run(p.costoBase, p.categoria, p.id)
+  })()
 
-    // Verificar si hubo error en el script
-    if (resultado.error) {
-      return res.status(400).json({
-        exito: false,
-        mensaje: resultado.error
-      })
-    }
+  // Muestra para preview (máx 200)
+  const muestra = [
+    ...aCrear.slice(0, 200).map(p => ({ ...p, accion: 'creado' })),
+    ...aActualizar.slice(0, Math.max(0, 200 - aCrear.length)).map(p => ({ ...p, accion: 'actualizado' })),
+  ]
 
-    // Verificar estructura de respuesta
-    if (resultado.exito === false) {
-      return res.status(400).json({
-        exito: false,
-        mensaje: resultado.mensaje || 'Error al procesar el archivo'
-      })
-    }
-
-    if (!resultado.productos || !Array.isArray(resultado.productos)) {
-      console.error('Formato de respuesta inválido:', resultado)
-      return res.status(500).json({
-        exito: false,
-        mensaje: 'Formato de respuesta inválido del script. El script no devolvió la estructura esperada.'
-      })
-    }
-
-    // Validar que haya productos
-    if (resultado.productos.length === 0) {
-      return res.status(400).json({
-        exito: false,
-        mensaje: 'No se encontraron productos válidos en el archivo. Verifica que el archivo tenga al menos una columna con nombres de productos y que las filas contengan datos válidos.'
-      })
-    }
-
-    // Validar y crear productos en la base de datos
-    const productosCreados = []
-    const productosConError = []
-    const usuarioId = req.usuario?.id || null
-
-    for (const productoData of resultado.productos) {
-      try {
-        // Validar datos mínimos
-        if (!productoData.nombre || productoData.nombre.trim() === '') {
-          productosConError.push({
-            producto: productoData,
-            error: 'Nombre vacío'
-          })
-          continue
-        }
-
-        // Preparar datos del producto (mapear campos del script Python)
-        const datosProducto = {
-          nombre: productoData.nombre.trim(),
-          codigoBarras: (productoData.codigoBarras && productoData.codigoBarras.trim() !== '') 
-            ? productoData.codigoBarras.trim() 
-            : null,
-          costoBase: Number.parseFloat(productoData.costoBase || productoData.precio || 0) || 0,
-          categoria: productoData.categoria || 'General',
-          unidad: productoData.unidad || 'unidad',
-          descripcion: productoData.descripcion || null,
-          proveedor: productoData.proveedor || null,
-          creadoPorId: usuarioId,
-          tipoCreacion: 'importacion'
-        }
-
-        // Verificar si el producto ya existe (por código de barras o nombre)
-        let productoExistente = null
-        if (datosProducto.codigoBarras) {
-          productoExistente = ProductoGeneral.buscarPorCodigoBarras(datosProducto.codigoBarras)
-        }
-        
-        if (!productoExistente) {
-          // Buscar por nombre (búsqueda aproximada)
-          const productos = ProductoGeneral.buscar({
-            buscar: datosProducto.nombre,
-            limite: 1
-          })
-          
-          if (productos.datos && productos.datos.length > 0) {
-            const productoSimilar = productos.datos[0]
-            // Si el nombre es muy similar, considerarlo duplicado
-            if (productoSimilar.nombre.toLowerCase() === datosProducto.nombre.toLowerCase()) {
-              productoExistente = productoSimilar
-            }
-          }
-        }
-
-        if (productoExistente) {
-          // Actualizar producto existente
-          ProductoGeneral.actualizar(productoExistente.id, {
-            costoBase: datosProducto.costoBase,
-            categoria: datosProducto.categoria
-          })
-          productosCreados.push({
-            ...productoExistente,
-            accion: 'actualizado'
-          })
-        } else {
-          // Crear nuevo producto
-          const nuevoProducto = ProductoGeneral.crear(datosProducto)
-          productosCreados.push({
-            ...nuevoProducto,
-            accion: 'creado'
-          })
-        }
-
-      } catch (error) {
-        console.error('Error al procesar producto:', productoData, error)
-        productosConError.push({
-          producto: productoData,
-          error: error.message || 'Error desconocido'
-        })
-      }
-    }
-
-    // Preparar respuesta
-    const respuesta = {
-      totalProcesados: resultado.productos.length,
-      totalCreados: productosCreados.filter(p => p.accion === 'creado').length,
-      totalActualizados: productosCreados.filter(p => p.accion === 'actualizado').length,
-      totalErrores: productosConError.length,
-      productos: productosCreados,
-      errores: productosConError
-    }
-
-    res.json(respuestaExito(respuesta, `Importación completada: ${respuesta.totalCreados} creados, ${respuesta.totalActualizados} actualizados`))
-
-  } catch (error) {
-    // Limpiar archivo temporal en caso de error
-    if (req.file?.path && existsSync(req.file.path)) {
-      try {
-        await fs.unlink(req.file.path)
-      } catch (err) {
-        console.error('Error al eliminar archivo temporal:', err)
-      }
-    }
-
-    if (error instanceof AppError) {
-      throw error
-    }
-
-    console.error('Error en importarProductosDesdeArchivo:', error)
-    throw new AppError(`Error al importar productos: ${error.message}`, 500)
+  return {
+    totalProcesados  : productosRaw.length,
+    totalCreados     : aCrear.length,
+    totalActualizados: aActualizar.length,
+    totalErrores     : 0,
+    productos        : muestra,
   }
 }
 
-export default {
-  importarProductosDesdeArchivo
+// ─── Controller ──────────────────────────────────────────────────────────────
+
+export const importarProductosDesdeArchivo = async (req, res) => {
+  let archivoPath = null
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        exito: false,
+        mensaje: 'No se recibió ningún archivo. Envíe el archivo en el campo "archivo" con formato multipart/form-data.',
+      })
+    }
+
+    archivoPath = req.file.path
+    const extension = path.extname(req.file.originalname).toLowerCase().slice(1)
+
+    if (!['xlsx', 'xls', 'pdf'].includes(extension)) {
+      throw new AppError('Formato no soportado. Use XLSX, XLS o PDF', 400)
+    }
+
+    // ── Parsear archivo ──────────────────────────────────────────────────────
+    let productosRaw = []
+
+    if (['xlsx', 'xls'].includes(extension)) {
+      productosRaw = procesarExcel(archivoPath)
+    } else {
+      const resultado = await procesarPDF(archivoPath)
+      if (resultado && resultado.error) {
+        return res.status(400).json({ exito: false, mensaje: resultado.error })
+      }
+      productosRaw = Array.isArray(resultado) ? resultado : (resultado.productos || [])
+    }
+
+    // Limpiar archivo temporal
+    try { await fs.unlink(archivoPath) } catch (_) { /* ignorar */ }
+    archivoPath = null
+
+    if (!productosRaw || productosRaw.length === 0) {
+      return res.status(400).json({
+        exito: false,
+        mensaje: 'No se encontraron productos válidos en el archivo. Verifica que tenga columnas de nombre/producto y datos en las filas.',
+      })
+    }
+
+    // ── Insertar en bulk ────────────────────────────────────────────────────
+    const usuarioId = req.usuario?.id || null
+    const resultado = insertarEnBulk(productosRaw, usuarioId)
+
+    res.json(respuestaExito(
+      resultado,
+      `Importación completada: ${resultado.totalCreados} creados, ${resultado.totalActualizados} actualizados de ${resultado.totalProcesados} procesados`,
+    ))
+
+  } catch (error) {
+    if (archivoPath && existsSync(archivoPath)) {
+      try { await fs.unlink(archivoPath) } catch (_) { /* ignorar */ }
+    }
+    if (error instanceof AppError) throw error
+    console.error('Error en importarProductosDesdeArchivo:', error)
+    throw new AppError(`Error al importar: ${error.message}`, 500)
+  }
 }
 
+export default { importarProductosDesdeArchivo }

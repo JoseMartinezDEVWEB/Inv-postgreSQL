@@ -63,6 +63,7 @@ const InventarioDetalleNuevo = () => {
   const [selectedProducto, setSelectedProducto] = useState(null)
   const [cantidad, setCantidad] = useState('')
   const [costo, setCosto] = useState('')
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   // Estados para modales de salida y búsqueda
   const [showExitModal, setShowExitModal] = useState(false)
   const [showExitOptionsModal, setShowExitOptionsModal] = useState(false)
@@ -494,10 +495,12 @@ const InventarioDetalleNuevo = () => {
     (data) => sesionesApi.updateFinancial(id, data),
     {
       onSuccess: () => {
-        queryClient.invalidateQueries(['sesion-inventario', id])
-        toast.success('Datos financieros actualizados')
+        // NO invalidar: estado local actualizado antes de mutate()
       },
-      onError: handleApiError
+      onError: (error) => {
+        queryClient.invalidateQueries(['sesion-inventario', id])
+        handleApiError(error)
+      }
     }
   )
 
@@ -1474,25 +1477,32 @@ const InventarioDetalleNuevo = () => {
         newEntry.tipoCuenta = data.tipoCuenta || 'Caja'
         newFinancialData.efectivoEnCajaYBanco.push(newEntry)
         break
-      case 'deudaANegocio':
-        // Obtener el valor correcto del deudor según si es socio o no
+            case 'deudaANegocio': {
         const esSocio = data.esSocio === 'true' || data.esSocio === true
-        let deudorValue = data.deudor || 'Deudor'
+        let deudorValue = data.deudor || ''
+        let socioIndex = null
 
-        // Si es socio, obtener el valor del selector de socios
-        if (esSocio) {
-          const socioSelect = document.getElementById('deudor-socio-select')
-          if (socioSelect && socioSelect.value) {
-            deudorValue = socioSelect.value
+        if (esSocio && data.deudorSocio) {
+          try {
+            const socioData = JSON.parse(data.deudorSocio)
+            deudorValue = socioData.nombre || `Socio ${socioData.index + 1}`
+            socioIndex = socioData.index
+          } catch {
+            deudorValue = data.deudorSocio
           }
         }
+
+        if (!deudorValue) deudorValue = esSocio ? 'Socio' : 'Deudor'
 
         newEntry.deudor = deudorValue
         newEntry.tipoDeuda = data.tipoDeuda || 'Dinero'
         newEntry.esSocio = esSocio
+        newEntry.socioIndex = socioIndex
         newEntry.fechaDeuda = data.fechaDeuda || ''
+        newEntry.nombre = `${newEntry.deudor}${newEntry.tipoDeuda ? ' (' + newEntry.tipoDeuda + ')' : ''}`
         newFinancialData.deudaANegocio.push(newEntry)
         break
+      }
       case 'activosFijos':
         newFinancialData.activosFijos = parseFloat(data.valorActual) || 0
         break
@@ -3079,13 +3089,15 @@ const InventarioDetalleNuevo = () => {
       <div className="flex h-[calc(100vh-60px)]">
         {/* Left Sidebar - Financial Buttons (Hidden for Colaboradores) */}
         {!hasRole('colaborador') && (
-          <div className="w-80 bg-slate-800 border-r border-slate-600 p-4 space-y-4 overflow-y-auto">
+          <div className="flex flex-col flex-shrink-0 bg-slate-800 border-r border-slate-600">
+            <div className={`transition-all duration-300 overflow-x-hidden overflow-y-auto flex-1 ${isDrawerOpen ? 'w-56' : 'w-0'}`}>
+            <div className="p-3 space-y-2 w-56">
             <h3 className="text-white font-semibold text-sm mb-4 text-center border-b border-slate-600 pb-2">
               Gestión Financiera
             </h3>
             <button
               onClick={() => openFinancialModal('ventas')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <ShoppingCart className="w-6 h-6" />
               <span>Ventas</span>
@@ -3093,7 +3105,7 @@ const InventarioDetalleNuevo = () => {
 
             <button
               onClick={() => openFinancialModal('gastos')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <TrendingDown className="w-6 h-6" />
               <span>Gastos</span>
@@ -3101,7 +3113,7 @@ const InventarioDetalleNuevo = () => {
 
             <button
               onClick={() => openFinancialModal('cuentasPorCobrar')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <Users className="w-6 h-6" />
               <span>Cuentas por Cobrar</span>
@@ -3109,7 +3121,7 @@ const InventarioDetalleNuevo = () => {
 
             <button
               onClick={() => openFinancialModal('cuentasPorPagar')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <CreditCard className="w-6 h-6" />
               <span>Cuentas por Pagar</span>
@@ -3117,7 +3129,7 @@ const InventarioDetalleNuevo = () => {
 
             <button
               onClick={() => openFinancialModal('efectivo')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <Wallet className="w-6 h-6" />
               <span>Efectivo en Caja o Banco</span>
@@ -3125,7 +3137,7 @@ const InventarioDetalleNuevo = () => {
 
             <button
               onClick={() => openFinancialModal('deudaANegocio')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <UserMinus className="w-6 h-6" />
               <span>Deuda a Negocio</span>
@@ -3133,7 +3145,7 @@ const InventarioDetalleNuevo = () => {
 
             <button
               onClick={() => openFinancialModal('activosFijos')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <Briefcase className="w-6 h-6" />
               <span>Activos Fijos</span>
@@ -3141,7 +3153,7 @@ const InventarioDetalleNuevo = () => {
 
             <button
               onClick={() => openFinancialModal('capital')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-700 hover:to-yellow-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-700 hover:to-yellow-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <PiggyBank className="w-6 h-6" />
               <span>Capital</span>
@@ -3157,7 +3169,7 @@ const InventarioDetalleNuevo = () => {
             {/* Nuevos botones de gestión */}
             <button
               onClick={() => openFinancialModal('imprimir')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <Printer className="w-6 h-6" />
               <span>Imprimir</span>
@@ -3165,7 +3177,7 @@ const InventarioDetalleNuevo = () => {
 
             <button
               onClick={() => openFinancialModal('reporte')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <FileText className="w-6 h-6" />
               <span>Ver Reporte</span>
@@ -3173,11 +3185,22 @@ const InventarioDetalleNuevo = () => {
 
             <button
               onClick={() => openFinancialModal('configuracion')}
-              className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+              className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
             >
               <Settings className="w-6 h-6" />
               <span>Configuración</span>
             </button>
+            </div>
+            </div>
+            <div className="p-2 flex justify-center border-t border-slate-700 flex-shrink-0">
+              <button
+                onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+                className={`p-2 rounded-lg transition-colors ${isDrawerOpen ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
+                title={isDrawerOpen ? 'Cerrar menú' : 'Abrir menú financiero'}
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -3196,7 +3219,7 @@ const InventarioDetalleNuevo = () => {
         >
           {/* Input Section */}
           <div className="bg-slate-800 border-b border-slate-600 p-4">
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-[2fr_3fr_1fr_1fr] gap-3">
               {/* Input Código de Barras */}
               <div>
                 <label className="block text-white text-sm mb-1">Código de Barras</label>
@@ -3211,11 +3234,14 @@ const InventarioDetalleNuevo = () => {
                       if (e.key === 'Enter') {
                         const code = codigoBarras.trim()
                         if (code.length >= 3) {
-                           // Disparar búsqueda inmediata
-                           e.preventDefault()
-                           searchByBarcode(code)
+                          e.preventDefault()
+                          searchByBarcode(code)
                         } else if (code.length > 0) {
-                           toast.error('Ingrese al menos 3 caracteres')
+                          toast.error('Ingrese al menos 3 caracteres')
+                        } else {
+                          // Campo vacío → abrir búsqueda por nombre
+                          e.preventDefault()
+                          handleOpenSearchModal()
                         }
                       }
                     }}
@@ -3293,7 +3319,7 @@ const InventarioDetalleNuevo = () => {
           </div>
 
           {/* Table - Estilo Excel */}
-          <div className="flex-1 overflow-auto bg-white">
+          <div className="flex-1 overflow-auto bg-gray-100">
             <table className="w-full" style={{ fontFamily: 'Arial, sans-serif', borderCollapse: 'collapse' }}>
               <thead className="sticky top-0">
                 <tr>
@@ -3386,7 +3412,7 @@ const InventarioDetalleNuevo = () => {
                   </tr>
                 ) : (
                   productosContados.map((producto, index) => (
-                    <tr key={producto._id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                    <tr key={producto._id} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-gray-100'}>
                       {/* Artículo */}
                       <td className="px-3 py-2 text-gray-800 text-sm">
                         <input
@@ -4043,7 +4069,7 @@ const InventarioDetalleNuevo = () => {
 
       {/* Modal - Múltiples Productos Pendientes */}
       {multipleProductsModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={(e) => { if (e.target === e.currentTarget) closeFinancialModal() }}>
           <div className="bg-white rounded-lg max-w-6xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
             <div className="flex items-center justify-between p-6 border-b">
               <h3 className="text-xl font-bold text-gray-800">
@@ -5031,7 +5057,7 @@ const InventarioDetalleNuevo = () => {
                       ) : field.type === 'conditional' && field.key === 'deudor' ? (
                         <div id="deudor-field">
                           <select
-                            name={field.key}
+                            name="deudorSocio"
                             required={field.required !== false}
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                             style={{ display: 'none' }}

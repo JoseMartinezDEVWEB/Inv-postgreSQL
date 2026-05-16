@@ -23,6 +23,9 @@ const EsperaAutorizacion = React.lazy(() => import('./pages/EsperaAutorizacion')
 import MainLayout from './layouts/MainLayout'
 import AdminLayout from './layouts/AdminLayout'
 import ContableLayout from './layouts/ContableLayout'
+import UpdateNotification from './components/UpdateNotification'
+
+const Respaldo = React.lazy(() => import('./pages/Respaldo'))
 
 // Loading Fallback genérico para Suspense
 const GlobalLoader = () => (
@@ -100,6 +103,7 @@ const AppContent = () => {
   return (
     <>
       <TitleBar />
+      <UpdateNotification />
       <Suspense fallback={<GlobalLoader />}>
       <Routes>
         {/* Rutas públicas */}
@@ -198,6 +202,17 @@ const AppContent = () => {
             <ProtectedRoute>
               <MainLayout>
                 <Invitaciones />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/respaldo"
+          element={
+            <ProtectedRoute requiredRole="administrador">
+              <MainLayout>
+                <Respaldo />
               </MainLayout>
             </ProtectedRoute>
           }

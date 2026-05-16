@@ -26,7 +26,23 @@ app.use(cors({
     allowedHeaders: "*", // Permitir todos los headers para evitar bloqueos
     credentials: true
 })); 
-app.use(express.json()); // Permitir el procesamiento de JSON en el cuerpo de las peticiones
+app.use(express.json());
+
+// --- MIDDLEWARES DE DIAGNÓSTICO (INICIO) ---
+app.use((req, res, next) => {
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const logPath = process.env.USER_DATA_PATH 
+            ? path.join(process.env.USER_DATA_PATH, 'request_debug.log')
+            : path.join(__dirname, './request_debug.log');
+        
+        const msg = `[${new Date().toISOString()}] ${req.method} ${req.url}\n`;
+        fs.appendFileSync(logPath, msg);
+    } catch (e) {}
+    next();
+});
+// --- MIDDLEWARES DE DIAGNÓSTICO (FIN) ---
 
 const PORT = process.env.PORT || 4501;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -36,9 +52,24 @@ const { setupSockets, getColaboradoresActivos } = require('./utils/socketHandler
 // Configuración de WebSockets
 setupSockets(io);
 
-// Endpoint de Salud para Electron
-app.get('/api/salud', (req, res) => {
-    res.json({ status: 'ok', message: 'Servidor PostgreSQL + Socket.io activo' });
+// Endpoint de Salud para Electron - Ahora valida conexión a BD
+app.get('/api/salud', async (req, res) => {
+    try {
+        await db.sequelize.authenticate();
+        res.json({ 
+            status: 'ok', 
+            database: 'connected',
+            message: 'Servidor PostgreSQL + Socket.io activo y conectado a BD' 
+        });
+    } catch (error) {
+        console.error('🩺 Fallo en Health Check (DB):', error.message);
+        res.status(503).json({ 
+            status: 'error', 
+            database: 'disconnected',
+            message: 'Servidor activo pero SIN conexión a base de datos',
+            error: error.message 
+        });
+    }
 });
 
 // Endpoint de depuración para verificar colaboradores activos
@@ -177,7 +208,103 @@ app.get('/api/mi-perfil', authenticateToken, (req, res) => {
 });
 
 // Sincronizar modelos con la base de datos PostgreSQL y arrancar el servidor
-// 'alter: true' actualiza las tablas existentes sin borrar datos (ideal para desarrollo fluido)
+const { ensureDatabaseExists } = require('./utils/dbInit');
+
+/**
+ * Seed automático de datos iniciales.
+ * Solo se ejecuta si la base de datos está completamente vacía (sin usuarios).
+ */
+async function seedInitialData() {
+    try {
+        const totalUsuarios = await db.Usuario.count();
+        if (totalUsuarios > 0) {
+            console.log('✅ Datos ya existen, omitiendo seed inicial');
+            return;
+        }
+
+        console.log('🌱 Base de datos vacía. Creando datos iniciales...');
+
+        // Crear usuario administrador
+        const hash = await bcrypt.hash('Jose.1919', 12);
+        await db.Usuario.create({
+            nombre:       'Administrador J4 Pro',
+            email:        'admin@j4pro.com',
+            nombreUsuario: 'admin',
+            password:     hash,
+            rol:          'administrador',
+            activo:       true,
+        });
+
+        // Crear contador de prueba
+        const hashContador = await bcrypt.hash('123456', 12);
+        const contador = await db.Usuario.create({
+            nombre:       'Juan Pérez',
+            email:        'contador@j4pro.com',
+            nombreUsuario: 'contador1',
+            password:     hashContador,
+            rol:          'contable',
+            activo:       true,
+        });
+
+        console.log('');
+        console.log('='.repeat(60));
+        console.log('📊 DATOS INICIALES CREADOS');
+        console.log('='.repeat(60));
+        console.log('👤 Usuarios:');
+        console.log('   Administrador → usuario: admin       | pass: Jose.1919');
+        console.log('   Contador      → usuario: contador1   | pass: 123456');
+        console.log('');
+        console.log('   También puedes usar el email:');
+        console.log('   admin@j4pro.com    / Jose.1919');
+        console.log('   contador@j4pro.com / 123456');
+        console.log('='.repeat(60));
+        console.log('');
+
+    } catch (err) {
+        console.error('⚠️ Error en seed inicial (no fatal):', err.message);
+    }
+}
+
+async function startServer() {
+    try {
+        // 1. Asegurar que la DB existe
+        await ensureDatabaseExists();
+
+        // 2. Sincronizar tablas (alter: true actualiza el esquema sin borrar datos)
+        await db.sequelize.sync({ alter: true });
+        console.log('✅ Conexión y sincronización con PostgreSQL completadas');
+
+        // 3. Seed automático si la BD está vacía
+        await seedInitialData();
+
+        // 4. Iniciar escucha
+        server.listen(PORT, '0.0.0.0', () => {
+            console.log(`🚀 Servidor de Inventario PostgreSQL + Socket.io iniciado en el puerto ${PORT}`);
+        });
+
+        // Manejador de Errores Global (debe ir después de las rutas)
+        app.use((err, req, res, next) => {
+            try {
+                const fs = require('fs');
+                const path = require('path');
+                const logPath = process.env.USER_DATA_PATH 
+                    ? path.join(process.env.USER_DATA_PATH, 'error_debug.log')
+                    : path.join(__dirname, './error_debug.log');
+                
+                const msg = `[${new Date().toISOString()}] GLOBAL ERROR: ${err.message}\nStack: ${err.stack}\n`;
+                fs.appendFileSync(logPath, msg);
+            } catch (e) {}
+            
+            console.error('❌ Error no manejado:', err);
+            res.status(500).json({ mensaje: 'Error interno del servidor', error: err.message });
+        });
+    } catch (err) {
+        console.error('❌ Error fatal al iniciar el servidor PostgreSQL:', err);
+    }
+}
+
+startServer();
+/*
 db.sequelize.sync({ alter: true }).then(() => {
     console.log('✅ Conexión y sincronización con PostgreSQL completadas');
     server.listen(PORT, '0.0.0.0', () => {
@@ -186,4 +313,5 @@ db.sequelize.sync({ alter: true }).then(() => {
 }).catch(err => {
     console.error('❌ Error fatal al sincronizar o conectar con PostgreSQL:', err);
 });
+*/
 

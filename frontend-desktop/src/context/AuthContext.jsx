@@ -159,7 +159,13 @@ export const AuthProvider = ({ children }) => {
     try {
       dispatch({ type: AUTH_ACTIONS.LOGIN_START })
 
-      const response = await authApi.login(credentials)
+      // El formulario usa el campo "credencial", el backend espera "email"
+      const payload = {
+        email: credentials.credencial ?? credentials.email ?? credentials,
+        password: credentials.password,
+      }
+
+      const response = await authApi.login(payload)
       const rawData = handleApiResponse(response)
       const { usuario, accessToken, refreshToken } = rawData.datos || rawData
 

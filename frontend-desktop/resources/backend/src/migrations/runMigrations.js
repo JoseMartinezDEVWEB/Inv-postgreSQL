@@ -4,6 +4,7 @@ import * as migration002 from './002_connection_states.js'
 import * as migration003 from './003_sync_fields.js'
 import * as migration004 from './004_productos_offline_cantidad.js'
 import * as migration005 from './005_limite_colaboradores.js'
+import * as migration006 from './006_session_token.js'
 
 // Lista de migraciones en orden
 const migrations = [
@@ -12,6 +13,7 @@ const migrations = [
   { name: '003_sync_fields', module: migration003 },
   { name: '004_productos_offline_cantidad', module: migration004 },
   { name: '005_limite_colaboradores', module: migration005 },
+  { name: '006_session_token', module: migration006 },
 ]
 
 // Tabla de control de migraciones

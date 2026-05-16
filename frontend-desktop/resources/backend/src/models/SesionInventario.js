@@ -559,12 +559,12 @@ class SesionInventario {
     return SesionInventario.buscarPorId(sesionId)
   }
 
-  // Reanudar timer
+  // Reanudar timer — usa datetime('now') para guardar en UTC y evitar ambigüedad de timezone
   static reanudarTimer(sesionId) {
     const db = dbManager.getDatabase()
     const stmt = db.prepare(`
       UPDATE sesiones_inventario
-      SET timerEnMarcha = 1, timerUltimoInicio = CURRENT_TIMESTAMP
+      SET timerEnMarcha = 1, timerUltimoInicio = datetime('now')
       WHERE id = ?
     `)
     stmt.run(sesionId)
@@ -577,12 +577,13 @@ class SesionInventario {
     const sesion = SesionInventario.buscarPorId(sesionId)
     if (!sesion || !sesion.timerEnMarcha) return
 
-    // Calcular segundos transcurridos
-    const inicio = new Date(sesion.timerUltimoInicio)
+    // Calcular segundos transcurridos — el timestamp viene en UTC (datetime('now'))
+    const tsStr = sesion.timerUltimoInicio
+    const inicio = new Date(tsStr.endsWith('Z') ? tsStr : tsStr + 'Z')
     const ahora = new Date()
-    const segundosTranscurridos = Math.floor((ahora - inicio) / 1000)
+    const segundosTranscurridos = Math.max(0, Math.floor((ahora - inicio) / 1000))
 
-    const nuevoAcumulado = sesion.timerAcumuladoSegundos + segundosTranscurridos
+    const nuevoAcumulado = (sesion.timerAcumuladoSegundos || 0) + segundosTranscurridos
 
     const stmt = db.prepare(`
       UPDATE sesiones_inventario

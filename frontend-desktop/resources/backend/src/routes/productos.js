@@ -17,7 +17,9 @@ const router = express.Router()
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     // Crear directorio temporal si no existe
-    const uploadPath = path.join(__dirname, '../../temp')
+    const uploadPath = process.env.USER_DATA_PATH 
+      ? path.join(process.env.USER_DATA_PATH, 'temp')
+      : path.join(__dirname, '../../temp')
     if (!fs.existsSync(uploadPath)) {
       fs.mkdirSync(uploadPath, { recursive: true })
     }

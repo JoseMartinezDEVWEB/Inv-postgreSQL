@@ -140,6 +140,7 @@ const InventarioDetalleNuevo = () => {
 
 
   // Estados para modales de salida y búsqueda
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [showExitModal, setShowExitModal] = useState(false)
   const [showExitOptionsModal, setShowExitOptionsModal] = useState(false)
   const [showExitDropdown, setShowExitDropdown] = useState(false)
@@ -148,6 +149,7 @@ const InventarioDetalleNuevo = () => {
   const [showAddProductModal, setShowAddProductModal] = useState(false)
   const [showSearchBarcodeModal, setShowSearchBarcodeModal] = useState(false)
   const [showSuccessAnimation, setShowSuccessAnimation] = useState(false)
+  const [showRefreshAnimation, setShowRefreshAnimation] = useState(false)
   const [createdProductName, setCreatedProductName] = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
@@ -665,6 +667,8 @@ const InventarioDetalleNuevo = () => {
       if (esElPrimerProducto) {
         try {
           await sesionesApi.resumeTimer(id)
+          // Forzar refetch para que el TimerDisplay reciba el nuevo timerUltimoInicio
+          queryClient.invalidateQueries(['sesion-inventario', id])
         } catch (error) {
           console.error('Error al iniciar reloj:', error)
         }
@@ -766,10 +770,15 @@ const InventarioDetalleNuevo = () => {
     (data) => sesionesApi.updateFinancial(id, data),
     {
       onSuccess: () => {
-        queryClient.invalidateQueries(['sesion-inventario', id])
-        toast.success('Datos financieros actualizados')
+        // NO invalidar la query aquí: el estado local ya fue actualizado por setDatosFinancieros
+        // antes de llamar a mutate(). Un refetch en este punto sobrescribiría el estado local
+        // con datos del servidor que podrían tener un formato diferente.
       },
-      onError: handleApiError
+      onError: (error) => {
+        // Si falla el guardado, refrescar desde el servidor para mostrar datos reales
+        queryClient.invalidateQueries(['sesion-inventario', id])
+        handleApiError(error)
+      }
     }
   )
 
@@ -1756,36 +1765,33 @@ const InventarioDetalleNuevo = () => {
         newEntry.nombre = `${newEntry.tipoCuenta}${newEntry.descripcion ? ': ' + newEntry.descripcion : ''}`
         newFinancialData.efectivoEnCajaYBanco.push(newEntry)
         break
-      case 'deudaANegocio':
-        // Obtener el valor correcto del deudor según si es socio o no
+      case 'deudaANegocio': {
         const esSocio = data.esSocio === 'true' || data.esSocio === true
-        let deudorValue = data.deudor || 'Deudor'
+        let deudorValue = data.deudor || ''
         let socioIndex = null
 
-        // Si es socio, obtener el valor del selector de socios
-        if (esSocio) {
-          const socioSelect = document.getElementById('deudor-socio-select')
-          if (socioSelect && socioSelect.value) {
-            try {
-              // El valor es un JSON con { index, nombre }
-              const socioData = JSON.parse(socioSelect.value)
-              deudorValue = socioData.nombre
-              socioIndex = socioData.index
-            } catch (e) {
-              // Si no es JSON, usar el valor directamente
-              deudorValue = socioSelect.value
-            }
+        if (esSocio && data.deudorSocio) {
+          // data.deudorSocio viene del <select name="deudorSocio"> — es JSON {index, nombre}
+          try {
+            const socioData = JSON.parse(data.deudorSocio)
+            deudorValue = socioData.nombre || `Socio ${socioData.index + 1}`
+            socioIndex = socioData.index
+          } catch {
+            deudorValue = data.deudorSocio
           }
         }
+
+        if (!deudorValue) deudorValue = esSocio ? 'Socio' : 'Deudor'
 
         newEntry.deudor = deudorValue
         newEntry.tipoDeuda = data.tipoDeuda || 'Dinero'
         newEntry.esSocio = esSocio
-        newEntry.socioIndex = socioIndex // Guardar el índice del socio para la distribución
+        newEntry.socioIndex = socioIndex
         newEntry.fechaDeuda = data.fechaDeuda || ''
         newEntry.nombre = `${newEntry.deudor}${newEntry.tipoDeuda ? ' (' + newEntry.tipoDeuda + ')' : ''}`
         newFinancialData.deudaANegocio.push(newEntry)
         break
+      }
       case 'activosFijos':
         newFinancialData.activosFijos = parseFloat(data.valorActual) || 0
         break
@@ -2894,6 +2900,16 @@ const InventarioDetalleNuevo = () => {
       .slice(0, 100)
   }, [invSearchTerm, productosContados])
 
+  const handleRefresh = async () => {
+    setShowRefreshAnimation(true)
+    try {
+      await queryClient.invalidateQueries(['sesion-inventario', id])
+      await refetch()
+    } finally {
+      setTimeout(() => setShowRefreshAnimation(false), 800)
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center z-50">
@@ -3104,7 +3120,7 @@ const InventarioDetalleNuevo = () => {
       </div>
 
       {showMenuModal && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={(e) => { if (e.target === e.currentTarget) setShowMenuModal(false) }}>
           <div className="bg-white rounded-lg w-full max-w-sm p-4">
             <div className="space-y-3">
               <button onClick={() => { setShowMenuModal(false); setShowDownloadModal(true) }} className="w-full flex items-center justify-between px-4 py-3 bg-slate-100 hover:bg-slate-200 rounded">
@@ -3128,7 +3144,7 @@ const InventarioDetalleNuevo = () => {
       )}
 
       {showDownloadModal && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={(e) => { if (e.target === e.currentTarget) setShowDownloadModal(false) }}>
           <div className="bg-white rounded-lg w-full max-w-sm p-4">
             <h3 className="text-lg font-semibold mb-4">Descargar listado</h3>
             <div className="space-y-3">
@@ -3149,7 +3165,7 @@ const InventarioDetalleNuevo = () => {
       )}
 
       {showConnectModal && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={(e) => { if (e.target === e.currentTarget) handleCerrarModalConectar() }}>
           <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[95vh] overflow-y-auto shadow-2xl">
             {/* Header */}
             <div className="bg-gradient-to-r from-purple-600 to-purple-700 px-6 py-4 rounded-t-2xl">
@@ -3503,7 +3519,7 @@ const InventarioDetalleNuevo = () => {
 
       {/* Modal de Revisión de Productos del Colaborador */}
       {showRevisarProductosModal && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={(e) => { if (e.target === e.currentTarget) { setShowRevisarProductosModal(false); setColaboradorSeleccionado(null); setProductosParaRevisar([]); setCantidadesEditadas({}) } }}>
           <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl">
             {/* Header */}
             <div className="bg-gradient-to-r from-orange-600 to-orange-700 px-6 py-4">
@@ -3667,7 +3683,7 @@ const InventarioDetalleNuevo = () => {
 
       {/* Modal QR Colaborador */}
       {showQRColaboradorModal && qrColaboradorData && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={(e) => { if (e.target === e.currentTarget) handleCerrarQRColaborador() }}>
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
             {/* Header */}
             <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-4 rounded-t-2xl">
@@ -3751,7 +3767,7 @@ const InventarioDetalleNuevo = () => {
       )}
 
       {showSearchEditModal && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={(e) => { if (e.target === e.currentTarget) setShowSearchEditModal(false) }}>
           <div className="bg-white rounded-lg w-full max-w-2xl p-4">
             <div className="flex items-center space-x-3 mb-3">
               <Search className="w-5 h-5 text-gray-900" />
@@ -3786,7 +3802,9 @@ const InventarioDetalleNuevo = () => {
       {/* Main Content */}
       <div className="flex h-[calc(100vh-140px)]">
         {/* Left Sidebar */}
-        <div className="w-80 bg-slate-800 border-r border-slate-600 p-4 space-y-4 overflow-y-auto">
+        <div className="flex flex-col flex-shrink-0 bg-slate-800 border-r border-slate-600">
+          <div className={`transition-all duration-300 overflow-x-hidden overflow-y-auto flex-1 ${isDrawerOpen ? 'w-56' : 'w-0'}`}>
+          <div className="p-3 space-y-2 w-56">
           {/* Financial Buttons (Hidden for Colaboradores) */}
           {!hasRole('colaborador') && (
             <>
@@ -3795,7 +3813,7 @@ const InventarioDetalleNuevo = () => {
               </h3>
               <button
                 onClick={() => openFinancialModal('ventas')}
-                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+                className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
               >
                 <ShoppingCart className="w-6 h-6" />
                 <span>Ventas</span>
@@ -3803,7 +3821,7 @@ const InventarioDetalleNuevo = () => {
 
               <button
                 onClick={() => openFinancialModal('gastos')}
-                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+                className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
               >
                 <TrendingDown className="w-6 h-6" />
                 <span>Gastos</span>
@@ -3811,7 +3829,7 @@ const InventarioDetalleNuevo = () => {
 
               <button
                 onClick={() => openFinancialModal('cuentasPorCobrar')}
-                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+                className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
               >
                 <Users className="w-6 h-6" />
                 <span>Cuentas por Cobrar</span>
@@ -3819,7 +3837,7 @@ const InventarioDetalleNuevo = () => {
 
               <button
                 onClick={() => openFinancialModal('cuentasPorPagar')}
-                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+                className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
               >
                 <CreditCard className="w-6 h-6" />
                 <span>Cuentas por Pagar</span>
@@ -3827,7 +3845,7 @@ const InventarioDetalleNuevo = () => {
 
               <button
                 onClick={() => openFinancialModal('efectivo')}
-                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+                className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
               >
                 <Wallet className="w-6 h-6" />
                 <span>Efectivo en Caja o Banco</span>
@@ -3835,7 +3853,7 @@ const InventarioDetalleNuevo = () => {
 
               <button
                 onClick={() => openFinancialModal('deudaANegocio')}
-                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+                className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
               >
                 <UserMinus className="w-6 h-6" />
                 <span>Deuda a Negocio</span>
@@ -3843,7 +3861,7 @@ const InventarioDetalleNuevo = () => {
 
               <button
                 onClick={() => openFinancialModal('activosFijos')}
-                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+                className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
               >
                 <Briefcase className="w-6 h-6" />
                 <span>Activos Fijos</span>
@@ -3851,7 +3869,7 @@ const InventarioDetalleNuevo = () => {
 
               <button
                 onClick={() => openFinancialModal('capital')}
-                className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-700 hover:to-yellow-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+                className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-700 hover:to-yellow-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
               >
                 <PiggyBank className="w-6 h-6" />
                 <span>Capital Anterior</span>
@@ -3877,7 +3895,7 @@ const InventarioDetalleNuevo = () => {
           {/* Nuevos botones de gestión */}
           <button
             onClick={() => setShowReportModal(true)}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
           >
             <FileText className="w-6 h-6" />
             <span>Ver Reporte</span>
@@ -3885,11 +3903,22 @@ const InventarioDetalleNuevo = () => {
 
           <button
             onClick={() => openFinancialModal('configuracion')}
-            className="w-full flex items-center space-x-3 px-5 py-4 bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-lg transition-all duration-200 text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-105"
+            className="w-full flex items-center space-x-2 px-3 py-2 justify-center bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-lg transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
           >
             <Settings className="w-6 h-6" />
             <span>Configuración</span>
           </button>
+          </div>
+          </div>
+          <div className="p-2 flex justify-center border-t border-slate-700 flex-shrink-0">
+            <button
+              onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+              className={`p-2 rounded-lg transition-colors ${isDrawerOpen ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-700 hover:bg-slate-600'} text-white`}
+              title={isDrawerOpen ? 'Cerrar menú' : 'Abrir menú financiero'}
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Center - Product Input */}
@@ -3907,7 +3936,7 @@ const InventarioDetalleNuevo = () => {
         >
           {/* Input Section */}
           <div className="bg-slate-800 border-b border-slate-600 p-4">
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-[2fr_3fr_1fr_1fr] gap-3">
               {/* Input Código de Barras */}
               <div>
                 <label className="block text-white text-sm mb-1">Código de Barras</label>
@@ -3922,11 +3951,14 @@ const InventarioDetalleNuevo = () => {
                       if (e.key === 'Enter') {
                         const code = codigoBarras.trim()
                         if (code.length >= 3) {
-                           // Disparar búsqueda inmediata
-                           e.preventDefault()
-                           searchByBarcode(code)
+                          e.preventDefault()
+                          searchByBarcode(code)
                         } else if (code.length > 0) {
-                           toast.error('Ingrese al menos 3 caracteres')
+                          toast.error('Ingrese al menos 3 caracteres')
+                        } else {
+                          // Campo vacío → abrir búsqueda por nombre
+                          e.preventDefault()
+                          handleOpenSearchModal()
                         }
                       }
                     }}
@@ -4021,7 +4053,7 @@ const InventarioDetalleNuevo = () => {
           </div>
 
           {/* Table - Estilo Excel */}
-          <div className="flex-1 overflow-auto bg-white">
+          <div className="flex-1 overflow-auto bg-gray-100">
             <table className="w-full" style={{ fontFamily: 'Arial, sans-serif', borderCollapse: 'collapse' }}>
               <thead className="sticky top-0">
                 <tr>
@@ -4106,7 +4138,7 @@ const InventarioDetalleNuevo = () => {
                     style={{ width: '60px', borderBottom: '2px solid #9ca3af' }}
                   >
                     <button
-                      onClick={() => refetch()}
+                      onClick={() => handleRefresh()}
                       className="p-1 rounded hover:bg-gray-300 transition-colors text-gray-500 hover:text-gray-800"
                       title="Refrescar listado"
                     >
@@ -4891,7 +4923,7 @@ const InventarioDetalleNuevo = () => {
 
       {/* Modal Financiero Dinámico */}
       {activeModal && activeModal !== 'reporteCompleto' && modalData.title && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={(e) => { if (e.target === e.currentTarget) closeFinancialModal() }}>
           <div className={`bg-white rounded-lg shadow-2xl ${modalData.isCustomModal || activeModal === 'configuracion'
             ? 'max-w-6xl w-full max-h-[90vh] overflow-hidden'
             : 'max-w-md w-full'
@@ -5680,7 +5712,7 @@ const InventarioDetalleNuevo = () => {
                     ) : field.type === 'conditional' && field.key === 'deudor' ? (
                       <div id="deudor-field">
                         <select
-                          name={field.key}
+                          name="deudorSocio"
                           required={field.required !== false}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                           style={{ display: 'none' }}
@@ -5856,7 +5888,38 @@ const InventarioDetalleNuevo = () => {
           <ReporteInventarioModal
             isOpen={showReportModal}
             onClose={() => setShowReportModal(false)}
-            sesion={sesion}
+            sesion={{
+              ...sesion,
+              // Inyectar el estado local de datosFinancieros (que el usuario editó en esta sesión)
+              // en el formato que el ReporteInventarioModal espera leer desde sesion.datosFinancieros
+              datosFinancieros: {
+                ventasDelMes: datosFinancieros.ventasDelMes,
+                gastosGeneralesDetalle: datosFinancieros.gastosGenerales,
+                gastosGenerales: Array.isArray(datosFinancieros.gastosGenerales)
+                  ? datosFinancieros.gastosGenerales.reduce((s, i) => s + (parseFloat(i.monto) || 0), 0)
+                  : (datosFinancieros.gastosGenerales || 0),
+                cuentasPorCobrarDetalle: datosFinancieros.cuentasPorCobrar,
+                cuentasPorCobrar: Array.isArray(datosFinancieros.cuentasPorCobrar)
+                  ? datosFinancieros.cuentasPorCobrar.reduce((s, i) => s + (parseFloat(i.monto) || 0), 0)
+                  : (datosFinancieros.cuentasPorCobrar || 0),
+                cuentasPorPagarDetalle: datosFinancieros.cuentasPorPagar,
+                cuentasPorPagar: Array.isArray(datosFinancieros.cuentasPorPagar)
+                  ? datosFinancieros.cuentasPorPagar.reduce((s, i) => s + (parseFloat(i.monto) || 0), 0)
+                  : (datosFinancieros.cuentasPorPagar || 0),
+                efectivoEnCajaYBancoDetalle: datosFinancieros.efectivoEnCajaYBanco,
+                efectivoEnCajaYBanco: Array.isArray(datosFinancieros.efectivoEnCajaYBanco)
+                  ? datosFinancieros.efectivoEnCajaYBanco.reduce((s, i) => s + (parseFloat(i.monto) || 0), 0)
+                  : (datosFinancieros.efectivoEnCajaYBanco || 0),
+                deudaANegocioDetalle: datosFinancieros.deudaANegocio,
+                deudaANegocio: Array.isArray(datosFinancieros.deudaANegocio)
+                  ? datosFinancieros.deudaANegocio.reduce((s, i) => s + (parseFloat(i.monto) || 0), 0)
+                  : (datosFinancieros.deudaANegocio || 0),
+                activosFijos: datosFinancieros.activosFijos,
+                capitalAnterior: datosFinancieros.capitalAnterior,
+                capitalAnteriorDescripcion: datosFinancieros.capitalAnteriorDescripcion,
+                distribucionSocios: distribucionData,
+              }
+            }}
             cliente={sesion.clienteNegocio}
             contadorData={contadorData}
           />
@@ -5915,6 +5978,48 @@ const InventarioDetalleNuevo = () => {
           setShowSearchBarcodeModal(false)
         }}
       />
+      {showRefreshAnimation && (
+        <div className="fixed inset-0 bg-gradient-to-br from-slate-900/95 via-slate-800/95 to-slate-900/95 flex items-center justify-center z-50">
+          <div className="text-center">
+            <div className="relative w-32 h-32 mx-auto mb-8">
+              <div className="absolute inset-0 rounded-full border-4 border-emerald-400 opacity-20 animate-ping"></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="relative w-24 h-24">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="absolute inset-0 rounded-full border-4 border-transparent border-t-emerald-400 animate-spin"
+                      style={{ animationDuration: `${1.5 + i * 0.5}s`, animationDelay: `${i * 0.2}s`, transform: `rotate(${i * 120}deg)` }}>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-12 h-12 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-full shadow-lg shadow-emerald-500/50 animate-pulse"></div>
+              </div>
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <div key={`rdot-${i}`} className="absolute w-2 h-2 bg-emerald-400 rounded-full animate-bounce"
+                  style={{ top: `${50 + 40 * Math.sin((i * Math.PI) / 3)}%`, left: `${50 + 40 * Math.cos((i * Math.PI) / 3)}%`, animationDelay: `${i * 0.15}s`, animationDuration: '1s' }}>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2">
+              <p className="text-white text-2xl font-semibold animate-pulse">
+                Actualizando listado
+                <span className="inline-block animate-bounce">.</span>
+                <span className="inline-block animate-bounce" style={{ animationDelay: '0.2s' }}>.</span>
+                <span className="inline-block animate-bounce" style={{ animationDelay: '0.4s' }}>.</span>
+              </p>
+              <p className="text-emerald-400 text-sm">Sincronizando productos...</p>
+            </div>
+            <div className="mt-8 w-64 mx-auto">
+              <div className="h-1 bg-slate-700 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-400 rounded-full"
+                  style={{ width: '100%', animation: 'shimmer 2s infinite' }}>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   )
 }

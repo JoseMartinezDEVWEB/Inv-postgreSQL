@@ -134,7 +134,8 @@ export const schemaCrearProductoCliente = Joi.object({
 // Sesión Inventario
 export const schemaCrearSesion = Joi.object({
   clienteNegocioId: Joi.number().integer().positive().required(),
-  fecha: Joi.date().iso(),
+  fecha: Joi.string().isoDate().optional(),
+  notas: Joi.string().max(500).allow('', null).optional(),
   configuracion: Joi.object(),
 })
 

@@ -19,6 +19,8 @@
     "build:linux": "npm run prebuild && npm run build:react && electron-builder --linux --config electron-builder.json",
     "dist": "npm run prebuild && npm run build:react && electron-builder --publish=never --config electron-builder.json",
     "pack": "npm run prebuild && npm run build:react && electron-builder --dir --config electron-builder.json",
+    "build:pg": "node scripts/package-backend-pg.js && npm run build:react && electron-builder --config electron-builder-pg.json",
+    "pack:pg": "node scripts/package-backend-pg.js && npm run build:react && electron-builder --dir --config electron-builder-pg.json",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {

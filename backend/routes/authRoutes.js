@@ -53,11 +53,12 @@ function authorizeRole(roles = []) {
  * Endpoint de Login
  */
 router.post('/login', async (req, res) => {
-    const { credencial, password } = req.body;
+    const { credencial, email, password } = req.body;
+    const identifier = credencial || email;
     try {
         const usuario = await db.Usuario.findOne({
             where: {
-                [db.Sequelize.Op.or]: [{ email: credencial }, { nombreUsuario: credencial }],
+                [db.Sequelize.Op.or]: [{ email: identifier }, { nombreUsuario: identifier }],
                 activo: true
             }
         });
@@ -95,6 +96,15 @@ router.post('/login', async (req, res) => {
             }
         });
     } catch (error) {
+        const fs = require('fs');
+        const path = require('path');
+        const logPath = process.env.USER_DATA_PATH 
+            ? path.join(process.env.USER_DATA_PATH, 'error_debug.log')
+            : path.join(__dirname, '../error_debug.log');
+        
+        const msg = `[${new Date().toISOString()}] LOGIN ERROR: ${error.message}\nStack: ${error.stack}\n`;
+        fs.appendFileSync(logPath, msg);
+
         console.error('❌ Error en login:', error.message);
         res.status(500).json({ mensaje: 'Error en el inicio de sesión: ' + error.message });
     }

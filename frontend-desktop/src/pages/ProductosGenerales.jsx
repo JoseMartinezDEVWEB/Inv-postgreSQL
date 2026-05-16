@@ -209,7 +209,7 @@ const ProductosGenerales = () => {
     }
   )
 
-  const productos = productosData?.datos || []
+  const productos = productosData?.productos || productosData?.datos || []
   const paginacion = productosData?.paginacion || {}
   const categorias = categoriasData?.categorias || categoriasData || []
 

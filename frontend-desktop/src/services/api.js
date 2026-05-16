@@ -228,23 +228,23 @@ export const clientesApi = {
 }
 
 export const sesionesApi = {
-  getAll: (params = {}) => api.get('/sesiones_inventario', { params }),
-  getById: (id) => api.get(`/sesiones_inventario/${id}`),
-  create: (sesionData) => api.post('/sesiones_inventario', sesionData),
-  addProduct: (sesionId, productData) => api.post(`/sesiones_inventario/${sesionId}/productos`, productData),
-  removeProduct: (sesionId, productId) => api.delete(`/sesiones_inventario/${sesionId}/productos/${productId}`),
-  updateProduct: (sesionId, productId, productData) => api.put(`/sesiones_inventario/${sesionId}/productos/${productId}`, productData),
-  updateFinancial: (sesionId, financialData) => api.put(`/sesiones_inventario/${sesionId}/financieros`, { datosFinancieros: financialData }),
-  complete: (sesionId) => api.patch(`/sesiones_inventario/${sesionId}/completar`),
-  cancel: (sesionId) => api.patch(`/sesiones_inventario/${sesionId}/cancelar`),
-  pauseTimer: (sesionId) => api.patch(`/sesiones_inventario/${sesionId}/timer/pause`),
-  resumeTimer: (sesionId) => api.patch(`/sesiones_inventario/${sesionId}/timer/resume`),
-  getByClient: (clienteId, params = {}) => api.get(`/sesiones_inventario/cliente/${clienteId}`, { params }),
-  update: (id, data) => api.put(`/sesiones_inventario/${id}`, data),
-  getUltimaPrevia: (clienteId, sesionIdActual) => api.get(`/sesiones_inventario/cliente/${clienteId}/ultima-previa/${sesionIdActual}`),
+  getAll: (params = {}) => api.get('/sesiones-inventario', { params }),
+  getById: (id) => api.get(`/sesiones-inventario/${id}`),
+  create: (sesionData) => api.post('/sesiones-inventario', sesionData),
+  addProduct: (sesionId, productData) => api.post(`/sesiones-inventario/${sesionId}/productos`, productData),
+  removeProduct: (sesionId, productId) => api.delete(`/sesiones-inventario/${sesionId}/productos/${productId}`),
+  updateProduct: (sesionId, productId, productData) => api.put(`/sesiones-inventario/${sesionId}/productos/${productId}`, productData),
+  updateFinancial: (sesionId, financialData) => api.put(`/sesiones-inventario/${sesionId}/financieros`, { datosFinancieros: financialData }),
+  complete: (sesionId) => api.patch(`/sesiones-inventario/${sesionId}/completar`),
+  cancel: (sesionId) => api.patch(`/sesiones-inventario/${sesionId}/cancelar`),
+  pauseTimer: (sesionId) => api.patch(`/sesiones-inventario/${sesionId}/timer/pause`),
+  resumeTimer: (sesionId) => api.patch(`/sesiones-inventario/${sesionId}/timer/resume`),
+  getByClient: (clienteId, params = {}) => api.get(`/sesiones-inventario/cliente/${clienteId}`, { params }),
+  update: (id, data) => api.put(`/sesiones-inventario/${id}`, data),
+  getUltimaPrevia: (clienteId, sesionIdActual) => api.get(`/sesiones-inventario/cliente/${clienteId}/ultima-previa/${sesionIdActual}`),
   // Agenda endpoints
-  getAgendaResumen: (params = {}) => api.get('/sesiones_inventario/agenda/resumen', { params }),
-  getAgendaDia: (params = {}) => api.get('/sesiones_inventario/agenda/dia', { params }),
+  getAgendaResumen: (params = {}) => api.get('/sesiones-inventario/agenda/resumen', { params }),
+  getAgendaDia: (params = {}) => api.get('/sesiones-inventario/agenda/dia', { params }),
 }
 
 export const productosApi = {

@@ -3,7 +3,7 @@
   "productName": "TECH STOCK J4-PRO",
   "copyright": "Copyright © 2026 J4 Pro",
   "directories": {
-    "output": "C:/Users/ASUS/Desktop/instalador-inv",
+    "output": "C:/Users/ASUS/Desktop/instalador-inv/sqlite",
     "buildResources": "build"
   },
   "files": [
@@ -17,7 +17,10 @@
       "from": "resources/backend",
       "to": "backend",
       "filter": [
-        "**/*"
+        "**/*",
+        "!database/inventario.db",
+        "!database/backups/**",
+        "!logs/**"
       ]
     }
   ],

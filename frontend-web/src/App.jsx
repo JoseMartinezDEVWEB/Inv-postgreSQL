@@ -70,6 +70,19 @@ const AppContent = () => {
     }
   }, [])
 
+  // Confirmación antes de cerrar la pestaña o navegar fuera
+  React.useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      // Los navegadores modernos ignoran el texto personalizado por seguridad,
+      // pero muestran su propio diálogo de confirmación al asignar returnValue.
+      e.preventDefault()
+      e.returnValue = '¿Deseas salir? Los cambios no guardados se perderán.'
+      return e.returnValue
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [])
+
   // Manejar F5 para refrescar la aplicación
   React.useEffect(() => {
     const handleKeyDown = (event) => {

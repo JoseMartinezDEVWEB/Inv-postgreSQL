@@ -28,6 +28,7 @@ import saludRoutes from './routes/salud.js'
 import integracionRoutes from './routes/integracion.js'
 import reportesRoutes from './routes/reportes.js'
 import syncRoutes from './routes/sync.js'
+import backupRoutes, { limpiarBackupsViejos, getBackupDir } from './routes/backup.js'
 
 // Services
 import { initializeSocket } from './services/socketService.js'
@@ -257,6 +258,7 @@ app.use('/api/salud', saludRoutes)
 app.use('/api/inventario', integracionRoutes)
 app.use('/api/reportes', reportesRoutes)
 app.use('/api/sync', syncRoutes)
+app.use('/api/backup', backupRoutes)
 
 // ===== MANEJO DE ERRORES =====
 
@@ -309,6 +311,44 @@ server.on('error', (error) => {
     process.exit(1)
   }
 })
+
+// ── Auto-backup ──────────────────────────────────────────────────────────────
+// Backup al arrancar (si no hay uno reciente de las últimas 12 h)
+try {
+  const backupDir = getBackupDir()
+  const fs2 = (await import('fs')).default
+  if (!fs2.existsSync(backupDir)) fs2.mkdirSync(backupDir, { recursive: true })
+  const archivos = fs2.existsSync(backupDir) ? fs2.readdirSync(backupDir).filter(f => f.endsWith('.db')) : []
+  const ahora = Date.now()
+  const reciente = archivos.some(f => {
+    const stat = fs2.statSync(`${backupDir}/${f}`)
+    return (ahora - stat.mtimeMs) < 12 * 60 * 60 * 1000
+  })
+  if (!reciente) {
+    const ts  = new Date().toISOString().replace(/[:.]/g, '-')
+    const dest = `${backupDir}/backup_auto_inicio_${ts}.db`
+    const db2 = dbManager.getDatabase()
+    await db2.backup(dest)
+    limpiarBackupsViejos(30)
+    logger.info(`📦 Backup automático de inicio creado`)
+  }
+} catch (e) { logger.warn('Auto-backup de inicio omitido:', e.message) }
+
+// Backup diario cada 24 horas
+const BACKUP_INTERVALO_MS = config.backup.intervalHours * 60 * 60 * 1000
+setInterval(async () => {
+  try {
+    const { default: fs3 } = await import('fs')
+    const backupDir = getBackupDir()
+    if (!fs3.existsSync(backupDir)) fs3.mkdirSync(backupDir, { recursive: true })
+    const ts   = new Date().toISOString().replace(/[:.]/g, '-')
+    const dest = `${backupDir}/backup_auto_diario_${ts}.db`
+    const db3 = dbManager.getDatabase()
+    await db3.backup(dest)
+    limpiarBackupsViejos(30)
+    logger.info(`📦 Backup automático diario creado: ${dest}`)
+  } catch (e) { logger.error('Error en backup diario:', e.message) }
+}, BACKUP_INTERVALO_MS)
 
 // Manejo de señales de terminación
 const gracefulShutdown = (signal) => {

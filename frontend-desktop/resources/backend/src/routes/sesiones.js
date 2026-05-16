@@ -20,6 +20,7 @@ router.get('/agenda/dia', sesionesController.obtenerAgendaDia)
 router.get('/', sesionesController.listarSesiones)
 router.post('/', validarRol('contable', 'contable', 'administrador'), validar(schemaCrearSesion), sesionesController.crearSesion)
 router.get('/cliente/:clienteId', sesionesController.obtenerSesionesPorCliente)
+router.get('/cliente/:clienteId/ultima-previa/:sesionIdActual', sesionesController.obtenerUltimaPrevia)
 router.get('/:id', sesionesController.obtenerSesion)
 
 // Gestión de productos en sesión

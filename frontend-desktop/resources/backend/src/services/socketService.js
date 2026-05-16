@@ -103,6 +103,24 @@ export const initializeSocket = (server) => {
         return next(new Error('Token expirado'))
       }
 
+      // Token de colaborador_temporal generado por el backend al aceptar solicitud
+      if (decoded.tipo === 'colaborador_temporal' || decoded.rol === 'colaborador_temporal') {
+        const solicitudId = decoded.solicitudId || decoded.id
+        const usuarioTemporal = {
+          id                  : `colaborador_${solicitudId}`,
+          solicitudId         : solicitudId,
+          nombre              : decoded.nombre || 'Colaborador',
+          rol                 : 'colaborador_temporal',
+          activo              : true,
+          contablePrincipalId : decoded.contableId || null,
+          configuracion       : { tipo: 'colaborador_sesion', solicitudId },
+        }
+        logger.info(`✅ Colaborador temporal autenticado via JWT: ${usuarioTemporal.nombre} (Solicitud: ${solicitudId})`)
+        socket.usuario     = usuarioTemporal
+        socket.clientType  = clientType
+        return next()
+      }
+
       const usuario = Usuario.buscarPorId(decoded.id)
 
       if (!usuario) {

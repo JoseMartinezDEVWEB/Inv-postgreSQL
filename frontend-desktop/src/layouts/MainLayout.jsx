@@ -17,6 +17,7 @@ import {
     Package,
     UserPlus,
     QrCode,
+    Database,
 } from 'lucide-react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import ButtonComponent from '../components/ui/Button'
@@ -39,13 +40,16 @@ const MainLayout = ({ children }) => {
     ]
 
     // Agregar opciones de colaboración para contables, administradores y contadores
-    const navigation = hasRole('contable') || hasRole('administrador') || hasRole('contable')
+    const navigation = hasRole('contable') || hasRole('administrador')
         ? [
             ...navigationBase,
             ...(hasRole('contable') || hasRole('administrador')
                 ? [{ name: 'Usuarios', href: '/usuarios', icon: UserPlus }]
                 : []),
             { name: 'Invitaciones', href: '/invitaciones', icon: QrCode },
+            ...(hasRole('administrador')
+                ? [{ name: 'Respaldo', href: '/respaldo', icon: Database }]
+                : []),
         ]
         : navigationBase
 

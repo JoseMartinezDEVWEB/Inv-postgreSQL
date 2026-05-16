@@ -26,6 +26,7 @@ router.post('/:solicitudId/aceptar', solicitudesController.aceptarSolicitud)
 router.post('/:solicitudId/rechazar', solicitudesController.rechazarSolicitud)
 router.get('/:solicitudId/productos-offline', solicitudesController.obtenerProductosOffline)
 router.post('/:solicitudId/sincronizar', solicitudesController.sincronizarProductos)
+router.post('/:solicitudId/batch-sync-productos', solicitudesController.batchSyncProductos)
 router.post('/:solicitudId/desconectar', solicitudesController.desconectarColaborador)
 
 // Rutas de cola de productos (admin)

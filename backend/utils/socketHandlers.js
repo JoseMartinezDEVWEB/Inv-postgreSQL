@@ -10,7 +10,10 @@ const traceSocket = (msg) => {
     const timestamp = new Date().toISOString();
     const logMsg = `[${timestamp}] ${msg}\n`;
     try {
-        fs.appendFileSync(path.join(__dirname, '../socket_trace.log'), logMsg);
+        const logPath = process.env.USER_DATA_PATH 
+            ? path.join(process.env.USER_DATA_PATH, 'socket_trace.log')
+            : path.join(__dirname, '../socket_trace.log');
+        fs.appendFileSync(logPath, logMsg);
     } catch (err) {
         console.error('Error writing to trace log:', err);
     }

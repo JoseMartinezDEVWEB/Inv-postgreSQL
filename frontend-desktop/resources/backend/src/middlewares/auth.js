@@ -48,6 +48,20 @@ export const validarJWT = async (req, res, next) => {
     // Verificar y decodificar el token
     const decoded = jwt.verify(token, config.jwt.secret)
 
+    // Tokens de colaborador_temporal: no buscar en tabla usuarios
+    if (decoded.tipo === 'colaborador_temporal' || decoded.rol === 'colaborador_temporal') {
+      req.usuario = {
+        id          : decoded.solicitudId || decoded.id,
+        solicitudId : decoded.solicitudId || decoded.id,
+        nombre      : decoded.nombre || 'Colaborador',
+        rol         : 'colaborador_temporal',
+        email       : 'colaborador@temporal',
+        contablePrincipalId: decoded.contableId || null,
+        activo      : true,
+      }
+      return next()
+    }
+
     // Buscar usuario en la base de datos
     const usuario = await Usuario.buscarPorId(decoded.id)
 

@@ -18,8 +18,12 @@ export const config = {
 
   // Base de datos
   database: {
-    path: process.env.DATABASE_PATH || './database/inventario.db',
-    backupPath: process.env.DATABASE_BACKUP_PATH || './database/backups',
+    path: process.env.USER_DATA_PATH 
+      ? path.join(process.env.USER_DATA_PATH, 'inventario.db')
+      : (process.env.DATABASE_PATH || './database/inventario.db'),
+    backupPath: process.env.USER_DATA_PATH 
+      ? path.join(process.env.USER_DATA_PATH, 'backups')
+      : (process.env.DATABASE_BACKUP_PATH || './database/backups'),
     options: {
       verbose: process.env.NODE_ENV === 'development' ? console.log : null,
       fileMustExist: false,
@@ -44,7 +48,9 @@ export const config = {
   // Logging
   logging: {
     level: process.env.LOG_LEVEL || 'info',
-    file: process.env.LOG_FILE || './logs/app.log',
+    file: process.env.USER_DATA_PATH 
+      ? path.join(process.env.USER_DATA_PATH, 'logs', 'app.log')
+      : (process.env.LOG_FILE || './logs/app.log'),
   },
 
   // Rate limiting

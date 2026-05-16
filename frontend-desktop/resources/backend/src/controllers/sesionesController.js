@@ -353,11 +353,8 @@ export const obtenerSesionesPorCliente = async (req, res) => {
 // Obtener resumen de agenda
 export const obtenerAgendaResumen = async (req, res) => {
   const contadorId = req.usuario.id
-  const { mes } = req.query // Formato: "YYYY-MM"
-
-  if (!mes) {
-    throw new AppError('El parámetro "mes" es requerido (formato: YYYY-MM)', 400)
-  }
+  const mesActual = new Date().toISOString().slice(0, 7) // YYYY-MM
+  const { mes = mesActual } = req.query
 
   try {
     const [year, month] = mes.split('-').map(Number)
@@ -443,6 +440,32 @@ export const obtenerAgendaDia = async (req, res) => {
   }
 }
 
+// Obtener la última sesión previa de un cliente (para comparación histórica)
+export const obtenerUltimaPrevia = async (req, res) => {
+  const { clienteId, sesionIdActual } = req.params
+  const db = dbManager.getDatabase()
+
+  const stmt = db.prepare(`
+    SELECT si.*, cn.nombre as nombreCliente
+    FROM sesiones_inventario si
+    INNER JOIN clientes_negocios cn ON si.clienteNegocioId = cn.id
+    WHERE si.clienteNegocioId = ?
+      AND si.id != ?
+      AND si.estado = 'completada'
+    ORDER BY si.fecha DESC, si.createdAt DESC
+    LIMIT 1
+  `)
+
+  const sesionPrevia = stmt.get(parseInt(clienteId), parseInt(sesionIdActual))
+
+  if (!sesionPrevia) {
+    return res.json(respuestaExito(null, 'No hay sesión previa'))
+  }
+
+  const sesionCompleta = SesionInventario.buscarPorId(sesionPrevia.id)
+  res.json(respuestaExito(sesionCompleta))
+}
+
 export default {
   listarSesiones,
   obtenerSesion,
@@ -456,6 +479,7 @@ export default {
   pausarTimer,
   reanudarTimer,
   obtenerSesionesPorCliente,
+  obtenerUltimaPrevia,
   obtenerAgendaResumen,
   obtenerAgendaDia,
 }

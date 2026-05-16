@@ -8,6 +8,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import fs from 'fs'
 import http from 'http'
+import os from 'os'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -15,10 +16,9 @@ const __dirname = path.dirname(__filename)
 class BackendServer {
   constructor() {
     this.process = null
-    // Puerto estable para el backend embebido (debe ser fijo para QR/auto-conexión)
+    // Puerto estable para el backend embebido
     this.port = 4501
-    // En Windows, `localhost` puede resolver a IPv6 (::1) y fallar si el backend
-    // solo escucha en IPv4. Usamos loopback IPv4 explícito para checks internos.
+    // IPv4 explícito — en Windows localhost puede resolver a IPv6
     this.host = '127.0.0.1'
     this.isRunning = false
     this._backendReadyPromise = null
@@ -28,9 +28,10 @@ class BackendServer {
     this._backendLastLines = []
   }
 
+  // ─── Verificación de puerto ────────────────────────────────────────────────
+
   async checkPort(port) {
     return new Promise((resolve) => {
-      // Intentamos escuchar en 0.0.0.0 para que coincida con el backend
       const server = http.createServer()
       server.once('error', () => resolve(false))
       server.once('listening', () => {
@@ -41,30 +42,42 @@ class BackendServer {
     })
   }
 
-  async findAvailablePort(startPort = 4000) {
-    let port = startPort
-    while (port < startPort + 100) {
-      const available = await this.checkPort(port)
-      if (available) return port
-      port++
-    }
-    throw new Error('No hay puertos disponibles')
-  }
+  // ─── Rutas ─────────────────────────────────────────────────────────────────
 
   getBackendPath() {
-    // En desarrollo: usar el backend del proyecto
+    // Desarrollo: usar el backend del proyecto
     const devPath = path.join(__dirname, '../../backend')
-    if (fs.existsSync(devPath)) {
-      return devPath
-    }
+    if (fs.existsSync(devPath)) return devPath
 
-    // En producción: usar backend empaquetado
+    // Producción: backend empaquetado en resources
     const prodPath = path.join(process.resourcesPath, 'backend')
-    if (fs.existsSync(prodPath)) {
-      return prodPath
-    }
+    if (fs.existsSync(prodPath)) return prodPath
 
     throw new Error('Backend no encontrado')
+  }
+
+  // ─── Inicio principal ──────────────────────────────────────────────────────
+
+  /**
+   * Intenta iniciar el backend con reintentos automáticos.
+   * Primer intento falla silenciosamente si es un error de arranque lento;
+   * el segundo intento lo detecta como proceso que ya está levantando.
+   */
+  async startWithRetry(maxRetries = 2) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await this.start()
+        return
+      } catch (err) {
+        if (attempt < maxRetries) {
+          console.warn(`⚠️ Intento ${attempt}/${maxRetries} falló: ${err.message}`)
+          console.warn(`   Reintentando en 4 segundos...`)
+          await new Promise(r => setTimeout(r, 4000))
+        } else {
+          throw err
+        }
+      }
+    }
   }
 
   async start() {
@@ -77,33 +90,44 @@ class BackendServer {
       const backendPath = this.getBackendPath()
       const healthUrl = this._getHealthUrl()
 
-      // 1. Primero verificar si ya hay uno corriendo (es lo más rápido y seguro)
+      // ── 1. ¿Hay un backend ya corriendo y saludable? ──────────────────────
       try {
         await this.checkHealth(healthUrl, { logErrors: false })
-        console.log('✅ Backend externo detectado. Usando instancia existente.')
+        console.log('✅ Backend externo detectado y saludable. Reutilizando.')
         this.isRunning = true
-        if (this._resolveBackendReady) this._resolveBackendReady(true)
         return
-      } catch (err) {
-        // No hay backend corriendo, procedemos a intentar iniciarlo
+      } catch {
+        // No hay respuesta de salud — continuar evaluando
       }
 
-      // 2. Validar disponibilidad del puerto fijo
-      const isAvailable = await this.checkPort(this.port)
-      if (!isAvailable) {
+      // ── 2. ¿El puerto está ocupado? (backend arrancando por Task/Startup) ──
+      const isPortAvailable = await this.checkPort(this.port)
+
+      if (!isPortAvailable) {
+        // El puerto está en uso pero no responde aún.
+        // Típico al arrancar el PC: el Task Scheduler levantó el backend
+        // pero todavía está inicializando (migraciones, AV scan de node.exe…)
+        console.log(`⏳ Puerto ${this.port} ocupado. Esperando proceso existente (hasta 60 s)...`)
+        const existingReady = await this._waitForExistingProcess(healthUrl, 60000)
+        if (existingReady) {
+          console.log('✅ Proceso existente listo. Reutilizando.')
+          this.isRunning = true
+          return
+        }
+        // Si después de 60 s sigue sin responder, es un proceso huérfano.
+        // Tiramos error para que el reintento externo nos dé otra oportunidad.
         throw new Error(
-          `El puerto ${this.port} está ocupado por otro proceso. ` +
-          `J4 Pro requiere el backend en ${this.port}. ` +
-          `Cierra la app/proceso que usa ese puerto y reintenta.`
+          `El puerto ${this.port} está ocupado por otro proceso que no responde. ` +
+          `Reinicia el PC o cierra el proceso que usa ese puerto.`
         )
       }
 
-      // 3. Configurar Firewall automáticamente en Windows
+      // ── 3. Puerto libre — arrancar el backend nosotros ────────────────────
+
+      // Configurar regla de Firewall automáticamente en Windows
       if (process.platform === 'win32') {
-        try {
-          await this.setupFirewall()
-        } catch (fwErr) {
-          console.warn('⚠️ No se pudo configurar el firewall automáticamente:', fwErr.message)
+        try { await this.setupFirewall() } catch (fwErr) {
+          console.warn('⚠️ Firewall no configurado automáticamente:', fwErr.message)
         }
       }
 
@@ -111,7 +135,7 @@ class BackendServer {
       console.log('📂 Path:', backendPath)
       console.log('🔌 Puerto (fijo):', this.port)
 
-      // Señal de "backend listo" basada en logs del proceso hijo
+      // Señal "backend listo" basada en logs del proceso hijo
       this._backendReadyPromise = new Promise((resolve, reject) => {
         this._resolveBackendReady = resolve
         this._rejectBackendReady = reject
@@ -119,67 +143,63 @@ class BackendServer {
       this._backendLogsBuffer = ''
       this._backendLastLines = []
 
-      // Configurar sistema de logs en archivo para debugging en producción
-      const appData = process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + '/Library/Preferences' : '/var/local')
+      // Log en archivo para diagnóstico en producción
+      const appData = process.env.APPDATA ||
+        (process.platform === 'darwin'
+          ? path.join(os.homedir(), 'Library', 'Preferences')
+          : '/var/local')
       const logDir = path.join(appData, 'TECH STOCK J4-PRO', 'logs')
       if (!fs.existsSync(logDir)) {
-        try { fs.mkdirSync(logDir, { recursive: true }) } catch (e) { }
+        try { fs.mkdirSync(logDir, { recursive: true }) } catch { }
       }
       const logFile = path.join(logDir, 'backend-startup.log')
-
       const logToFile = (msg) => {
-        try {
-          const timestamp = new Date().toISOString()
-          fs.appendFileSync(logFile, `[${timestamp}] ${msg}\n`)
-        } catch (e) { }
+        try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`) } catch { }
       }
 
-      logToFile('--- Iniciando nuevo intento de arranque del backend ---')
+      logToFile('--- Iniciando nuevo arranque del backend ---')
 
-      // Determinar si estamos en producción basado en el path del backend
       const isProduction = backendPath.includes('resources')
-      logToFile(`Modo producción detectado: ${isProduction}`)
-      logToFile(`Backend path: ${backendPath}`)
+      logToFile(`Producción: ${isProduction}  |  Path: ${backendPath}`)
+
+      // Calcular ruta de datos en AppData (evita problemas de permisos en Program Files)
+      const userDataPath = path.join(appData, 'TECH STOCK J4-PRO', 'data')
+      if (!fs.existsSync(userDataPath)) {
+        try { fs.mkdirSync(userDataPath, { recursive: true }) } catch { }
+      }
 
       let command = 'node'
       let args = ['server.js']
       let spawnEnv = {
         ...process.env,
         PORT: String(this.port),
-        NODE_ENV: isProduction ? 'production' : 'development'
+        NODE_ENV: isProduction ? 'production' : 'development',
+        USER_DATA_PATH: userDataPath,
       }
 
       if (isProduction) {
-        // En producción, buscamos el node.exe empaquetado
         const bundledNodePath = path.join(backendPath, 'bin', 'node.exe')
-        logToFile(`Buscando node.exe empaquetado en: ${bundledNodePath}`)
-
+        logToFile(`Buscando node.exe en: ${bundledNodePath}`)
         if (fs.existsSync(bundledNodePath)) {
           console.log('📦 Usando Node.js empaquetado (Standalone)')
-          logToFile('✅ Node.exe empaquetado encontrado. Usándolo.')
+          logToFile('✅ node.exe encontrado.')
           command = bundledNodePath
-          // No necesitamos ELECTRON_RUN_AS_NODE porque es un node real
         } else {
-          console.warn('⚠️ No se encontró Node.js empaquetado. Intentando fallback a sistema...')
-          logToFile('❌ Node.exe empaquetado NO encontrado. Intentando fallback.')
-
-          // Fallaks anteriores...
+          console.warn('⚠️ No se encontró Node.js empaquetado. Usando proceso de Electron.')
+          logToFile('❌ node.exe NO encontrado. Fallback a Electron.')
           command = process.execPath
           args = ['--no-sandbox', 'src/server.js']
           spawnEnv.ELECTRON_RUN_AS_NODE = '1'
         }
       } else {
-        console.log('🔧 Modo Desarrollo: Usando Node.js del sistema')
+        console.log('🔧 Modo Desarrollo: usando Node.js del sistema')
       }
 
-      logToFile(`Comando final: ${command}`)
-      logToFile(`Argumentos: ${JSON.stringify(args)}`)
+      logToFile(`Comando: ${command}  |  Args: ${JSON.stringify(args)}`)
 
-      // Iniciar servidor backend
       this.process = spawn(command, args, {
         cwd: backendPath,
         env: spawnEnv,
-        // Usar pipes para poder parsear logs y detectar "Servidor iniciado..."
         stdio: ['ignore', 'pipe', 'pipe'],
       })
 
@@ -187,7 +207,6 @@ class BackendServer {
       let exitCode = null
       let processError = null
 
-      // Capturar logs del backend y reenviarlos a la consola (mantiene DX).
       this._attachBackendLogPipes()
 
       this.process.on('error', (error) => {
@@ -210,46 +229,52 @@ class BackendServer {
         }
       })
 
-      // Esperar un poco para que el proceso inicie y detectar fallos tempranos
+      // Esperar arranque inicial del proceso
       await new Promise(resolve => setTimeout(resolve, 2000))
 
-      // Si el proceso ya falló, abortar (no cambiar puerto automáticamente)
       if (processExited && exitCode !== 0) {
-        if (this.process) {
-          this.process.kill()
-          this.process = null
-        }
+        if (this.process) { this.process.kill(); this.process = null }
         throw processError || new Error(`Backend falló con código ${exitCode}`)
       }
 
-      // Si el proceso sigue corriendo, esperar a que el servidor esté listo
-      await this.waitForServer({ initialTimeoutMs: 15000, extendedTimeoutMs: 60000 })
+      // Esperar a que el servidor responda (hasta 120 s — AV scan en primer arranque)
+      await this.waitForServer({ initialTimeoutMs: 20000, extendedTimeoutMs: 120000 })
       this.isRunning = true
       console.log('✅ Backend local iniciado correctamente')
+
     } catch (error) {
-      // Limpiar proceso si existe
-      if (this.process) {
-        this.process.kill()
-        this.process = null
-      }
+      if (this.process) { this.process.kill(); this.process = null }
       console.error('❌ Error al iniciar backend:', error)
       throw error
     }
   }
+
+  // ─── Esperar proceso existente (arrancado por auto-inicio de Windows) ──────
+
+  async _waitForExistingProcess(healthUrl, timeoutMs = 60000) {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const ok = await this.checkHealth(healthUrl, { logErrors: false })
+        if (ok) return true
+      } catch {
+        // Aún no listo
+      }
+      await new Promise(r => setTimeout(r, 1500))
+    }
+    return false
+  }
+
+  // ─── Pipes de logs ──────────────────────────────────────────────────────────
 
   _getHealthUrl() {
     return `http://${this.host}:${this.port}/api/salud`
   }
 
   _pushBackendLine(line) {
-    // Mantener un buffer pequeño para diagnósticos (por si falla el arranque)
     this._backendLastLines.push(line)
     if (this._backendLastLines.length > 200) this._backendLastLines.shift()
 
-    // Detectar el puerto reportado por el backend y sincronizarlo estrictamente
-    // Ejemplos:
-    // - "info: ✅ Servidor iniciado en puerto 4500 {...}"
-    // - "🌐 Servidor Local: http://localhost:4500"
     const portMatch =
       line.match(/Servidor iniciado en puerto\s+(\d{2,5})/i) ||
       line.match(/Servidor Local:\s*http:\/\/localhost:(\d{2,5})/i) ||
@@ -259,7 +284,7 @@ class BackendServer {
       const reportedPort = Number(portMatch[1])
       if (Number.isFinite(reportedPort) && reportedPort > 0) {
         if (this.port !== reportedPort) {
-          console.log(`🔄 Puerto actualizado por logs del backend: ${this.port} → ${reportedPort}`)
+          console.log(`🔄 Puerto actualizado por logs: ${this.port} → ${reportedPort}`)
           this.port = reportedPort
         }
         if (this._resolveBackendReady) this._resolveBackendReady(true)
@@ -269,13 +294,10 @@ class BackendServer {
 
   _attachBackendLogPipes() {
     if (!this.process) return
-
     const onChunk = (chunk, streamName) => {
       const text = chunk.toString('utf8')
-      // Reenviar para no perder visibilidad en dev
       if (streamName === 'stdout') process.stdout.write(text)
       else process.stderr.write(text)
-
       this._backendLogsBuffer += text
       let idx
       while ((idx = this._backendLogsBuffer.indexOf('\n')) !== -1) {
@@ -284,19 +306,28 @@ class BackendServer {
         if (line.trim().length > 0) this._pushBackendLine(line)
       }
     }
-
     if (this.process.stdout) this.process.stdout.on('data', (c) => onChunk(c, 'stdout'))
     if (this.process.stderr) this.process.stderr.on('data', (c) => onChunk(c, 'stderr'))
   }
 
-  async waitForServer({ initialTimeoutMs = 15000, extendedTimeoutMs = 60000, pollIntervalMs = 500 } = {}) {
+  // ─── Detectar tipo de backend (SQLite o PostgreSQL) ───────────────────────
+
+  _isPostgresBackend(backendPath) {
+    // PG backend: tiene models/index.js con dialect postgres, sin carpeta src/
+    return fs.existsSync(path.join(backendPath, 'models', 'index.js')) &&
+           !fs.existsSync(path.join(backendPath, 'src'))
+  }
+
+  // ─── Esperar que el servidor responda ──────────────────────────────────────
+
+  async waitForServer({ initialTimeoutMs = 20000, extendedTimeoutMs = 120000, pollIntervalMs = 500 } = {}) {
     const start = Date.now()
     const url = this._getHealthUrl()
+    let consecutiveDbErrors = 0
 
     while (true) {
       const elapsed = Date.now() - start
 
-      // Si el proceso murió, no tiene sentido seguir esperando
       if (this.process && this.process.exitCode !== null) {
         const lastLines = this._backendLastLines.slice(-30).join('\n')
         throw new Error(
@@ -305,7 +336,7 @@ class BackendServer {
         )
       }
 
-      // Señal rápida basada en logs ("Servidor iniciado en puerto X")
+      // Señal rápida desde logs
       if (this._backendReadyPromise) {
         const ready = await Promise.race([
           this._backendReadyPromise.then(() => true).catch(() => false),
@@ -314,66 +345,85 @@ class BackendServer {
         if (ready) return true
       }
 
-      // Healthcheck real (HTTP)
+      // Healthcheck real
       try {
-        const ok = await this.checkHealth(url, { logErrors: true })
-        if (ok) return true
-      } catch (error) {
-        // seguimos intentando
+        const ok = await this.checkHealth(url, { logErrors: false })
+        if (ok) {
+          consecutiveDbErrors = 0
+          return true
+        }
+      } catch (err) {
+        // Si la respuesta del backend indica que PostgreSQL no está conectado,
+        // contabilizarlo para dar un error claro después de ~45 s sin DB.
+        if (err.message && err.message.includes('DB_DISCONNECTED')) {
+          consecutiveDbErrors++
+          if (consecutiveDbErrors === 1) {
+            console.warn('⚠️ Backend activo pero PostgreSQL no conectado. Esperando...')
+          }
+          // 45 s de errores de BD → PostgreSQL probablemente no está instalado/iniciado
+          if (consecutiveDbErrors * pollIntervalMs > 45000) {
+            throw new Error(
+              'PG_NOT_AVAILABLE: El backend está activo pero PostgreSQL no responde.\n' +
+              'Verifica que el servicio PostgreSQL esté instalado e iniciado en Windows.'
+            )
+          }
+        }
       }
 
-      // Refactor “más permisivo”: si el proceso sigue vivo, ampliamos el timeout
-      if (elapsed > initialTimeoutMs && elapsed <= extendedTimeoutMs) {
-        // No fatal: seguimos esperando (útil cuando migraciones/socket tardan)
-      } else if (elapsed > extendedTimeoutMs) {
-        throw new Error('Backend no respondió en el tiempo esperado')
+      if (elapsed > extendedTimeoutMs) {
+        throw new Error(`Backend no respondió en ${extendedTimeoutMs / 1000} segundos`)
+      }
+
+      if (elapsed > initialTimeoutMs && elapsed % 10000 < 500) {
+        console.log(`⏳ Esperando backend... ${Math.round(elapsed / 1000)}s (arranque lento o AV scan)`)
       }
 
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
     }
   }
 
+  // ─── Health check HTTP ─────────────────────────────────────────────────────
+
   async checkHealth(url, { logErrors = false } = {}) {
     return new Promise((resolve, reject) => {
       const req = http.get(url, {
-        headers: {
-          // Pedimos algo simple; el backend debe permitir salud sin auth.
-          Accept: 'text/plain, application/json;q=0.9, */*;q=0.8',
-        },
+        headers: { Accept: 'application/json' },
       }, (res) => {
         let data = ''
-        res.on('data', (chunk) => {
-          data += chunk
-        })
+        res.on('data', (chunk) => { data += chunk })
         res.on('end', () => {
           if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve(true)
           } else {
+            // Intentar parsear respuesta para dar error más específico
+            let errorMsg = `Status ${res.statusCode}`
+            try {
+              const body = JSON.parse(data)
+              // Backend PostgreSQL devuelve database:'disconnected' cuando PG no responde
+              if (body.database === 'disconnected' || body.status === 'error') {
+                errorMsg = `DB_DISCONNECTED: ${body.error || body.message || 'PostgreSQL no conectado'}`
+              }
+            } catch { /* no es JSON */ }
+
             if (logErrors) {
-              const snippet = (data || '').toString().slice(0, 200).replace(/\s+/g, ' ').trim()
-              console.log(`🩺 checkHealth fallo: status=${res.statusCode} url=${url} body="${snippet}"`)
+              console.log(`🩺 checkHealth: status=${res.statusCode} → ${errorMsg}`)
             }
-            reject(new Error(`Status ${res.statusCode}`))
+            reject(new Error(errorMsg))
           }
         })
       })
-
       req.on('error', (error) => {
-        if (logErrors) {
-          console.log(`🩺 checkHealth error: code=${error.code || 'N/A'} message=${error.message} url=${url}`)
-        }
+        if (logErrors) console.log(`🩺 checkHealth error: ${error.code} url=${url}`)
         reject(error)
       })
-
-      req.setTimeout(2000, () => {
+      req.setTimeout(3000, () => {
         req.destroy()
-        if (logErrors) {
-          console.log(`🩺 checkHealth timeout: url=${url}`)
-        }
         reject(new Error('Timeout'))
       })
     })
   }
+
+  // ─── Detener ───────────────────────────────────────────────────────────────
 
   stop() {
     if (this.process) {
@@ -384,19 +434,94 @@ class BackendServer {
     }
   }
 
+  // ─── Firewall ──────────────────────────────────────────────────────────────
+
   async setupFirewall() {
     return new Promise((resolve) => {
-      // Intentar agregar regla de firewall de forma silenciosa
-      // Usamos TCP y UDP para el puerto configurado
       const ruleName = 'J4ProBackend'
-      const cmd = `netsh advfirewall firewall show rule name="${ruleName}" >nul 2>&1 || ` +
-                  `netsh advfirewall firewall add rule name="${ruleName}" dir=in action=allow protocol=TCP localport=${this.port} profile=any enable=yes`
-      
-      spawn('cmd.exe', ['/c', cmd], { stdio: 'ignore' }).on('exit', () => {
-        resolve(true)
-      })
+      const cmd =
+        `netsh advfirewall firewall show rule name="${ruleName}" >nul 2>&1 || ` +
+        `netsh advfirewall firewall add rule name="${ruleName}" dir=in action=allow protocol=TCP localport=${this.port} profile=any enable=yes`
+      spawn('cmd.exe', ['/c', cmd], { stdio: 'ignore' }).on('exit', () => resolve(true))
     })
   }
+
+  // ─── Registrar auto-inicio en Windows (Startup folder) ────────────────────
+
+  async registerWindowsAutoStart() {
+    if (process.platform !== 'win32') return
+
+    try {
+      const backendPath = this.getBackendPath()
+      const nodePath = path.join(backendPath, 'bin', 'node.exe')
+
+      if (!fs.existsSync(nodePath)) {
+        console.warn('⚠️ Auto-inicio: node.exe no encontrado, se omite.')
+        return
+      }
+
+      const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')
+      const userDataPath = path.join(appData, 'TECH STOCK J4-PRO', 'data')
+      const j4proDir = path.join(appData, 'TECH STOCK J4-PRO')
+      if (!fs.existsSync(j4proDir)) fs.mkdirSync(j4proDir, { recursive: true })
+
+      // Detectar si el backend bundled es PostgreSQL o SQLite
+      const isPostgres = this._isPostgresBackend(backendPath)
+
+      // Crear VBScript que lanza el backend con ventana oculta.
+      // En VBScript los backslashes NO se escapan — se escriben tal cual.
+      // Las triples comillas (""") producen una comilla literal dentro del string VBS.
+      const vbsPath = path.join(j4proDir, 'start-backend.vbs')
+      const vbsLines = [
+        'Set WshShell = CreateObject("WScript.Shell")',
+        `WshShell.Environment("Process")("PORT") = "4501"`,
+        `WshShell.Environment("Process")("NODE_ENV") = "production"`,
+        `WshShell.Environment("Process")("USER_DATA_PATH") = "${userDataPath}"`,
+      ]
+
+      if (isPostgres) {
+        // Para PostgreSQL: leer credenciales del .env ya existente en el backend.
+        // El process.env hereda NODE_ENV y PORT; las vars DB las carga dotenv desde .env
+        vbsLines.push(`' Backend PostgreSQL — credenciales en .env del directorio de trabajo`)
+      }
+
+      vbsLines.push(
+        `WshShell.CurrentDirectory = "${backendPath}"`,
+        // """ruta\node.exe"" server.js" → command = "ruta\node.exe" server.js
+        `WshShell.Run """${nodePath}"" server.js", 0, False`,
+      )
+
+      const vbsContent = vbsLines.join('\r\n')
+
+      fs.writeFileSync(vbsPath, vbsContent, 'utf8')
+
+      // Poner el VBScript en la carpeta Startup del usuario (sin admin)
+      const startupFolder = path.join(
+        appData,
+        'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup'
+      )
+      const startupTarget = path.join(startupFolder, 'TECH-STOCK-J4PRO-Backend.vbs')
+
+      if (!fs.existsSync(startupTarget)) {
+        fs.copyFileSync(vbsPath, startupTarget)
+        console.log('✅ Auto-inicio registrado en carpeta Startup de Windows')
+      } else {
+        // Actualizar si el archivo fuente cambió
+        const existingContent = fs.readFileSync(startupTarget, 'utf8')
+        if (existingContent !== vbsContent) {
+          fs.copyFileSync(vbsPath, startupTarget)
+          console.log('🔄 Script de auto-inicio actualizado')
+        } else {
+          console.log('✅ Auto-inicio ya registrado y actualizado')
+        }
+      }
+    } catch (err) {
+      // No crítico — la app funciona sin auto-inicio
+      console.warn('⚠️ No se pudo registrar auto-inicio:', err.message)
+    }
+  }
+
+  // ─── Getters ───────────────────────────────────────────────────────────────
 
   getApiUrl() {
     return `http://${this.host}:${this.port}/api`

@@ -58,7 +58,30 @@ export const verificarEstado = async (req, res) => {
     throw new AppError('Solicitud no encontrada', 404)
   }
 
-  res.json(respuestaExito({ estado: solicitud.estado, solicitud }))
+  // Datos base siempre presentes
+  const respuesta = {
+    estado         : solicitud.estado,
+    estadoConexion : solicitud.estadoConexion || 'desconectado',
+    solicitud,
+  }
+
+  // Si la solicitud fue aceptada, incluir el sessionToken para que el mobile
+  // pueda autenticarse como colaborador_temporal
+  if (solicitud.estado === 'aceptada') {
+    // Recuperar token guardado o regenerar si falta (compatibilidad con DBs antiguas)
+    let sessionToken = solicitud.sessionToken
+    if (!sessionToken) {
+      sessionToken = SolicitudConexion.generarSessionToken(solicitud)
+    }
+
+    respuesta.sessionToken    = sessionToken
+    respuesta.token           = sessionToken   // alias por si el mobile usa "token"
+    respuesta.nombreSugerido  = solicitud.nombreColaborador
+    respuesta.contable        = { id: solicitud.contableId }
+    respuesta.sesionInventario = null          // sin sesión previa asignada
+  }
+
+  res.json(respuestaExito(respuesta))
 }
 
 export const agregarProductoOffline = async (req, res) => {
@@ -349,6 +372,113 @@ export const enviarProductosComoCola = async (req, res) => {
   res.json(respuestaExito(cola, 'Productos enviados para revisión'))
 }
 
+// ============================================
+// BATCH SYNC — Sincronización masiva de productos de colaborador a sesión
+// ============================================
+
+export const batchSyncProductos = async (req, res) => {
+  const { solicitudId } = req.params
+  const { sesionInventarioId, productos } = req.body
+
+  if (!sesionInventarioId || !Array.isArray(productos) || productos.length === 0) {
+    throw new AppError('Faltan datos: sesionInventarioId y productos son requeridos', 400)
+  }
+
+  const SesionInventario = (await import('../models/SesionInventario.js')).default
+  const db = (await import('../config/database.js')).default.getDatabase()
+
+  const sesion = SesionInventario.buscarPorId(sesionInventarioId)
+  if (!sesion) throw new AppError('Sesión de inventario no encontrada', 404)
+
+  const clienteNegocioId = sesion.clienteNegocioId
+  const usuarioId = req.usuario?.id || null
+
+  // Statements preparados una vez
+  const stmtInsPC = db.prepare(`
+    INSERT INTO productos_cliente
+      (clienteNegocioId, nombre, costo, unidad, categoria, sku, codigoBarras, creadoPorId, tipoCreacion,
+       activo, unidadesInternas, estadisticas, tipoContenedor, tieneUnidadesInternas, tipoPeso, esProductoSecundario)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'colaborador', 1, '{}', '{}', 'ninguno', 0, 'ninguno', 0)
+  `)
+
+  const stmtInsContado = db.prepare(`
+    INSERT INTO productos_contados
+      (sesionInventarioId, productoClienteId, nombreProducto, unidadProducto, costoProducto,
+       skuProducto, cantidadContada, valorTotal, agregadoPorId)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  // Buscar si ya existe en productos_generales (por nombre normalizado o código de barras)
+  const stmtFindPG = db.prepare(`
+    SELECT id FROM productos_generales
+    WHERE activo = 1
+      AND (lower(trim(nombre)) = lower(trim(?))
+           OR (codigoBarras IS NOT NULL AND codigoBarras != '' AND codigoBarras = ?))
+    LIMIT 1
+  `)
+
+  // Insertar en productos_generales si no existe (producto nuevo creado por colaborador)
+  const stmtInsPG = db.prepare(`
+    INSERT INTO productos_generales
+      (nombre, costoBase, codigoBarras, unidad, categoria, creadoPorId, tipoCreacion, activo)
+    VALUES (?, ?, ?, ?, ?, ?, 'colaborador', 1)
+  `)
+
+  const stmtMarkSynced = db.prepare(
+    'UPDATE productos_offline SET sincronizado = 1 WHERE id = ?'
+  )
+
+  let count = 0
+
+  db.transaction(() => {
+    for (const item of productos) {
+      const { temporalId, productoData } = item || {}
+      if (!productoData?.nombre) continue
+
+      const nombre   = String(productoData.nombre).trim()
+      const cantidad = Number(productoData.cantidad) || 1
+      const costo    = Number(productoData.costoBase ?? productoData.costo ?? 0)
+      const unidad   = productoData.unidad    || 'unidad'
+      const categoria= productoData.categoria || 'General'
+      const sku      = productoData.sku       || productoData.codigoBarras || null
+      const codigoB  = productoData.codigoBarras || null
+
+      // 1. Insertar en productos_cliente
+      const pcInfo = stmtInsPC.run(
+        clienteNegocioId, nombre, costo, unidad, categoria, sku, codigoB, usuarioId
+      )
+      const productoClienteId = pcInfo.lastInsertRowid
+
+      // 2. Insertar en productos_contados (la sesión)
+      stmtInsContado.run(
+        sesionInventarioId, productoClienteId, nombre, unidad, costo,
+        sku || '', cantidad, cantidad * costo, usuarioId
+      )
+
+      // 3. Agregar a productos_generales si el producto es nuevo (no existe aún en el catálogo)
+      const existsInPG = stmtFindPG.get(nombre, codigoB || '')
+      if (!existsInPG) {
+        stmtInsPG.run(nombre, costo, codigoB, unidad, categoria, usuarioId)
+      }
+
+      // 4. Marcar el offline como sincronizado
+      if (temporalId) {
+        try { stmtMarkSynced.run(temporalId) } catch (_) { /* ignorar si no existe */ }
+      }
+
+      count++
+    }
+  })()
+
+  // Recalcular totales de la sesión
+  SesionInventario.calcularTotales(sesionInventarioId)
+
+  res.json(respuestaExito(
+    { count, sesionInventarioId },
+    `${count} producto(s) sincronizados exitosamente`
+  ))
+}
+
 // Aceptar todos los productos de una cola
 export const aceptarTodosProductosCola = async (req, res) => {
   const { colaId } = req.params
@@ -393,6 +523,7 @@ export default {
   rechazarSolicitud,
   obtenerProductosOffline,
   sincronizarProductos,
+  batchSyncProductos,
   desconectarColaborador,
   // Estados de conexión
   pingColaborador,

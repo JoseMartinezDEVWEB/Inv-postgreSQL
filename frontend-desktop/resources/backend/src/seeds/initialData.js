@@ -21,7 +21,7 @@ export const seedInitialData = () => {
       nombreUsuario: 'admin',
       nombre: 'Administrador',
       email: 'admin@j4pro.com',
-      password: '123456',
+      password: 'Jose.1919',
       telefono: '1234567890',
       rol: 'administrador',
       configuracion: {
@@ -193,12 +193,14 @@ export const seedInitialData = () => {
 
     logger.info('✅ Seed completado exitosamente')
     logger.info('\n' + '='.repeat(60))
-    logger.info('📊 DATOS DE PRUEBA CREADOS')
+    logger.info('📊 DATOS INICIALES CREADOS')
     logger.info('='.repeat(60))
     logger.info('\n👤 Usuarios creados:')
-    logger.info(`   Administrador: admin@j4pro.com / 123456`)
-    logger.info(`   Contador:      contador@j4pro.com / 123456`)
-    logger.info(`   Colaborador:   colaborador@j4pro.com / 123456`)
+    logger.info(`   Administrador → usuario: admin      | pass: Jose.1919`)
+    logger.info(`   Contador      → usuario: contador1  | pass: 123456`)
+    logger.info(`   Colaborador   → usuario: colaborador1 | pass: 123456`)
+    logger.info('\n   También puedes usar el email:')
+    logger.info(`   admin@j4pro.com / Jose.1919`)
     logger.info('\n🏪 Clientes: 2 clientes de prueba')
     logger.info('📦 Productos: 10 productos generales')
     logger.info('='.repeat(60) + '\n')
