@@ -1,9 +1,9 @@
 {
   "name": "gestor-inventario-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Frontend Desktop - Gestor de Inventario J4 Pro",
-  "author": "Jose Martinez",
+  "author": "J4TechnologyIsNow",
   "main": "electron/main.js",
   "homepage": "./",
   "scripts": {
