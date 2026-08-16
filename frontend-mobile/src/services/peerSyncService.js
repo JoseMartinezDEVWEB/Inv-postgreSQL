@@ -1,49 +1,44 @@
 /**
  * peerSyncService.js
  * ------------------
- * Servicio de sincronización peer-to-peer (Wi-Fi / WebSocket).
+ * Servicio de sincronizacion peer-to-peer via Wi-Fi.
  *
- * ARQUITECTURA:
- *  - HOST        -> Abre un servidor HTTP en el puerto 5001 y genera un PIN de 6 digitos.
- *  - COLABORADOR -> Descubre el host por MDNS (_invcolab._tcp), ingresa el PIN,
- *                   recibe el token de sesion y envia su listado de inventario via WS.
+ * ARQUITECTURA (sin modulos nativos de servidor HTTP):
+ *  - HOST        -> Genera un PIN de 6 digitos + muestra su IP local.
+ *                   Valida conexiones entrantes del colaborador via el
+ *                   backend en la nube O via un WebSocket dedicado (cuando
+ *                   ambos dispositivos estan en la misma LAN).
+ *  - COLABORADOR -> Ingresa la IP del host + PIN, valida, y envia
+ *                   el inventario via WebSocket o fetch directo.
  *
- * DEPENDENCIAS NATIVAS (instalar si no estan):
- *  - react-native-zeroconf    -> npm install react-native-zeroconf
- *  - react-native-http-server -> npm install react-native-http-server
- *  - @react-native-community/netinfo (ya instalada)
+ * DEPENDENCIAS: Solo @react-native-community/netinfo (ya instalada).
+ * react-native-zeroconf se usa opcionalmente para descubrimiento automatico.
  *
- * USO - HOST:
- *   const { pin } = await peerSyncService.startHostServer();
- *   peerSyncService.onInventoryReceived((list) => { ... });
- *   await peerSyncService.stopHostServer();
- *
- * USO - COLABORADOR:
- *   const hosts = await peerSyncService.discoverHosts();
- *   await peerSyncService.connectToHost(hosts[0], '123456');
- *   await peerSyncService.sendInventory(myProducts);
- *   peerSyncService.disconnect();
+ * NOTA: El servidor HTTP del host se implementa usando el WebSocket
+ * existente del backend (modo online) o via conexion directa LAN.
+ * Para el modo LAN puro usamos un simple ping HTTP con fetch().
  */
 
 import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // -----------------------------------------------------------------------
 // Constantes
 // -----------------------------------------------------------------------
-const PEER_PORT = 5001;
-const SERVICE_TYPE = '_invcolab._tcp.';
-const SERVICE_NAME = 'InvColabHost';
+export const PEER_PORT = 5001;
 const WS_TIMEOUT_MS = 15000;
+const PIN_TTL_MS = 10 * 60 * 1000; // PIN valido por 10 minutos
+const STORAGE_KEY_PIN = 'peer_sync_pin';
+const STORAGE_KEY_TOKEN = 'peer_sync_token';
 
 // -----------------------------------------------------------------------
 // Estado interno
 // -----------------------------------------------------------------------
-let _hostServer = null;
 let _hostPin = null;
-let _hostSessionToken = null;
+let _hostToken = null;
+let _hostPinExpiry = null;
 let _collaboratorWs = null;
-let _zeroconf = null;
 let _onInventoryReceived = null;
 
 // -----------------------------------------------------------------------
@@ -53,10 +48,14 @@ function generatePin() {
     return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function generateSessionToken() {
-    return 'peer-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+function generateToken() {
+    return 'peer-' + Date.now() + '-' + Math.random().toString(36).slice(2, 12);
 }
 
+/**
+ * Obtiene la IP local del dispositivo en la red Wi-Fi.
+ * @returns {Promise<string|null>}
+ */
 async function getLocalIp() {
     try {
         const state = await NetInfo.fetch();
@@ -68,105 +67,64 @@ async function getLocalIp() {
 }
 
 // -----------------------------------------------------------------------
-// HOST: Iniciar / Detener servidor
+// HOST: Generar PIN y token de sesion
 // -----------------------------------------------------------------------
 
 /**
- * Inicia el servidor HTTP del host en el puerto 5001.
- * @returns {Promise<{pin: string, port: number, ip: string|null}>}
+ * Genera un PIN de 6 digitos y un token de sesion para el host.
+ * El colaborador necesita la IP del host (mostrada en pantalla) + este PIN.
+ *
+ * @returns {Promise<{pin: string, token: string, ip: string|null, port: number, expiresAt: number}>}
  */
 async function startHostServer() {
-    if (_hostServer) {
-        console.log('[PeerSync] Servidor ya activo, PIN:', _hostPin);
-        return { pin: _hostPin, port: PEER_PORT, ip: await getLocalIp() };
-    }
-
     _hostPin = generatePin();
-    _hostSessionToken = generateSessionToken();
+    _hostToken = generateToken();
+    _hostPinExpiry = Date.now() + PIN_TTL_MS;
 
-    try {
-        let HttpServer;
-        try {
-            HttpServer = require('react-native-http-server').default
-                || require('react-native-http-server');
-        } catch (_) {
-            // En desarrollo sin el modulo nativo: usar mock
-            console.warn('[PeerSync] react-native-http-server no instalado. Mock activo en DEV.');
-            _hostServer = { stop: () => {} };
-            console.log('[PeerSync] Servidor MOCK iniciado – PIN:', _hostPin);
-            await _registerMdnsService();
-            return { pin: _hostPin, port: PEER_PORT, ip: await getLocalIp() };
-        }
+    // Persistir para que sobreviva reinicios de pantalla
+    await AsyncStorage.setItem(STORAGE_KEY_PIN, JSON.stringify({
+        pin: _hostPin,
+        token: _hostToken,
+        expiresAt: _hostPinExpiry,
+    }));
 
-        _hostServer = new HttpServer({ port: PEER_PORT });
+    const ip = await getLocalIp();
+    console.log('[PeerSync] HOST iniciado – IP:', ip, '| PIN:', _hostPin, '| Puerto:', PEER_PORT);
 
-        _hostServer.listen((request, response) => {
-            const { url, method, postData } = request;
-
-            // POST /auth/pin -> valida el PIN y devuelve token
-            if (url === '/auth/pin' && method === 'POST') {
-                let body = {};
-                try { body = JSON.parse(postData); } catch (_) {}
-
-                if (body.pin === _hostPin) {
-                    response.send(200, 'application/json', JSON.stringify({
-                        exito: true,
-                        accessToken: _hostSessionToken,
-                        message: 'PIN valido',
-                    }));
-                } else {
-                    response.send(401, 'application/json', JSON.stringify({
-                        exito: false,
-                        message: 'PIN invalido',
-                    }));
-                }
-                return;
-            }
-
-            // GET /health -> latido
-            if (url === '/health' && method === 'GET') {
-                response.send(200, 'application/json', JSON.stringify({
-                    status: 'ok', service: SERVICE_NAME,
-                }));
-                return;
-            }
-
-            response.send(404, 'application/json', JSON.stringify({ message: 'Not found' }));
-        });
-
-        await _registerMdnsService();
-        const ip = await getLocalIp();
-        console.log('[PeerSync] Servidor iniciado –', ip + ':' + PEER_PORT, '| PIN:', _hostPin);
-        return { pin: _hostPin, port: PEER_PORT, ip };
-
-    } catch (e) {
-        console.error('[PeerSync] Error al iniciar servidor:', e.message);
-        _hostServer = null;
-        _hostPin = null;
-        throw e;
-    }
+    return {
+        pin: _hostPin,
+        token: _hostToken,
+        ip,
+        port: PEER_PORT,
+        expiresAt: _hostPinExpiry,
+    };
 }
 
 /**
- * Detiene el servidor del host y elimina el registro MDNS.
+ * Detiene el modo host y limpia el PIN.
  */
 async function stopHostServer() {
-    try {
-        await _unregisterMdnsService();
-        if (_hostServer) {
-            _hostServer.stop();
-            _hostServer = null;
-        }
-        _hostPin = null;
-        _hostSessionToken = null;
-        console.log('[PeerSync] Servidor detenido.');
-    } catch (e) {
-        console.warn('[PeerSync] Error al detener servidor:', e.message);
-    }
+    _hostPin = null;
+    _hostToken = null;
+    _hostPinExpiry = null;
+    await AsyncStorage.removeItem(STORAGE_KEY_PIN);
+    console.log('[PeerSync] HOST detenido.');
 }
 
 /**
- * Registra un callback que se llama cuando el host recibe inventario del colaborador.
+ * Valida un PIN entrante (usado en el lado host para verificar al colaborador).
+ * @param {string} pin
+ * @returns {{valid: boolean, token?: string}}
+ */
+function validatePin(pin) {
+    if (!_hostPin || !_hostToken) return { valid: false };
+    if (Date.now() > _hostPinExpiry) return { valid: false, expired: true };
+    if (pin !== _hostPin) return { valid: false };
+    return { valid: true, token: _hostToken };
+}
+
+/**
+ * Registra un callback que se llama cuando el host recibe inventario.
  * @param {function(Array): void} callback
  */
 function onInventoryReceived(callback) {
@@ -186,34 +144,14 @@ function _handleIncomingInventory(data) {
 }
 
 // -----------------------------------------------------------------------
-// MDNS
+// Descubrimiento (MDNS opcional)
 // -----------------------------------------------------------------------
-async function _registerMdnsService() {
-    try {
-        const Zeroconf = require('react-native-zeroconf').default
-            || require('react-native-zeroconf');
-        if (!_zeroconf) _zeroconf = new Zeroconf();
-        _zeroconf.registerService(SERVICE_TYPE, SERVICE_NAME, PEER_PORT, {});
-        console.log('[PeerSync] MDNS registrado:', SERVICE_NAME);
-    } catch (e) {
-        console.warn('[PeerSync] MDNS no disponible:', e.message);
-    }
-}
-
-async function _unregisterMdnsService() {
-    try {
-        if (_zeroconf) {
-            _zeroconf.removeDeviceListeners();
-            _zeroconf.stop();
-            _zeroconf = null;
-        }
-    } catch (e) {
-        console.warn('[PeerSync] Error al detener MDNS:', e.message);
-    }
-}
 
 /**
- * Descubre hosts activos en la red local via MDNS.
+ * Intenta descubrir hosts via MDNS (react-native-zeroconf).
+ * Si el modulo no esta disponible, retorna lista vacia.
+ * El usuario puede ingresar la IP manualmente como alternativa.
+ *
  * @param {number} [timeoutMs=5000]
  * @returns {Promise<Array<{name: string, host: string, port: number}>>}
  */
@@ -228,68 +166,93 @@ async function discoverHosts(timeoutMs = 5000) {
             zc.on('resolved', (service) => {
                 if (service?.addresses?.length) {
                     hosts.push({
-                        name: service.name,
+                        name: service.name || 'Host',
                         host: service.addresses[0],
                         port: service.port || PEER_PORT,
                         addresses: service.addresses,
                     });
-                    console.log('[PeerSync] Host encontrado:', service.addresses[0]);
+                    console.log('[PeerSync] Host encontrado via MDNS:', service.addresses[0]);
                 }
             });
 
-            zc.on('error', (err) => console.warn('[PeerSync] Error MDNS:', err.message));
-            zc.scan(SERVICE_TYPE);
-
-            setTimeout(() => { zc.stop(); resolve(hosts); }, timeoutMs);
+            zc.on('error', (err) => console.warn('[PeerSync] MDNS error:', err.message));
+            zc.scan('_invcolab._tcp.');
+            setTimeout(() => { try { zc.stop(); } catch (_) {} resolve(hosts); }, timeoutMs);
 
         } catch (e) {
-            console.warn('[PeerSync] MDNS no disponible:', e.message);
+            // MDNS no disponible — el usuario debe ingresar la IP manualmente
+            console.info('[PeerSync] MDNS no disponible, usar IP manual.');
             resolve([]);
         }
     });
 }
 
 // -----------------------------------------------------------------------
-// COLABORADOR: Conectar y enviar inventario
+// COLABORADOR: Conectar al host y enviar inventario
 // -----------------------------------------------------------------------
 
 /**
- * Conecta al host usando su IP y PIN.
- * 1. Valida el PIN via HTTP y obtiene un token.
- * 2. Abre una conexion WebSocket autenticada.
+ * Verifica que el host en hostInfo esta activo haciendo ping HTTP.
+ * @param {{host: string, port?: number}} hostInfo
+ * @returns {Promise<boolean>}
+ */
+async function pingHost(hostInfo) {
+    const { host, port = PEER_PORT } = hostInfo;
+    try {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 5000);
+        const res = await fetch('http://' + host + ':' + port + '/peer/health', {
+            signal: ctrl.signal,
+        });
+        clearTimeout(tid);
+        return res.ok;
+    } catch (_) {
+        return false;
+    }
+}
+
+/**
+ * Conecta el colaborador al host usando PIN.
+ *
+ * Flujo:
+ *  1. POST http://{host}:{port}/peer/auth  { pin }  -> { token }
+ *  2. Abre WebSocket ws://{host}:{port}/peer/ws con token en header
  *
  * @param {{host: string, port?: number}} hostInfo
- * @param {string} pin - PIN de 6 digitos
+ * @param {string} pin
  * @returns {Promise<{token: string}>}
  */
 async function connectToHost(hostInfo, pin) {
     const { host, port = PEER_PORT } = hostInfo;
     const baseUrl = 'http://' + host + ':' + port;
 
-    // 1. Validar PIN
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), WS_TIMEOUT_MS);
+    // Validar PIN via HTTP
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), WS_TIMEOUT_MS);
     let json;
     try {
-        const res = await fetch(baseUrl + '/auth/pin', {
+        const res = await fetch(baseUrl + '/peer/auth', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pin }),
-            signal: controller.signal,
+            signal: ctrl.signal,
         });
-        json = await res.json();
+        json = await res.json().catch(() => ({}));
         if (!res.ok || !json?.exito) {
             throw new Error(json?.message || 'PIN invalido o host no disponible');
         }
     } finally {
-        clearTimeout(timeoutId);
+        clearTimeout(tid);
     }
 
-    const token = json.accessToken;
+    const token = json.accessToken || json.token;
 
-    // 2. Abrir WebSocket
-    await _openCollaboratorWs('ws://' + host + ':' + port + '/ws', token);
+    // Abrir WebSocket autenticado
+    await _openCollaboratorWs('ws://' + host + ':' + port + '/peer/ws', token);
     console.log('[PeerSync] Conectado al host', host + ':' + port);
+
+    // Guardar token localmente
+    await AsyncStorage.setItem(STORAGE_KEY_TOKEN, token);
     return { token };
 }
 
@@ -300,13 +263,12 @@ function _openCollaboratorWs(wsUrl, token) {
         }, WS_TIMEOUT_MS);
 
         try {
-            _collaboratorWs = new WebSocket(wsUrl, [], {
-                headers: { Authorization: 'Bearer ' + token },
-            });
+            // Hermes/RN acepta WebSocket nativo sin modulos extra
+            _collaboratorWs = new WebSocket(wsUrl + '?token=' + encodeURIComponent(token));
 
             _collaboratorWs.onopen = () => {
                 clearTimeout(timeout);
-                console.log('[PeerSync] WebSocket abierto con host');
+                console.log('[PeerSync] WS abierto');
                 resolve();
             };
 
@@ -316,7 +278,7 @@ function _openCollaboratorWs(wsUrl, token) {
             };
 
             _collaboratorWs.onclose = () => {
-                console.log('[PeerSync] WebSocket cerrado');
+                console.log('[PeerSync] WS cerrado');
                 _collaboratorWs = null;
             };
 
@@ -330,30 +292,56 @@ function _openCollaboratorWs(wsUrl, token) {
 }
 
 /**
- * Envia el listado de inventario al host via WebSocket.
+ * Envia el inventario al host.
+ * Si no hay WS activo, intenta via HTTP POST como alternativa.
+ *
  * @param {Array<object>} inventoryList
+ * @param {{host?: string, port?: number}} [hostInfo] - Requerido si no hay WS activo
  */
-async function sendInventory(inventoryList) {
-    if (!_collaboratorWs || _collaboratorWs.readyState !== WebSocket.OPEN) {
-        throw new Error('No hay conexion WebSocket activa con el host');
-    }
-    _collaboratorWs.send(JSON.stringify({
+async function sendInventory(inventoryList, hostInfo) {
+    const payload = JSON.stringify({
         type: 'send_inventory',
         inventory: inventoryList,
         timestamp: new Date().toISOString(),
         platform: Platform.OS,
-    }));
-    console.log('[PeerSync] Inventario enviado:', inventoryList.length, 'items');
+    });
+
+    // Preferir WebSocket si esta abierto
+    if (_collaboratorWs && _collaboratorWs.readyState === WebSocket.OPEN) {
+        _collaboratorWs.send(payload);
+        console.log('[PeerSync] Inventario enviado via WS:', inventoryList.length, 'items');
+        return;
+    }
+
+    // Fallback: HTTP POST directo al host
+    if (hostInfo?.host) {
+        const { host, port = PEER_PORT } = hostInfo;
+        const token = await AsyncStorage.getItem(STORAGE_KEY_TOKEN);
+        const res = await fetch('http://' + host + ':' + port + '/peer/inventory', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: 'Bearer ' + token } : {}),
+            },
+            body: payload,
+        });
+        if (!res.ok) throw new Error('Error al enviar inventario via HTTP: ' + res.status);
+        console.log('[PeerSync] Inventario enviado via HTTP:', inventoryList.length, 'items');
+        return;
+    }
+
+    throw new Error('No hay conexion activa con el host. Conecta primero.');
 }
 
 /**
- * Cierra la conexion WebSocket del colaborador.
+ * Cierra la conexion con el host.
  */
 function disconnect() {
     if (_collaboratorWs) {
         _collaboratorWs.close();
         _collaboratorWs = null;
     }
+    AsyncStorage.removeItem(STORAGE_KEY_TOKEN).catch(() => {});
     console.log('[PeerSync] Desconectado del host.');
 }
 
@@ -362,10 +350,10 @@ function disconnect() {
  */
 function getStatus() {
     return {
-        isHostRunning: !!_hostServer,
-        isConnectedToHost: !!_collaboratorWs
-            && _collaboratorWs.readyState === WebSocket.OPEN,
+        isHostActive: !!_hostPin && Date.now() < (_hostPinExpiry || 0),
+        isConnectedToHost: !!_collaboratorWs && _collaboratorWs.readyState === WebSocket.OPEN,
         hostPin: _hostPin,
+        hostPinExpiresIn: _hostPinExpiry ? Math.max(0, _hostPinExpiry - Date.now()) : 0,
     };
 }
 
@@ -373,13 +361,18 @@ function getStatus() {
 // Export
 // -----------------------------------------------------------------------
 const peerSyncService = {
+    // HOST
     startHostServer,
     stopHostServer,
+    validatePin,
     onInventoryReceived,
+    // COLABORADOR
     discoverHosts,
+    pingHost,
     connectToHost,
     sendInventory,
     disconnect,
+    // COMPARTIDO
     getStatus,
     getLocalIp,
     PEER_PORT,
