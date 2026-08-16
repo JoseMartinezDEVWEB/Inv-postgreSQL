@@ -32,6 +32,8 @@ import { useAuth } from '../context/AuthContext'
 import webSocketService from '../services/websocket'
 import { getInternetCredentials } from '../services/secureStorage'
 import { config } from '../config/env'
+import PinEntryModal from '../components/modals/PinEntryModal'
+import peerSyncService from '../services/peerSyncService'
 
 const SesionColaboradorScreen = ({ route, navigation }) => {
   const { solicitudId: routeSolicitudId, sesionInventario: routeSesionInventario } = route.params || {}
@@ -56,6 +58,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
   const [modalEditar, setModalEditar] = useState(false)
   const [modalBLE, setModalBLE] = useState(false)
   const [modalRedLocal, setModalRedLocal] = useState(false)
+  const [modalPinEntry, setModalPinEntry] = useState(false)  // Modal PIN para conectar al host
   const [showBarcodeProductModal, setShowBarcodeProductModal] = useState(false)
   const [modalSincronizar, setModalSincronizar] = useState(false)
   const [modalZeroCost, setModalZeroCost] = useState(false)
@@ -675,7 +678,7 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
 
   const handleEliminar = async (item) => {
     const esGrupo = item._ids && item._ids.length > 1;
-    const mensaje = esGrupo 
+    const mensaje = esGrupo
       ? `¿Quitar todas las unidades (${item.cantidad}) de "${item.nombre}"?`
       : '¿Quitar este producto de tu lista?';
 
@@ -686,17 +689,81 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
         style: 'destructive',
         onPress: async () => {
           if (item._ids) {
-            // Eliminar todos los registros que componen el grupo
             for (const id of item._ids) {
               await localDb.eliminarProductoColaborador(id)
             }
           } else {
             await localDb.eliminarProductoColaborador(item.temporalId)
           }
+          // Intentar eliminar del servidor si ya fue enviado
+          if (item.sincronizado && solicitudId) {
+            try {
+              const idServidor = item.servidorId || item.temporalId
+              await solicitudesConexionApi.eliminarProductoOffline(solicitudId, idServidor)
+            } catch (e) {
+              // Silencioso — puede que no exista en el servidor
+            }
+          }
           cargarProductosOffline()
         },
       },
     ])
+  }
+
+  const confirmarEliminarTodos = async () => {
+    const hayEnviados = productos.some(p => p.sincronizado)
+    const hayPendientes = productos.some(p => !p.sincronizado)
+
+    if (hayPendientes && !hayEnviados) {
+      Alert.alert(
+        '⚠️ Productos sin enviar',
+        `Hay ${productos.filter(p => !p.sincronizado).length} producto(s) que aún NO fueron enviados al servidor.\n\n¿Deseas eliminar todo de todos modos?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Eliminar Todo', style: 'destructive', onPress: eliminarTodosLosProductos },
+        ]
+      )
+    } else if (hayPendientes && hayEnviados) {
+      Alert.alert(
+        '⚠️ Atención',
+        `Tienes ${productos.filter(p => !p.sincronizado).length} producto(s) pendiente(s) de envío y ${productos.filter(p => p.sincronizado).length} ya enviado(s).\n\n¿Eliminar todo de todos modos?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Eliminar Todo', style: 'destructive', onPress: eliminarTodosLosProductos },
+        ]
+      )
+    } else {
+      Alert.alert(
+        'Eliminar Lista',
+        `¿Eliminar todos los ${productos.length} producto(s) de la lista?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Eliminar Todo', style: 'destructive', onPress: eliminarTodosLosProductos },
+        ]
+      )
+    }
+  }
+
+  const eliminarTodosLosProductos = async () => {
+    try {
+      // Eliminar del servidor los que ya fueron enviados
+      const enviados = productos.filter(p => p.sincronizado)
+      for (const item of enviados) {
+        try {
+          const idServidor = item.servidorId || item.temporalId
+          await solicitudesConexionApi.eliminarProductoOffline(solicitudId, idServidor)
+        } catch (e) {
+          // Silencioso
+        }
+      }
+      // Limpiar todo en local
+      await localDb.limpiarProductosColaborador(solicitudId)
+      await cargarProductosOffline()
+      showMessage({ message: '🗑️ Lista eliminada', type: 'success' })
+    } catch (error) {
+      console.error('Error eliminando todos:', error)
+      Alert.alert('Error', 'No se pudo eliminar la lista completa')
+    }
   }
 
   // Definido a nivel de componente (NO dentro de useEffect) para que el JSX pueda accederlo
@@ -1356,6 +1423,34 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
         </View>
       </View>
 
+      {/* Fila de acciones masivas */}
+      {productos.length > 0 && (
+        <View style={styles.bulkActionsRow}>
+          <TouchableOpacity
+            style={styles.bulkSendBtn}
+            onPress={() => {
+              if (!isConnected) {
+                Alert.alert('Sin conexión', 'Necesitas conexión para enviar productos')
+                return
+              }
+              setModalConfirmarEnvio(true)
+            }}
+          >
+            <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
+            <Text style={styles.bulkSendText}>
+              Enviar pendientes ({productos.filter(p => !p.sincronizado).length})
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.bulkDeleteBtn}
+            onPress={confirmarEliminarTodos}
+          >
+            <Ionicons name="trash-outline" size={16} color="#ef4444" />
+            <Text style={styles.bulkDeleteText}>Eliminar lista</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <View style={styles.content}>
         <FlatList
           data={productosVisuales}
@@ -1644,6 +1739,33 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
         solicitudId={solicitudId}
       />
 
+      {/* Modal PIN – Conectar colaborador al dispositivo host por Wi-Fi */}
+      <PinEntryModal
+        visible={modalPinEntry}
+        onClose={() => setModalPinEntry(false)}
+        onConnected={async (token, hostInfo) => {
+          try {
+            // Enviar el inventario offline al host
+            const lista = productosOffline.length > 0 ? productosOffline : productos
+            if (lista.length === 0) {
+              showMessage({ message: 'No hay productos para enviar', type: 'warning' })
+              return
+            }
+            await peerSyncService.sendInventory(lista)
+            showMessage({
+              message: '¡Inventario enviado!',
+              description: `${lista.length} productos enviados al dispositivo principal.`,
+              type: 'success',
+              duration: 4000,
+            })
+          } catch (e) {
+            showMessage({ message: 'Error al enviar inventario: ' + e.message, type: 'danger' })
+          } finally {
+            peerSyncService.disconnect()
+          }
+        }}
+      />
+
       {/* Modal de Sincronización con opciones */}
       <Modal visible={modalSincronizar} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -1700,6 +1822,26 @@ const SesionColaboradorScreen = ({ route, navigation }) => {
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={20} color="#10b981" />
+            </TouchableOpacity>
+
+            {/* Botón Conectar a dispositivo principal (Wi-Fi / PIN) */}
+            <TouchableOpacity
+              style={[styles.syncOptionButton, { backgroundColor: '#eff6ff', borderColor: '#3b82f6' }]}
+              onPress={() => {
+                setModalSincronizar(false)
+                setModalPinEntry(true)
+              }}
+            >
+              <Ionicons name="wifi" size={22} color="#3b82f6" />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={[styles.syncOptionText, { color: '#1d4ed8' }]}>
+                  Conectar a dispositivo principal
+                </Text>
+                <Text style={{ fontSize: 12, color: '#3b82f6' }}>
+                  Enviar inventario por Wi-Fi con PIN
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#3b82f6" />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -3075,6 +3217,43 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     fontSize: 15,
+  },
+  // Estilos para acciones masivas
+  bulkActionsRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 10,
+  },
+  bulkSendBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#22c55e',
+    borderRadius: 10,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  bulkSendText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  bulkDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fee2e2',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    gap: 4,
+  },
+  bulkDeleteText: {
+    color: '#ef4444',
+    fontSize: 13,
+    fontWeight: '600',
   },
 })
 

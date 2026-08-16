@@ -27,14 +27,15 @@ const FORCE_STANDALONE = true;
 const ROUTES_PREFER_REMOTE = [
     '/solicitudes-conexion',
     '/invitaciones',
-    '/auth/login', // Login inicial requiere nube para obtener token
-    '/auth/refresh', // Refresh token requiere servidor
-    '/sync',       // Nueva ruta de sincronización
+    '/auth/login',              // Login inicial requiere nube para obtener token
+    '/auth/refresh',            // Refresh token requiere servidor
+    '/auth/collaborator',       // Login de colaborador (QR, PIN)
+    '/sync',                    // Nueva ruta de sincronización
     '/salud',
-    '/importar',   // Importación de archivos requiere servidor (procesamiento Python/IA)
-    '/productos/generales/importar', // Importación de productos requiere servidor
+    '/importar',                // Importación de archivos requiere servidor (procesamiento Python/IA)
+    '/productos/generales/importar',      // Importación de productos requiere servidor
     '/productos/generales/eliminar-todos', // Eliminación masiva requiere servidor
-    '/usuarios',   // Gestión de usuarios requiere servidor (admin/contador)
+    '/usuarios',                // Gestión de usuarios requiere servidor (admin/contador)
 ];
 
 const API_BASE_URL = config.apiUrl
@@ -400,6 +401,30 @@ export const handleApiError = (err, retryAction = null) => {
 export const authApi = {
     login: (d) => api.post('/auth/login', d),
     refresh: (d) => api.post('/auth/refresh', d),
+
+    /**
+     * Login de colaborador mediante código QR / token de invitación.
+     * @param {string} tokenOrCodigo - Token QR o código de invitación.
+     */
+    loginCollaborator: (tokenOrCodigo) =>
+        api.post('/auth/collaborator/qr', { token: tokenOrCodigo }),
+
+    /**
+     * Login de colaborador mediante PIN de 6 dígitos.
+     * El host genera el PIN y lo valida aquí; devuelve { accessToken, user }.
+     * En modo peer‑to‑peer offline (Wi‑Fi), este endpoint apunta al servidor
+     * local del host (puerto 5001) en lugar del backend en la nube.
+     * @param {string} pin - PIN de 6 dígitos generado por el host.
+     */
+    loginCollaboratorWithPin: (pin) =>
+        api.post('/auth/collaborator/pin', { pin }),
+
+    /**
+     * Validar token de colaborador (usado por el servidor local del host).
+     * @param {string} token - Token a validar.
+     */
+    validateCollaboratorToken: (token) =>
+        api.post('/auth/collaborator/validate', { token }),
 };
 
 export const clientesApi = {
@@ -579,6 +604,7 @@ export const solicitudesConexionApi = {
     rechazar: (solicitudId) => api.post(`/solicitudes-conexion/${solicitudId}/rechazar`),
     obtenerProductosOffline: (solicitudId) => api.get(`/solicitudes-conexion/${solicitudId}/productos-offline`),
     sincronizar: (solicitudId, temporalIds) => api.post(`/solicitudes-conexion/${solicitudId}/sincronizar`, { temporalIds }),
+    eliminarProductoOffline: (solicitudId, productoId) => api.delete(`/solicitudes-conexion/${solicitudId}/productos-offline/${productoId}`),
 };
 
 // API para gestión de usuarios (admin/contador/contable)
