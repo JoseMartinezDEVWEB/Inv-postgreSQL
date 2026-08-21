@@ -35,6 +35,7 @@ import localDb from '../services/localDb'
 import syncService from '../services/syncService'
 import { config } from '../config/env'
 import webSocketService from '../services/websocket'
+import peerSyncService from '../services/peerSyncService'
 
 // Importar modales
 import DistribucionModal from '../components/modals/DistribucionModal'
@@ -1509,15 +1510,72 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
     }
   }
 
-  // Generar código QR para invitación de colaborador
-  const handleGenerarQRInvitacion = async () => {
+  // Generar código QR para invitación de colaborador o PIN de host local
+  const handleGenerarQRInvitacion = async (nombreColaborador = '') => {
     try {
       setIsGeneratingQR(true)
+
+      const token = authState?.token || ''
+      const isLocalToken = token.startsWith('local-token-')
+
+      // Función auxiliar para registrar recepción de inventario offline
+      const setupLocalInventoryListener = () => {
+        peerSyncService.onInventoryReceived(async (items) => {
+          try {
+            if (!Array.isArray(items) || items.length === 0) return
+            for (const item of items) {
+              await localDb.guardarConteoLocal({
+                sesionId,
+                productoId: item.productoId || item.id_uuid || item.temporalId || `colab_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                nombreProducto: item.nombre || item.nombreProducto || 'Producto',
+                skuProducto: item.sku || item.skuProducto || '',
+                codigoBarras: item.codigoBarras || '',
+                cantidad: Number(item.cantidad) || 1,
+                costo: Number(item.costo) || 0,
+                fecha: item.timestamp || new Date().toISOString(),
+                is_dirty: 1
+              })
+            }
+            await loadLocalProducts()
+            Vibration.vibrate([0, 120, 80, 120])
+            showMessage({
+              message: '¡Inventario recibido!',
+              description: `Se agregaron ${items.length} producto(s) recibidos del colaborador`,
+              type: 'success',
+              duration: 5000,
+            })
+          } catch (err) {
+            console.error('Error guardando productos de colaborador:', err)
+          }
+        })
+      }
+
+      if (!isConnected || isLocalToken) {
+        // Modo Host Local (Sin internet / Wi-Fi directo)
+        const hostInfo = await peerSyncService.startHostServer()
+        setupLocalInventoryListener()
+
+        setQrInvitacionData({
+          codigoNumerico: hostInfo.pin,
+          qrDataUrl: null,
+          ip: hostInfo.ip,
+          port: hostInfo.port,
+          isHostLocal: true,
+          nombre: nombreColaborador || 'Colaborador'
+        })
+        Vibration.vibrate(100)
+        showMessage({
+          message: 'Modo Anfitrión Activo',
+          description: `PIN: ${hostInfo.pin} | IP: ${hostInfo.ip || 'Local'}`,
+          type: 'success',
+        })
+        return
+      }
 
       const response = await invitacionesApi.createQR({
         rol: 'colaborador',
         email: '',
-        nombre: '',
+        nombre: nombreColaborador || '',
         expiraEnMinutos: 1440 // 24 horas
       })
 
@@ -1525,13 +1583,50 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
         setQrInvitacionData(response.data.datos)
         Vibration.vibrate(100)
         showMessage({
-          message: 'Código QR generado',
+          message: 'Código de invitación generado',
           description: 'Compártelo con tus colaboradores',
           type: 'success',
         })
       }
     } catch (error) {
-      handleApiError(error)
+      // Fallback a modo anfitrión local si falla la API
+      try {
+        const hostInfo = await peerSyncService.startHostServer()
+        peerSyncService.onInventoryReceived(async (items) => {
+          if (!Array.isArray(items) || items.length === 0) return
+          for (const item of items) {
+            await localDb.guardarConteoLocal({
+              sesionId,
+              productoId: item.productoId || item.id_uuid || item.temporalId || `colab_${Date.now()}`,
+              nombreProducto: item.nombre || item.nombreProducto || 'Producto',
+              skuProducto: item.sku || item.skuProducto || '',
+              codigoBarras: item.codigoBarras || '',
+              cantidad: Number(item.cantidad) || 1,
+              costo: Number(item.costo) || 0,
+              fecha: item.timestamp || new Date().toISOString(),
+              is_dirty: 1
+            })
+          }
+          await loadLocalProducts()
+          Vibration.vibrate([0, 120, 80, 120])
+          showMessage({
+            message: '¡Inventario recibido!',
+            description: `Se agregaron ${items.length} producto(s) por Wi-Fi`,
+            type: 'success',
+            duration: 5000,
+          })
+        })
+
+        setQrInvitacionData({
+          codigoNumerico: hostInfo.pin,
+          qrDataUrl: null,
+          ip: hostInfo.ip,
+          port: hostInfo.port,
+          isHostLocal: true,
+        })
+      } catch (localErr) {
+        handleApiError(error)
+      }
     } finally {
       setIsGeneratingQR(false)
     }
@@ -1540,7 +1635,17 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
   // Compartir QR de invitación
   const handleCompartirQR = async () => {
     try {
-      if (!qrInvitacionData?.qrDataUrl) return
+      if (!qrInvitacionData?.qrDataUrl) {
+        if (qrInvitacionData?.codigoNumerico) {
+          showMessage({
+            message: 'Código de conexión',
+            description: `PIN: ${qrInvitacionData.codigoNumerico} | IP: ${qrInvitacionData.ip || 'Red Local'}`,
+            type: 'info',
+            duration: 4000
+          })
+        }
+        return
+      }
 
       const dataUrl = qrInvitacionData.qrDataUrl
       const base64 = dataUrl.replace(/^data:image\/(png|jpeg);base64,/, '')
@@ -1553,7 +1658,7 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(fileUri, {
           mimeType: 'image/png',
-          dialogTitle: 'Compartir código QR de invitación'
+          dialogTitle: 'Compartir código de invitación'
         })
       } else {
         showMessage({
@@ -2339,29 +2444,52 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
 
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }}>
             {qrInvitacionData ? (
-              /* VISTA DE CÓDIGO QR */
+              /* VISTA DE CÓDIGO QR / PIN LOCAL */
               <View style={{ alignItems: 'center', padding: 30 }}>
-                <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 20, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 10 }}>
-                  <Image 
-                    source={{ uri: qrInvitacionData.qrDataUrl }} 
-                    style={{ width: width * 0.7, height: width * 0.7 }} 
-                    resizeMode="contain"
-                  />
-                </View>
+                {qrInvitacionData.qrDataUrl ? (
+                  <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 20, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 10 }}>
+                    <Image 
+                      source={{ uri: qrInvitacionData.qrDataUrl }} 
+                      style={{ width: width * 0.7, height: width * 0.7 }} 
+                      resizeMode="contain"
+                    />
+                  </View>
+                ) : (
+                  <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 20, alignItems: 'center', width: '100%', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 10 }}>
+                    <Ionicons name="wifi" size={56} color="#7c3aed" />
+                    <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1e293b', marginTop: 10 }}>
+                      Modo Anfitrión Wi-Fi Activo
+                    </Text>
+                    <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginTop: 6 }}>
+                      Tus colaboradores en la misma red Wi-Fi pueden conectarse ingresando este PIN en la app móvil.
+                    </Text>
+                    {qrInvitacionData.ip ? (
+                      <View style={{ backgroundColor: '#f1f5f9', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, marginTop: 12 }}>
+                        <Text style={{ color: '#475569', fontWeight: '600', fontSize: 13 }}>
+                          IP de este dispositivo: {qrInvitacionData.ip}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                )}
                 
-                <Text style={{ color: '#fff', fontSize: 24, fontWeight: 'bold', marginTop: 30 }}>
+                <Text style={{ color: '#fff', fontSize: 36, fontWeight: 'bold', marginTop: 24, letterSpacing: 4 }}>
                   {qrInvitacionData.codigoNumerico}
                 </Text>
-                <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 16, marginTop: 10, textAlign: 'center' }}>
-                  El colaborador debe escanear este código o ingresarlo manualmente.
+                <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 15, marginTop: 8, textAlign: 'center' }}>
+                  {qrInvitacionData.qrDataUrl 
+                    ? 'El colaborador debe escanear este código o ingresarlo manualmente.'
+                    : 'Ingresa este PIN de 6 dígitos en el dispositivo del colaborador para sincronizar.'}
                 </Text>
 
                 <TouchableOpacity 
                   onPress={handleCompartirQR}
-                  style={{ backgroundColor: '#fff', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 12, marginTop: 40, flexDirection: 'row', alignItems: 'center' }}
+                  style={{ backgroundColor: '#fff', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 12, marginTop: 30, flexDirection: 'row', alignItems: 'center' }}
                 >
                   <Ionicons name="share-outline" size={24} color="#7c3aed" />
-                  <Text style={{ color: '#7c3aed', fontWeight: 'bold', marginLeft: 10, fontSize: 16 }}>Compartir Invitación</Text>
+                  <Text style={{ color: '#7c3aed', fontWeight: 'bold', marginLeft: 10, fontSize: 16 }}>
+                    {qrInvitacionData.qrDataUrl ? 'Compartir Invitación' : 'Compartir PIN'}
+                  </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
@@ -2376,7 +2504,7 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
               <View style={{ paddingHorizontal: 20 }}>
                 {/* Generar Nueva */}
                 <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 15, padding: 20, marginBottom: 25 }}>
-                  <Text style={{ color: '#fff', fontWeight: 'bold', marginBottom: 15 }}>Nueva Invitación</Text>
+                  <Text style={{ color: '#fff', fontWeight: 'bold', marginBottom: 15 }}>Nueva Invitación / Modo Anfitrión</Text>
                   <View style={{ flexDirection: 'row', gap: 10 }}>
                     <TextInput
                       placeholder="Nombre del colaborador..."
@@ -2388,7 +2516,7 @@ const InventarioDetalleScreen = ({ route, navigation }) => {
                     <TouchableOpacity 
                       onPress={() => {
                         const nombre = newProductData.nombreInput;
-                        handleGenerarQR(nombre);
+                        handleGenerarQRInvitacion(nombre);
                         setNewProductData(v => ({ ...v, nombreInput: '' }));
                       }}
                       disabled={isGeneratingQR}

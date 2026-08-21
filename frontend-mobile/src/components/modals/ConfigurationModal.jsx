@@ -710,7 +710,7 @@ const ConfigurationModal = ({ visible, onClose }) => {
               >
                 <Ionicons name="database-outline" size={32} color="#8b5cf6" />
                 <Text style={styles.backupCardTitle}>Base de Datos Completa</Text>
-                <Text style={styles.backupCardDesc}>Archivo .db local (SQLite)</Text>
+                <Text style={styles.backupCardDesc}>Archivo .db local de copia de seguridad</Text>
                 {isExporting && <ActivityIndicator size="small" color="#8b5cf6" style={{marginTop: 8}} />}
               </TouchableOpacity>
 

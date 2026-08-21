@@ -39,77 +39,89 @@ const PIN_LENGTH = 6;
  */
 export default function PinEntryModal({ visible, onClose, onConnected, manualHostIp }) {
     const [pin, setPin] = useState('');
+    const [hostIp, setHostIp] = useState(manualHostIp || '');
     const [step, setStep] = useState('idle'); // 'idle' | 'discovering' | 'connecting' | 'done'
     const [foundHosts, setFoundHosts] = useState([]);
-    const [selectedHost, setSelectedHost] = useState(null);
+    const [selectedHost, setSelectedHost] = useState(manualHostIp ? { host: manualHostIp, port: peerSyncService.PEER_PORT, name: 'Dispositivo Principal' } : null);
     const [errorMsg, setErrorMsg] = useState('');
+    const [mostrarInputManual, setMostrarInputManual] = useState(false);
     const inputRef = useRef(null);
 
     // ── Limpiar estado al abrir/cerrar ─────────────────────────────────
     const handleClose = useCallback(() => {
         setPin('');
+        setHostIp(manualHostIp || '');
         setStep('idle');
         setFoundHosts([]);
         setSelectedHost(null);
         setErrorMsg('');
+        setMostrarInputManual(false);
         onClose?.();
-    }, [onClose]);
+    }, [manualHostIp, onClose]);
 
     // ── PASO 1: Descubrir hosts en la red ──────────────────────────────
     const handleDiscover = useCallback(async () => {
         setErrorMsg('');
 
-        // Si el usuario ya provee una IP manual, saltar descubrimiento
-        if (manualHostIp) {
-            const manual = { host: manualHostIp, port: peerSyncService.PEER_PORT, name: 'Manual' };
+        if (manualHostIp || hostIp.trim()) {
+            const ipTarget = (hostIp.trim() || manualHostIp).replace(/^https?:\/\//i, '').split(':')[0];
+            const manual = { host: ipTarget, port: peerSyncService.PEER_PORT, name: 'Dispositivo Principal' };
             setFoundHosts([manual]);
             setSelectedHost(manual);
-            setStep('idle'); // ir directo a ingresar PIN
+            setStep('idle');
             return;
         }
 
         setStep('discovering');
         try {
-            const hosts = await peerSyncService.discoverHosts(5000);
+            const hosts = await peerSyncService.discoverHosts(4000);
             if (hosts.length === 0) {
-                setErrorMsg('No se encontraron dispositivos host en la red. Verifica que el dispositivo principal esta activo y en la misma red Wi-Fi.');
+                setErrorMsg('No se detectó el dispositivo automáticamente. Ingresa la IP manualmente.');
+                setMostrarInputManual(true);
                 setStep('idle');
                 return;
             }
             setFoundHosts(hosts);
-            // Si solo hay uno, seleccionarlo automaticamente
-            if (hosts.length === 1) setSelectedHost(hosts[0]);
+            if (hosts.length >= 1) setSelectedHost(hosts[0]);
             setStep('idle');
         } catch (e) {
-            setErrorMsg('Error al buscar hosts: ' + e.message);
+            setErrorMsg('No se pudo buscar automáticamente. Ingresa la IP.');
+            setMostrarInputManual(true);
             setStep('idle');
         }
-    }, [manualHostIp]);
+    }, [manualHostIp, hostIp]);
 
     // ── PASO 2: Conectar con PIN ───────────────────────────────────────
     const handleConnect = useCallback(async () => {
         if (!pin || pin.length !== PIN_LENGTH) {
-            setErrorMsg('Ingresa el PIN de ' + PIN_LENGTH + ' digitos mostrado en el dispositivo principal.');
+            setErrorMsg('Ingresa el PIN de ' + PIN_LENGTH + ' dígitos mostrado en el dispositivo principal.');
             return;
         }
-        if (!selectedHost) {
-            setErrorMsg('Primero busca y selecciona el dispositivo principal.');
+
+        let targetHost = selectedHost;
+        if (!targetHost && hostIp.trim()) {
+            const cleanIp = hostIp.trim().replace(/^https?:\/\//i, '').split(':')[0];
+            targetHost = { host: cleanIp, port: peerSyncService.PEER_PORT, name: 'Dispositivo Principal' };
+        }
+
+        if (!targetHost) {
+            setErrorMsg('Ingresa o selecciona la IP del dispositivo principal.');
             return;
         }
 
         setErrorMsg('');
         setStep('connecting');
         try {
-            const { token } = await peerSyncService.connectToHost(selectedHost, pin);
+            const { token } = await peerSyncService.connectToHost(targetHost, pin);
             setStep('done');
-            showMessage({ message: 'Conectado al host', type: 'success', duration: 3000 });
-            onConnected?.(token, selectedHost);
+            showMessage({ message: 'Conectado al dispositivo principal', type: 'success', duration: 3000 });
+            onConnected?.(token, targetHost);
             handleClose();
         } catch (e) {
-            setErrorMsg(e.message || 'No se pudo conectar. Verifica el PIN e intentalo de nuevo.');
+            setErrorMsg(e.message || 'No se pudo conectar. Verifica que ambos teléfonos estén en el mismo Wi-Fi e intenta de nuevo.');
             setStep('idle');
         }
-    }, [pin, selectedHost, onConnected, handleClose]);
+    }, [pin, selectedHost, hostIp, onConnected, handleClose]);
 
     const isLoading = step === 'discovering' || step === 'connecting';
 
@@ -128,25 +140,56 @@ export default function PinEntryModal({ visible, onClose, onConnected, manualHos
                     {/* Header */}
                     <Text style={styles.title}>Conectar a dispositivo principal</Text>
                     <Text style={styles.subtitle}>
-                        Ingresa el PIN de {PIN_LENGTH} digitos que aparece en la pantalla del dispositivo host.
+                        Ingresa el PIN de {PIN_LENGTH} dígitos que aparece en la pantalla del dispositivo principal.
                     </Text>
 
-                    {/* Buscar hosts */}
-                    {foundHosts.length === 0 && (
-                        <TouchableOpacity
-                            style={[styles.btn, styles.btnSecondary]}
-                            onPress={handleDiscover}
-                            disabled={isLoading}
-                        >
-                            {step === 'discovering'
-                                ? <ActivityIndicator color="#fff" />
-                                : <Text style={styles.btnText}>Buscar dispositivo host</Text>
-                            }
-                        </TouchableOpacity>
+                    {/* Buscar hosts automáticamente */}
+                    {!mostrarInputManual && foundHosts.length === 0 && (
+                        <View style={{ marginBottom: 12 }}>
+                            <TouchableOpacity
+                                style={[styles.btn, styles.btnSecondary]}
+                                onPress={handleDiscover}
+                                disabled={isLoading}
+                            >
+                                {step === 'discovering'
+                                    ? <ActivityIndicator color="#fff" />
+                                    : <Text style={styles.btnText}>Buscar dispositivo en la red</Text>
+                                }
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                onPress={() => setMostrarInputManual(true)}
+                                style={{ alignItems: 'center', marginTop: 6 }}
+                            >
+                                <Text style={{ color: '#3b82f6', fontSize: 12, textDecorationLine: 'underline' }}>
+                                    Ingresar IP manualmente
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+
+                    {/* Input manual de IP si se solicita o si falló búsqueda */}
+                    {mostrarInputManual && (
+                        <View style={{ marginBottom: 12 }}>
+                            <Text style={styles.label}>IP del dispositivo principal:</Text>
+                            <TextInput
+                                style={styles.ipInput}
+                                value={hostIp}
+                                onChangeText={(t) => {
+                                    setHostIp(t);
+                                    setErrorMsg('');
+                                }}
+                                placeholder="Ej: 192.168.1.50"
+                                placeholderTextColor="#aaa"
+                                keyboardType="url"
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                            />
+                        </View>
                     )}
 
                     {/* Lista de hosts encontrados */}
-                    {foundHosts.length > 0 && (
+                    {foundHosts.length > 0 && !mostrarInputManual && (
                         <View style={styles.hostList}>
                             <Text style={styles.label}>Dispositivos encontrados:</Text>
                             {foundHosts.map((h, idx) => (
@@ -159,7 +202,7 @@ export default function PinEntryModal({ visible, onClose, onConnected, manualHos
                                     onPress={() => setSelectedHost(h)}
                                 >
                                     <Text style={styles.hostItemText}>
-                                        {h.name || h.host}  ({h.host}:{h.port})
+                                        {h.name || h.host} ({h.host})
                                     </Text>
                                 </TouchableOpacity>
                             ))}
@@ -167,7 +210,7 @@ export default function PinEntryModal({ visible, onClose, onConnected, manualHos
                     )}
 
                     {/* Input PIN */}
-                    <Text style={styles.label}>PIN del host:</Text>
+                    <Text style={styles.label}>PIN de seguridad:</Text>
                     <TextInput
                         ref={inputRef}
                         style={styles.pinInput}
@@ -266,6 +309,16 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         marginBottom: 6,
         marginTop: 10,
+    },
+    ipInput: {
+        borderWidth: 1.5,
+        borderColor: '#cbd5e1',
+        borderRadius: 8,
+        fontSize: 15,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        color: '#1a1a2e',
+        backgroundColor: '#f8fafc',
     },
     pinInput: {
         borderWidth: 2,

@@ -113,12 +113,12 @@ const QRScannerModal = ({ visible, onClose, onSuccess, mode = 'invitacion' }) =>
           console.log('✅ [QRScanner] Respuesta del servidor:', verifyResp.status, verifyResp.data)
         } catch (networkError) {
           console.error('❌ [QRScanner] Error de red al verificar servidor:', networkError.message)
-          throw new Error(`No se pudo conectar al servidor en ${j4proUrl}.\n\n• Verifica que estés en el mismo WiFi.\n• Asegúrate que el servidor esté iniciado en el PC.\n• Revisa que el Firewall de Windows permita el puerto.`)
+          throw new Error(`No se pudo conectar al servidor en ${j4proUrl}.\n\n• Verifica que ambos dispositivos estén en el mismo WiFi.\n• Asegúrate que el servidor esté iniciado en el dispositivo principal.\n• Revisa que el puerto esté disponible.`)
         }
 
         if (verifyResp.status !== 200 || !verifyResp.data?.ok) {
           console.error('❌ [QRScanner] Respuesta inválida del servidor:', verifyResp.status, verifyResp.data)
-          throw new Error(`El servidor respondió con código ${verifyResp.status}. Verifica que el backend esté corriendo e iniciado correctamente en el PC.`)
+          throw new Error(`El servidor respondió con código ${verifyResp.status}. Verifica que el servidor esté iniciado correctamente en el dispositivo principal.`)
         }
 
         const canonicalBase = (verifyResp.data.url || j4proUrl).toString().replace(/\/+$/, '')
@@ -243,8 +243,8 @@ const QRScannerModal = ({ visible, onClose, onSuccess, mode = 'invitacion' }) =>
           </Text>
           <Text style={styles.instructionsText}>
             {mode === 'conexion'
-              ? 'Escanea el QR generado en Desktop para configurar automáticamente la conexión al backend (LAN)'
-              : 'Pide al administrador que genere un código QR desde la sesión de inventario y escanéalo para conectarte'}
+              ? 'Escanea el código QR generado en el dispositivo principal para configurar la conexión automáticamente'
+              : 'Pide al administrador o contador que genere un código de invitación desde la sesión de inventario y escanéalo para conectarte'}
           </Text>
         </View>
 

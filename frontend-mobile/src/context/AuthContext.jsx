@@ -369,9 +369,12 @@ export const AuthProvider = ({ children }) => {
       // SEGUNDO: Intentar login local como fallback (modo offline o si API falló)
       console.log('🔐 Intentando login local...')
 
+      const identUsuario = credentials?.email || credentials?.credencial || credentials?.nombreUsuario || credentials?.username || ''
+      const passUsuario = credentials?.password || ''
+
       const loginResult = await localDb.loginLocal(
-        credentials.email,
-        credentials.password
+        identUsuario,
+        passUsuario
       )
 
       if (loginResult.success) {
@@ -465,11 +468,21 @@ export const AuthProvider = ({ children }) => {
     }
   }, [dispatch])
 
-  // Adoptar sesión temporal de colaborador (QR)
-  const loginAsCollaborator = useCallback(async (datos) => {
+  // Adoptar sesión temporal de colaborador (QR) o PIN
+  const loginAsCollaborator = useCallback(async (datos, pin = null) => {
     let savedToken = null
     try {
-      const accessToken = datos?.sessionToken
+      let accessToken = datos?.sessionToken
+      // If PIN provided, fetch token from server
+      if (pin && !accessToken) {
+        // Call backend to exchange PIN for session token
+        const response = await authApi.loginCollaboratorWithPin(pin)
+        const responseData = handleApiResponse(response)
+        accessToken = responseData?.accessToken || responseData?.token
+        if (!accessToken) {
+          throw new Error('No se recibió token del servidor para el PIN')
+        }
+      }
       if (!accessToken) {
         console.error('❌ [loginAsCollaborator] sessionToken ausente. datos recibidos:', JSON.stringify(datos))
         throw new Error('Token de sesión inválido')
@@ -512,7 +525,7 @@ export const AuthProvider = ({ children }) => {
 
       return { success: true }
     } catch (e) {
-      console.error('❌ [loginAsCollaborator] Error:', e?.message, e)
+      console.error('❌ [loginAsCollaborator] Error:', e?.message)
       const msg = e?.message || 'No se pudo adoptar la sesión temporal'
       showMessage({ message: 'Error de sesión', description: msg, type: 'danger' })
       return { success: false, error: msg }
@@ -524,7 +537,7 @@ export const AuthProvider = ({ children }) => {
           console.log(`🔌 [loginAsCollaborator] Conectando WebSocket, token longitud: ${savedToken.length}`)
           webSocketService.connect(savedToken)
         } catch (wsErr) {
-          console.warn('⚠️ [loginAsCollaborator] WebSocket connect error (no crítico):', wsErr?.message)
+          console.warn('⚠️ [loginAsCollaborator] Error al conectar WS:', wsErr?.message)
         }
       }
     }
@@ -556,7 +569,7 @@ export const AuthProvider = ({ children }) => {
       isHandlingAuthError.current = true
       lastAuthErrorTime.current = now
 
-      console.error('🔐 Token rechazado por el servidor PostgreSQL (código:', code, ')')
+      console.error('🔐 Token rechazado por el servidor (código:', code, ')')
 
       try {
         // Verificar si hay un refresh token disponible

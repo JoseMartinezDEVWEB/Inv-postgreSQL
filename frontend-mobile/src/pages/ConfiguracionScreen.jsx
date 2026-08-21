@@ -38,7 +38,7 @@ const ConfiguracionScreen = ({ navigation }) => {
     Keyboard.dismiss();
 
     if (!ipBackend || ipBackend.trim() === '') {
-      Alert.alert('Error', 'Ingresa la IP del servidor Node.js+PostgreSQL');
+      Alert.alert('Error', 'Ingresa la IP del servidor');
       return;
     }
 
@@ -52,13 +52,13 @@ const ConfiguracionScreen = ({ navigation }) => {
       if (!connected) {
         Alert.alert(
           'Sin conexión',
-          `No hay respuesta en ${newApiUrl}\n\nVerifica:\n• El backend Node.js+PostgreSQL está corriendo\n• El puerto 4501 está abierto\n• El dispositivo está en la misma red WiFi`
+          `No hay respuesta en ${newApiUrl}\n\nVerifica:\n• El servidor principal está encendido y accesible\n• El puerto 4501 está abierto\n• Ambos dispositivos están en la misma red WiFi`
         );
         return;
       }
 
       await setRuntimeApiBaseUrl(newApiUrl);
-      Alert.alert('✅ Conectado', `Backend PostgreSQL en ${newApiUrl}`, [
+      Alert.alert('✅ Conectado', `Servidor conectado en ${newApiUrl}`, [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     } catch (e) {
@@ -73,7 +73,7 @@ const ConfiguracionScreen = ({ navigation }) => {
       <View style={styles.content}>
         <Text style={styles.title}>Configuración del Servidor</Text>
 
-        <Text style={styles.label}>IP y Puerto del Servidor Node.js+PostgreSQL</Text>
+        <Text style={styles.label}>IP y Puerto del Servidor</Text>
         <TextInput
           style={styles.input}
           value={ipBackend}
@@ -85,7 +85,7 @@ const ConfiguracionScreen = ({ navigation }) => {
           editable={!guardando}
         />
         <Text style={styles.info}>
-          Ingresa la dirección IP que aparece en la consola del backend PostgreSQL.{'\n'}
+          Ingresa la dirección IP que aparece en la pantalla del servidor o dispositivo principal.{'\n'}
           Asegúrate de que ambos dispositivos estén en la misma red WiFi.
         </Text>
 
