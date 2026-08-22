@@ -122,11 +122,7 @@ function AppContent() {
         }}
         onStateChange={(state) => {
           try {
-            const previousRouteName = routeNameRef.current;
             const currentRouteName = getActiveRouteName(state);
-            if (currentRouteName && previousRouteName && currentRouteName !== previousRouteName) {
-              showAnimation('navigate', 800);
-            }
             routeNameRef.current = currentRouteName;
           } catch {}
         }}

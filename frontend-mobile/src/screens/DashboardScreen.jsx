@@ -119,25 +119,45 @@ const DashboardScreen = ({ navigation }) => {
   const valorTotal = reportesData?.estadisticasGenerales?.valorTotalInventarios || 0
 
   // Actividades recientes (últimas sesiones)
-  const actividadesRecientes = sesionesData?.sesiones?.slice(0, 5).map(sesion => {
+  const listaSesiones = Array.isArray(sesionesData?.sesiones)
+    ? sesionesData.sesiones
+    : Array.isArray(sesionesData)
+    ? sesionesData
+    : [];
+
+  const actividadesRecientes = listaSesiones.slice(0, 5).map(sesion => {
     const tipo = sesion.estado === 'completada' ? 'completada' : sesion.estado === 'en_progreso' ? 'en_progreso' : 'iniciada'
     const icono = tipo === 'completada' ? 'checkmark-circle' : tipo === 'en_progreso' ? 'time' : 'play-circle'
     const color = tipo === 'completada' ? '#22c55e' : tipo === 'en_progreso' ? '#f59e0b' : '#3b82f6'
     const titulo = tipo === 'completada' ? 'Sesión completada' : tipo === 'en_progreso' ? 'Sesión en progreso' : 'Sesión iniciada'
     
+    let tiempoTexto = 'Reciente';
+    try {
+      const f = sesion.updatedAt || sesion.createdAt || sesion.fecha;
+      if (f) {
+        const d = new Date(f);
+        if (!isNaN(d.getTime())) {
+          tiempoTexto = d.toLocaleDateString('es-ES', { 
+            day: 'numeric', 
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        }
+      }
+    } catch (_) {}
+
+    const nombreCli = sesion.clienteNegocio?.nombre || sesion.clienteNombre || 'Sin cliente';
+    const valTotal = Number(sesion.totales?.valorTotalInventario || sesion.valorTotal || 0);
+
     return {
-      id: sesion._id || sesion.id,
+      id: sesion._id || sesion.id || `ses_${Math.random()}`,
       tipo,
       icono,
       color,
       titulo,
-      descripcion: `Cliente: ${sesion.clienteNegocio?.nombre || 'Sin cliente'} - Valor: $${(sesion.totales?.valorTotalInventario || 0).toLocaleString()}`,
-      tiempo: new Date(sesion.updatedAt || sesion.createdAt).toLocaleDateString('es-ES', { 
-        day: 'numeric', 
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
+      descripcion: `Cliente: ${nombreCli} - Valor: $${valTotal.toLocaleString()}`,
+      tiempo: tiempoTexto
     }
   }) || []
 

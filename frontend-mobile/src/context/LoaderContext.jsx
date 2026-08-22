@@ -50,7 +50,7 @@ export const LoaderProvider = ({ children }) => {
       }
     })()
     return () => { mounted = false }
-  }, [durationMs])
+  }, [])
 
   const hideLoader = useCallback(() => {
     if (timeoutRef.current) {

@@ -45,11 +45,25 @@ const getStatusInfo = (estado) => {
 };
 
 const SesionCard = ({ item, onSelect }) => {
-  const status = getStatusInfo(item.estado);
+  const status = getStatusInfo(item?.estado);
+  const nombreCliente = item?.clienteNegocio?.nombre || item?.clienteNombre || 'Cliente no disponible';
+  
+  let fechaTexto = 'Reciente';
+  try {
+    if (item?.fecha) {
+      const d = new Date(item.fecha);
+      if (!isNaN(d.getTime())) {
+        fechaTexto = d.toLocaleDateString();
+      }
+    }
+  } catch (_) {}
+
+  const valorTotal = Number(item?.totales?.valorTotalInventario ?? item?.valorTotal ?? 0);
+
   return (
     <TouchableOpacity style={styles.sesionCard} onPress={() => onSelect(item)}>
       <View style={styles.cardHeader}>
-        <Text style={styles.clienteNombre}>{item.clienteNegocio?.nombre || 'Cliente no disponible'}</Text>
+        <Text style={styles.clienteNombre}>{nombreCliente}</Text>
         <View style={[styles.statusBadge, { backgroundColor: status.color }]}>
           <Ionicons name={status.icon} size={14} color="#ffffff" />
           <Text style={styles.statusText}>{status.text}</Text>
@@ -58,16 +72,16 @@ const SesionCard = ({ item, onSelect }) => {
       <View style={styles.cardBody}>
         <View style={styles.infoRow}>
           <Ionicons name="calendar-outline" size={16} color="#64748b" />
-          <Text style={styles.infoText}>{new Date(item.fecha).toLocaleDateString()}</Text>
+          <Text style={styles.infoText}>{fechaTexto}</Text>
         </View>
         <View style={styles.infoRow}>
           <Ionicons name="pricetag-outline" size={16} color="#64748b" />
-          <Text style={styles.infoText}>Sesión #{item.numeroSesion}</Text>
+          <Text style={styles.infoText}>Sesión #{item?.numeroSesion || '1'}</Text>
         </View>
       </View>
       <View style={styles.cardFooter}>
         <Text style={styles.valorLabel}>Valor Total:</Text>
-        <Text style={styles.valorTotal}>${(item.totales?.valorTotalInventario || 0).toFixed(2)}</Text>
+        <Text style={styles.valorTotal}>${valorTotal.toFixed(2)}</Text>
       </View>
     </TouchableOpacity>
   );
